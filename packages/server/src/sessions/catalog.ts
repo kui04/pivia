@@ -14,7 +14,7 @@ import {
 
 import type { SessionDetailResponse, SessionListResponse, SessionSummary } from "@pivia/protocol";
 
-import { createLogger } from "./logger.ts";
+import { createLogger } from "../logger.ts";
 
 /**
  * Session ids mirror the rule of the SDK session manager: non-empty, only alphanumeric

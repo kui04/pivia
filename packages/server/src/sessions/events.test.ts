@@ -2,7 +2,7 @@ import type { AgentSessionEvent, JsonAgentSessionEvent } from "@earendil-works/p
 
 import { describe, expect, it } from "vitest";
 
-import { SessionEventBuffer, toWireSessionEvent } from "./session-events.ts";
+import { SessionEventBuffer, toWireSessionEvent } from "./events.ts";
 
 const USAGE = {
     input: 12,

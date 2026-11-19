@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { AuthService, generateStartupSecret, isLoopbackHost } from "./auth.ts";
+import { AuthService, generateStartupSecret, isLoopbackHost } from "./service.ts";
 
 describe("isLoopbackHost", () => {
     it("accepts bindable loopback addresses and rejects bracketed, wildcard, or external addresses", () => {

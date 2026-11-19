@@ -7,9 +7,9 @@ import { parseArgs } from "node:util";
 import type { LevelWithSilent } from "pino";
 
 import { buildApp } from "./app.ts";
-import { generateStartupSecret, isLoopbackHost } from "./auth.ts";
+import { generateStartupSecret, isLoopbackHost } from "./auth/service.ts";
 import { createLogger, isLogLevel, LOG_LEVELS } from "./logger.ts";
-import { SessionCatalog } from "./sessions.ts";
+import { SessionCatalog } from "./sessions/catalog.ts";
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 3141;

@@ -14,7 +14,7 @@ import type {
     RuntimeFactory,
     RuntimeFactoryInput,
     SessionRegistryLogger,
-} from "../runtime.ts";
+} from "../sessions/runtime.ts";
 
 /** Handler installed by a test to control `prompt()` timing and failures. */
 export type FakePromptHandler = (text: string, options: ManagedPromptOptions) => Promise<void>;

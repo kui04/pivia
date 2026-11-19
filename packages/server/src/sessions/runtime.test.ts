@@ -7,7 +7,7 @@ import type { SessionManager } from "@earendil-works/pi-coding-agent";
 import type { WsResponseMessage, WsServerMessage } from "@pivia/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createLogger } from "./logger.ts";
+import { createLogger } from "../logger.ts";
 import { createPiRuntimeFactory } from "./pi-runtime.ts";
 import {
     type ActiveSessionHandle,
@@ -17,7 +17,7 @@ import {
     type SessionClient,
     type SessionRegistryLogger,
 } from "./runtime.ts";
-import { SessionCatalog } from "./sessions.ts";
+import { SessionCatalog } from "./catalog.ts";
 import {
     createFakeRuntimeHarness,
     createRecordingLogger,
@@ -25,7 +25,7 @@ import {
     type FakeRuntimeHarness,
     type FakeSession,
     writeSessionFixture,
-} from "./testing/fake-runtime.ts";
+} from "../testing/fake-runtime.ts";
 
 const tempDirs: string[] = [];
 const registries: SessionRegistry[] = [];

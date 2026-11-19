@@ -30,10 +30,10 @@ import type {
 } from "@pivia/protocol";
 
 import { SessionUiBridge } from "./extension-ui.ts";
-import { createLogger } from "./logger.ts";
+import { createLogger } from "../logger.ts";
 import { createPiRuntimeFactory } from "./pi-runtime.ts";
-import { SessionEventBuffer, toWireSessionEvent } from "./session-events.ts";
-import { defaultProjectSessionDir, type SessionCatalog } from "./sessions.ts";
+import { SessionEventBuffer, toWireSessionEvent } from "./events.ts";
+import { defaultProjectSessionDir, type SessionCatalog } from "./catalog.ts";
 
 /** How long an open runtime without clients is kept before it is reclaimed. */
 const DEFAULT_IDLE_TIMEOUT_MS = 15 * 60 * 1000;

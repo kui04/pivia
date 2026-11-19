@@ -13,6 +13,11 @@
   `devenv.nix` and the root `engines` field above that floor.
 - Keep `typescript` on the range that `typescript-eslint` accepts. Check with `pnpm peers check` before you raise it.
 
+## Server Layout
+
+- Organize `packages/server/src` by domain rather than as a flat list of files.
+- Keep unit and route tests colocated next to their source file as `*.test.ts`.
+
 ## Frontend
 
 - Before changing frontend code, read `docs/frontend.md`. It covers the frontend environment, styles, Storybook,

@@ -21,7 +21,7 @@ import {
     SessionCatalog,
     type SessionCatalogLogger,
     type SessionCatalogOptions,
-} from "./sessions.ts";
+} from "./catalog.ts";
 
 interface MessageFixture {
     readonly role: string;
