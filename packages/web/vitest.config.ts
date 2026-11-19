@@ -49,10 +49,6 @@ export default mergeConfig(
             ],
         },
         test: {
-            // Every worker loads the whole config, and each Storybook worker also
-            // loads the whole preview bundle. One worker per core cost several GB
-            // and pushed a 16 GB host into OOM, so both projects run two files at a time.
-            maxWorkers: 2,
             projects: [
                 {
                     extends: true,

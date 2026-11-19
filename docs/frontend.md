@@ -143,7 +143,7 @@ in step with the file: a new nested rule updates the sketch in the same change.
 ## Checks
 
 - Typecheck, ESLint, unit tests and Storybook browser tests cover the frontend checks.
-- Both Vitest projects run two files at a time (`maxWorkers: 2` at the root of `packages/web/vitest.config.ts`). Each
-  worker loads the whole config, and each Storybook worker also loads the whole preview bundle, so one worker per core
-  costs several GB. Run Storybook browser tests with the Storybook dev server stopped and not beside `prek run -a`, or
-  concurrent bundles can exhaust the memory of a 16 GB host.
+- The ESLint git hook sets `require_serial` in `devenv.nix`. Without it, prek starts one batch per CPU core. Each
+  type-aware ESLint process loads the TypeScript projects, and 16 concurrent processes used all the memory of a 16 GB
+  host.
+- Stop the Storybook dev server before the Storybook browser tests. Each worker loads the whole preview bundle.

@@ -33,6 +33,10 @@
 
         eslint = {
             enable = true;
+            # prek splits a hook's files into one batch per core. Every type-aware
+            # eslint process loads the TypeScript projects, so concurrent batches
+            # exhaust memory. Run the hook as one process instead.
+            require_serial = true;
             settings = {
                 binPath = "./node_modules/.bin/eslint";
                 extensions = "\\.(js|mjs|cjs|ts|tsx)$";
