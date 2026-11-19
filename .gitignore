@@ -21,3 +21,10 @@ devenv.local.yaml
 
 # Editor
 .vscode/
+
+# Storybook
+*storybook.log
+storybook-static
+
+# Skills
+.agents/skills/

@@ -1,6 +1,7 @@
 dist
 node_modules
 pnpm-lock.yaml
+storybook-static
 .devenv
 .direnv
 .pre-commit-config.yaml

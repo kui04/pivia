@@ -8,6 +8,18 @@
         pnpm.enable = true;
     };
 
+    packages = with pkgs; [
+        # Storybook's Vitest browser mode launches Chromium through Playwright.
+        playwright-driver.browsers
+    ];
+
+    env = {
+        # Use the nixpkgs browsers and keep pnpm from downloading an unusable
+        # copy into node_modules.
+        PLAYWRIGHT_BROWSERS_PATH = "${pkgs.playwright-driver.browsers}";
+        PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1";
+    };
+
     git-hooks.hooks = {
         nixfmt = {
             enable = true;
