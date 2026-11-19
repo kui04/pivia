@@ -15,6 +15,7 @@ describe("parseCliArgs", () => {
             logLevel: "info",
             noAuth: false,
             passwordFile: undefined,
+            sessionDir: undefined,
         });
     });
 
@@ -28,6 +29,8 @@ describe("parseCliArgs", () => {
                 "8080",
                 "--password-file",
                 "/tmp/pw",
+                "--session-dir",
+                "/tmp/sessions",
                 "--log-level",
                 "debug",
             ]),
@@ -38,6 +41,7 @@ describe("parseCliArgs", () => {
             logLevel: "debug",
             noAuth: false,
             passwordFile: "/tmp/pw",
+            sessionDir: "/tmp/sessions",
         });
     });
 
@@ -49,6 +53,7 @@ describe("parseCliArgs", () => {
             logLevel: "info",
             noAuth: true,
             passwordFile: undefined,
+            sessionDir: undefined,
         });
         expect(() => parseCliArgs(["--host", "[::1]", "--no-auth"])).toThrow(CliArgumentError);
         expect(() => parseCliArgs(["--host", "0.0.0.0", "--no-auth"])).toThrow(CliArgumentError);
@@ -60,6 +65,15 @@ describe("parseCliArgs", () => {
         const help = formatHelp();
         expect(help).toContain("Usage: pivia [serve] [options]");
         expect(help).toContain("printed to stderr");
+        expect(help).toContain("--session-dir <path>");
+        expect(help).toContain("PI_CODING_AGENT_SESSION_DIR");
+    });
+
+    it("accepts --session-dir and rejects an empty value", () => {
+        const action = parseCliArgs(["--session-dir", "~/pivia-sessions"]);
+        expect(action).toMatchObject({ kind: "serve", sessionDir: "~/pivia-sessions" });
+        expect(() => parseCliArgs(["--session-dir", "   "])).toThrow(CliArgumentError);
+        expect(() => parseCliArgs(["--session-dir"])).toThrow(CliArgumentError);
     });
 
     it("rejects invalid ports, log levels, and unknown commands", () => {

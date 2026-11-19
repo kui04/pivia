@@ -1,9 +1,15 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PassThrough } from "node:stream";
+
+import type { SessionDetailResponse, SessionListResponse } from "@pivia/protocol";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import { buildApp } from "./app.ts";
 import { createLogger } from "./logger.ts";
+import { SessionCatalog } from "./sessions.ts";
 
 describe("buildApp", () => {
     const apps: ReturnType<typeof buildApp>[] = [];
@@ -323,5 +329,133 @@ describe("buildApp", () => {
 
         const protectedRes = await app.inject({ method: "GET", url: "/api/protected" });
         expect(protectedRes.statusCode).toBe(200);
+    });
+});
+
+describe("session routes", () => {
+    const apps: ReturnType<typeof buildApp>[] = [];
+    const sessionDirs: string[] = [];
+
+    afterEach(async () => {
+        let app = apps.pop();
+        while (app !== undefined) {
+            await app.close();
+            app = apps.pop();
+        }
+        let dir = sessionDirs.pop();
+        while (dir !== undefined) {
+            rmSync(dir, { recursive: true, force: true });
+            dir = sessionDirs.pop();
+        }
+    });
+
+    function createSessionDir(): string {
+        const dir = mkdtempSync(join(tmpdir(), "pivia-app-sessions-"));
+        sessionDirs.push(dir);
+        return dir;
+    }
+
+    function writeSessionFixture(dir: string, id: string, text: string): void {
+        const timestamp = "2026-04-01T00:00:00.000Z";
+        const header = { type: "session", version: 3, id, timestamp, cwd: "/tmp/pivia-project" };
+        const message = {
+            type: "message",
+            id: "entry-1",
+            parentId: null,
+            timestamp,
+            message: { role: "user", content: text, timestamp: Date.parse(timestamp) },
+        };
+        writeFileSync(join(dir, `${id}.jsonl`), `${JSON.stringify(header)}\n${JSON.stringify(message)}\n`, "utf8");
+    }
+
+    function createSessionApp(sessionDir: string): ReturnType<typeof buildApp> {
+        const app = buildApp({
+            logger: createLogger({ level: "silent" }),
+            auth: { password: "secret" },
+            sessions: new SessionCatalog({
+                sessionDir,
+                agentDir: sessionDir,
+                cwd: sessionDir,
+                env: {},
+                logger: createLogger({ level: "silent" }),
+            }),
+        });
+        apps.push(app);
+        return app;
+    }
+
+    it("requires authentication for both session endpoints", async () => {
+        const sessionDir = createSessionDir();
+        writeSessionFixture(sessionDir, "session-alpha", "alpha question");
+        const app = createSessionApp(sessionDir);
+
+        const list = await app.inject({ method: "GET", url: "/api/sessions" });
+        expect(list.statusCode).toBe(401);
+        expect(list.json()).toEqual({ error: "unauthorized", message: "Authentication required." });
+
+        const detail = await app.inject({ method: "GET", url: "/api/sessions/session-alpha" });
+        expect(detail.statusCode).toBe(401);
+        expect(detail.json()).toEqual({ error: "unauthorized", message: "Authentication required." });
+    });
+
+    it("returns a list and one detail with a bearer credential", async () => {
+        const sessionDir = createSessionDir();
+        writeSessionFixture(sessionDir, "session-alpha", "alpha question");
+        writeSessionFixture(sessionDir, "session-beta", "beta question");
+        const app = createSessionApp(sessionDir);
+
+        const list = await app.inject({
+            method: "GET",
+            url: "/api/sessions",
+            headers: { authorization: "Bearer secret" },
+        });
+        expect(list.statusCode).toBe(200);
+        const listBody = list.json<SessionListResponse>();
+        expect(listBody.sessions.map((session) => session.id).sort()).toEqual(["session-alpha", "session-beta"]);
+        expect(Number.isFinite(listBody.scannedAtMs)).toBe(true);
+        expect(list.body).not.toContain("allMessagesText");
+        expect(list.body).not.toContain(sessionDir);
+
+        const detail = await app.inject({
+            method: "GET",
+            url: "/api/sessions/session-alpha",
+            headers: { authorization: "Bearer secret" },
+        });
+        expect(detail.statusCode).toBe(200);
+        const detailBody = detail.json<SessionDetailResponse>();
+        expect(detailBody.session).toMatchObject({ id: "session-alpha", firstMessage: "alpha question" });
+        expect(detailBody.entries[0]).toMatchObject({ type: "session", id: "session-alpha", version: 3 });
+        expect(detailBody.entries).toHaveLength(2);
+        expect(detail.body).not.toContain("allMessagesText");
+        expect(detail.body).not.toContain(sessionDir);
+    });
+
+    it("returns 400 for invalid ids and 404 for unknown sessions", async () => {
+        const sessionDir = createSessionDir();
+        writeSessionFixture(sessionDir, "session-alpha", "alpha question");
+        const app = createSessionApp(sessionDir);
+        const headers = { authorization: "Bearer secret" };
+
+        const invalid = await app.inject({ method: "GET", url: "/api/sessions/%21invalid", headers });
+        expect(invalid.statusCode).toBe(400);
+        expect(invalid.json()).toEqual({ error: "invalid_request", message: "Invalid session id." });
+
+        // The router resolves the dot segments of `%2e%2e` before route matching, so this path
+        // never reaches the handler and the not-found handler rejects it.
+        const dotSegments = await app.inject({ method: "GET", url: "/api/sessions/%2e%2e", headers });
+        expect(dotSegments.statusCode).toBe(404);
+        expect(dotSegments.json()).toEqual({ error: "not_found", message: "Not found." });
+
+        const encodedSlash = await app.inject({ method: "GET", url: "/api/sessions/..%2Fescape", headers });
+        expect(encodedSlash.statusCode).toBe(400);
+        expect(encodedSlash.json()).toEqual({ error: "invalid_request", message: "Invalid session id." });
+
+        const encodedDotSlash = await app.inject({ method: "GET", url: "/api/sessions/%2e%2e%2Fescape", headers });
+        expect(encodedDotSlash.statusCode).toBe(400);
+        expect(encodedDotSlash.json()).toEqual({ error: "invalid_request", message: "Invalid session id." });
+
+        const missing = await app.inject({ method: "GET", url: "/api/sessions/session-unknown", headers });
+        expect(missing.statusCode).toBe(404);
+        expect(missing.json()).toEqual({ error: "not_found", message: "Session not found." });
     });
 });

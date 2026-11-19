@@ -9,10 +9,13 @@ import type {
     AuthLogoutResponse,
     AuthStatusResponse,
     HealthResponse,
+    SessionDetailResponse,
+    SessionListResponse,
 } from "@pivia/protocol";
 
 import { AuthService, SESSION_COOKIE_NAME, type AuthServiceOptions } from "./auth.ts";
 import { createLogger } from "./logger.ts";
+import { isValidSessionId, SessionCatalog } from "./sessions.ts";
 
 /** Options for {@link buildApp}. */
 export interface BuildAppOptions {
@@ -22,6 +25,8 @@ export interface BuildAppOptions {
     logger?: FastifyBaseLogger | undefined;
     /** Explicit authentication configuration (`{ disabled: true }` to opt out). */
     auth: AuthServiceOptions | AuthService;
+    /** Session catalog for `/api/sessions`; defaults to one rooted at the pi session directory. */
+    sessions?: SessionCatalog | undefined;
 }
 
 const PUBLIC_API_PATHS = new Set(["/api/health", "/api/auth", "/api/auth/status", "/api/auth/logout"]);
@@ -52,6 +57,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     const version = options.version ?? "0.0.0";
     const logger: FastifyBaseLogger = options.logger ?? createLogger();
     const authService = options.auth instanceof AuthService ? options.auth : new AuthService(options.auth);
+    const sessionCatalog = options.sessions ?? new SessionCatalog({ logger });
 
     const app = Fastify({
         loggerInstance: logger,
@@ -185,6 +191,25 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         authService.clearSessionCookie(reply);
         return { authenticated: false };
     });
+
+    app.get("/api/sessions", async (): Promise<SessionListResponse> => {
+        return sessionCatalog.list();
+    });
+
+    app.get<{ Params: { id: string } }>(
+        "/api/sessions/:id",
+        async (request, reply): Promise<SessionDetailResponse | FastifyReply> => {
+            const { id } = request.params;
+            if (!isValidSessionId(id)) {
+                return sendApiError(reply, 400, "invalid_request", "Invalid session id.");
+            }
+            const detail = await sessionCatalog.getById(id);
+            if (detail === null) {
+                return sendApiError(reply, 404, "not_found", "Session not found.");
+            }
+            return detail;
+        },
+    );
 
     return app;
 }
