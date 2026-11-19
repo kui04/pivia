@@ -1,0 +1,103 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { createNotificationManager } from "../components/Notification/useNotification";
+
+import { notificationManager, showError, showWarning } from "./notification";
+
+function probeTimeouts() {
+    const manager = createNotificationManager();
+    const timeouts: Array<number | undefined> = [];
+    const unsubscribe = manager[" subscribe"]((event) => {
+        if (event.action === "add") {
+            timeouts.push((event.options as { timeout?: number | undefined }).timeout);
+        }
+    });
+
+    return { manager, timeouts, unsubscribe };
+}
+
+describe("notification manager timeouts", () => {
+    it("keeps a warning and an error until the user dismisses them", () => {
+        const { manager, timeouts, unsubscribe } = probeTimeouts();
+
+        manager.add({ type: "warning", title: "Slow connection" });
+        manager.add({ type: "error", title: "Save failed" });
+
+        expect(timeouts).toEqual([0, 0]);
+        unsubscribe();
+    });
+
+    it("keeps the provider timeout for info and success", () => {
+        const { manager, timeouts, unsubscribe } = probeTimeouts();
+
+        manager.add({ type: "info", title: "Update available" });
+        manager.add({ type: "success", title: "Saved" });
+
+        expect(timeouts).toEqual([undefined, undefined]);
+        unsubscribe();
+    });
+
+    it("keeps an explicit timeout on every type", () => {
+        const { manager, timeouts, unsubscribe } = probeTimeouts();
+
+        manager.add({ type: "warning", title: "Slow connection", timeout: 5000 });
+        manager.add({ type: "error", title: "Failed", timeout: 0 });
+        manager.add({ type: "info", title: "Update available", timeout: 2000 });
+
+        expect(timeouts).toEqual([5000, 0, 2000]);
+        unsubscribe();
+    });
+});
+
+describe("app notifications", () => {
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    it("sends errors urgently and warnings politely", () => {
+        const add = vi.spyOn(notificationManager, "add").mockReturnValue("toast-id");
+
+        showError({ id: "save", title: "Save failed" });
+        showWarning({ id: "connection", title: "Slow connection" });
+
+        expect(add.mock.calls[0]?.[0]).toMatchObject({
+            id: "save",
+            type: "error",
+            priority: "high",
+            title: "Save failed",
+        });
+        expect(add.mock.calls[1]?.[0]).toMatchObject({
+            id: "connection",
+            type: "warning",
+            priority: "low",
+            title: "Slow connection",
+        });
+    });
+
+    it("passes the description and action through unchanged", () => {
+        const add = vi.spyOn(notificationManager, "add").mockReturnValue("toast-id");
+        const onClick = vi.fn();
+
+        showError({
+            id: "network",
+            title: "Connection lost",
+            description: "The server is not reachable.",
+            action: { label: "Retry", onClick },
+        });
+
+        expect(add.mock.calls[0]?.[0]).toMatchObject({
+            description: "The server is not reachable.",
+            actionProps: { children: "Retry", onClick },
+        });
+    });
+
+    it("forwards the same id so Base UI replaces the earlier message", () => {
+        const add = vi.spyOn(notificationManager, "add").mockReturnValue("toast-id");
+
+        showError({ id: "same", title: "First message" });
+        showError({ id: "same", title: "Second message" });
+
+        expect(add.mock.calls[0]?.[0]).toMatchObject({ id: "same", title: "First message" });
+        expect(add.mock.calls[1]?.[0]).toMatchObject({ id: "same", title: "Second message" });
+    });
+});

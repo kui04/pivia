@@ -1,0 +1,117 @@
+/*
+ * The story fixtures of ScrollArea: a frame, a content box and the cells and paragraphs inside it.
+ *
+ * The tree follows the story markup; the class a story passes to ScrollArea lands on that part:
+ *
+ *   .frame       className of ScrollArea, so it lands on its .root
+ *   .content     contentClassName of ScrollArea, inside the viewport
+ *   .dynamic     the story that swaps its own content
+ *   └─ .toggle   the button that swaps it
+ *   .grid        inside .content
+ *   └─ .cell     one cell of the ten-column grid
+ *   .stack       inside .content
+ *   .paragraph   inside .stack, and alone in .dynamic
+ *   .row         inside .content
+ *   └─ .card
+ *   .overrideViewport  className of the viewport, to prove caller specificity
+ */
+.frame {
+    box-sizing: border-box;
+    width: 26rem;
+    height: 15rem;
+    overflow: hidden;
+    border: var(--border-width) solid var(--color-outline-variant);
+    border-radius: var(--shape-corner-small);
+    background-color: var(--color-surface-container);
+}
+
+.content {
+    padding: var(--space-12);
+}
+
+.overrideViewport {
+    width: 80%;
+}
+
+.dynamic {
+    display: flex;
+    flex-direction: column;
+
+    .toggle {
+        align-self: flex-start;
+        margin-block-end: var(--space-8);
+        padding: var(--space-4) var(--space-8);
+        border: var(--border-width) solid var(--color-outline-variant);
+        border-radius: var(--shape-corner-extra-small);
+        background-color: var(--color-surface-container-high);
+        color: var(--color-on-surface);
+        font-family: var(--font-sans);
+        font-size: var(--type-label-large-size);
+        line-height: var(--type-label-large-line-height);
+        font-weight: var(--type-label-large-weight);
+        cursor: pointer;
+
+        @media (hover: hover) {
+            &:hover {
+                background-color: var(--state-hover);
+            }
+        }
+    }
+}
+
+.grid {
+    display: grid;
+    grid-template-columns: repeat(10, var(--space-64));
+    gap: var(--space-8);
+
+    .cell {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        aspect-ratio: 1;
+        border: var(--border-width) solid var(--color-outline-variant);
+        border-radius: var(--shape-corner-extra-small);
+        background-color: var(--color-surface-container-high);
+        color: var(--color-on-surface-variant);
+        font-family: var(--font-sans);
+        font-size: var(--type-label-medium-size);
+        line-height: var(--type-label-medium-line-height);
+        font-weight: var(--type-label-medium-weight);
+    }
+}
+
+.stack {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-8);
+}
+
+.paragraph {
+    margin: 0;
+    color: var(--color-on-surface);
+    font-family: var(--font-sans);
+    font-size: var(--type-body-medium-size);
+    line-height: var(--type-body-medium-line-height);
+}
+
+.row {
+    display: flex;
+    gap: var(--space-8);
+    width: max-content;
+
+    .card {
+        display: flex;
+        align-items: flex-end;
+        width: var(--space-64);
+        height: var(--space-48);
+        padding: var(--space-8);
+        border: var(--border-width) solid var(--color-outline-variant);
+        border-radius: var(--shape-corner-extra-small);
+        background-color: var(--color-surface-container-high);
+        color: var(--color-on-surface-variant);
+        font-family: var(--font-sans);
+        font-size: var(--type-label-medium-size);
+        line-height: var(--type-label-medium-line-height);
+        font-weight: var(--type-label-medium-weight);
+    }
+}

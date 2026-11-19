@@ -1,0 +1,117 @@
+/*
+ * The alert dialog popup and the action buttons inside it.
+ *
+ * The markup this file styles:
+ *
+ *   .popup                      merged with the DialogSurface popup and the caller `className`
+ *   ├─ .body                    the caller's content
+ *   └─ .actions                 also carries the DialogSurface actions class
+ *   .action                     on both Close buttons; .cancel, .confirm and .destructive join it
+ *   (plus the hover, pressed and disabled rules on those classes)
+ */
+.popup {
+    --dialog-width: 28rem;
+
+    .body {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-8);
+        min-width: 0;
+        color: var(--color-on-surface);
+        font-size: var(--type-body-medium-size);
+        font-weight: var(--type-body-medium-weight);
+        letter-spacing: var(--type-body-medium-tracking);
+        line-height: var(--type-body-medium-line-height);
+    }
+
+    .actions {
+        margin-block-start: var(--space-8);
+    }
+}
+
+.action {
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-block-size: var(--space-32);
+    padding-inline: var(--space-12);
+    border: var(--border-width) solid transparent;
+    border-radius: var(--shape-corner-small);
+    cursor: pointer;
+    font-family: var(--font-sans);
+    font-size: var(--type-label-large-size);
+    font-weight: var(--type-label-large-weight);
+    letter-spacing: var(--type-label-large-tracking);
+    line-height: var(--type-label-large-line-height);
+    white-space: nowrap;
+    transition:
+        background-color var(--motion-duration-effects-fast) var(--motion-easing-standard),
+        color var(--motion-duration-effects-fast) var(--motion-easing-standard);
+}
+
+.cancel {
+    border-color: var(--color-outline-control);
+    background-color: transparent;
+    color: var(--color-on-surface);
+}
+
+.confirm {
+    background-color: var(--color-primary);
+    color: var(--color-on-primary);
+}
+
+.destructive {
+    background-color: var(--color-error);
+    color: var(--color-on-error);
+}
+
+/* Hover only where a pointer exists, so a tap does not leave the state stuck. */
+@media (hover: hover) {
+    .cancel:hover:not(:disabled) {
+        background-color: var(--state-hover);
+    }
+
+    .confirm:hover:not(:disabled),
+    .destructive:hover:not(:disabled) {
+        background-image: linear-gradient(var(--state-hover), var(--state-hover));
+    }
+}
+
+.cancel:active:not(:disabled) {
+    background-color: var(--state-pressed);
+}
+
+.confirm:active:not(:disabled),
+.destructive:active:not(:disabled) {
+    background-image: linear-gradient(var(--state-pressed), var(--state-pressed));
+}
+
+.action:disabled {
+    cursor: default;
+}
+
+.cancel:disabled {
+    border-color: var(--color-outline-variant);
+    background-color: transparent;
+    color: var(--color-on-surface-variant);
+}
+
+.confirm:disabled,
+.destructive:disabled {
+    background-color: var(--color-secondary-container);
+    background-image: none;
+    color: var(--color-on-surface-variant);
+}
+
+@media (forced-colors: active) {
+    .action {
+        border-color: ButtonText;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .action {
+        transition: none;
+    }
+}

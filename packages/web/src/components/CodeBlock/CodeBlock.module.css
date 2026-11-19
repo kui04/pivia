@@ -1,0 +1,208 @@
+/*
+ * A code block with a header, an optional gutter and copy feedback.
+ *
+ * The markup this file styles:
+ *
+ *   .block                      merged with the caller `className`
+ *   ├─ .header
+ *   │   ├─ .language            the grammar label
+ *   │   └─ .toolbar             the wrap and copy IconButtons
+ *   └─ .status                  a visually hidden live region
+ *   .pre                        inside the ScrollArea; one class deep so .wrapped wins
+ *   ├─ .line                    one rendered line; data-variant tints it and its gutter
+ *   ├─ .gutter                  sticky sign and number column
+ *   ├─ .lineNumber
+ *   ├─ .marker
+ *   ├─ .lineContent             its token spans take the theme color
+ *   ├─ &:not([data-gutter])     the line inset without a gutter
+ *   └─ &:not([data-numbered])   the gutter inset without numbers
+ *   .wrapped                    joins .pre on the same element
+ *   └─ .code                    min-width: 0, so the lines wrap
+ *   .code                       the <code> inside .pre; max-content spans the scroll width
+ *   .copyButton                 passed to IconButton as `className`; fades its svg
+ */
+.block {
+    position: relative;
+    overflow: hidden;
+    border: var(--border-width) solid var(--color-outline-variant);
+    border-radius: var(--shape-corner-small);
+    background-color: var(--color-surface-container);
+    color: var(--color-on-surface);
+
+    .header {
+        display: flex;
+        align-items: center;
+        gap: var(--space-8);
+        min-height: var(--space-40);
+        padding-block: var(--space-4);
+        padding-inline: var(--space-12) var(--space-8);
+        border-block-end: var(--border-width) solid var(--color-outline-variant);
+
+        .language {
+            font-family: var(--font-mono);
+            font-size: var(--type-label-medium-size);
+            line-height: var(--type-label-medium-line-height);
+            letter-spacing: var(--type-label-medium-tracking);
+            color: var(--color-on-surface-variant);
+        }
+
+        /* Keeps the toolbar on the right when there is no language label. */
+        .toolbar {
+            display: flex;
+            align-items: center;
+            gap: var(--space-2);
+            margin-inline-start: auto;
+        }
+    }
+
+    /* The status text is announced, not shown; the icon carries the visual state. */
+    .status {
+        position: absolute;
+        width: var(--border-width);
+        height: var(--border-width);
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
+    }
+}
+
+/*
+ * The pre stays one class deep: .wrapped sits on the same element and must override its
+ * white-space, so the base rule cannot gain a class.
+ */
+.pre {
+    margin: 0;
+    padding-block: var(--space-8);
+    background-color: transparent;
+    font-family: var(--font-mono);
+    font-size: var(--type-body-medium-size);
+    line-height: var(--type-body-medium-line-height);
+    /* Tabs are a code convention rather than a design value; 8 columns is unreadable. */
+    tab-size: 4;
+    white-space: pre;
+
+    .line {
+        display: flex;
+        min-height: var(--type-body-medium-line-height);
+        padding-inline-end: var(--space-16);
+
+        /* The tint is translucent, so the sticky gutter layers the same tint over the surface. */
+        &[data-variant="added"] {
+            background-color: var(--color-diff-added);
+        }
+
+        &[data-variant="removed"] {
+            background-color: var(--color-diff-removed);
+        }
+
+        &[data-variant="added"] .gutter {
+            background-image: linear-gradient(var(--color-diff-added), var(--color-diff-added));
+            box-shadow: inset var(--border-width-strong) 0 0 var(--color-diff-added-accent);
+        }
+
+        &[data-variant="removed"] .gutter {
+            background-image: linear-gradient(var(--color-diff-removed), var(--color-diff-removed));
+            box-shadow: inset var(--border-width-strong) 0 0 var(--color-diff-removed-accent);
+        }
+
+        /* The tint lowers the contrast of the muted gutter text, so diff rows use on-surface. */
+        &[data-variant="added"] :is(.lineNumber, .marker),
+        &[data-variant="removed"] :is(.lineNumber, .marker) {
+            color: var(--color-on-surface);
+        }
+    }
+
+    /* Without a gutter the code starts at the same 12px as the language label. */
+    &:not([data-gutter]) .line {
+        padding-inline-start: var(--space-12);
+    }
+
+    /*
+     * The gutter is sticky so the numbers and the diff sign stay visible while the
+     * code scrolls sideways. Its opaque background hides the code underneath.
+     */
+    .gutter {
+        position: sticky;
+        left: 0;
+        z-index: 1;
+        display: flex;
+        flex: none;
+        background-color: var(--color-surface-container);
+    }
+
+    /* Without numbers the sign column needs the same 12px inset as the label. */
+    &:not([data-numbered]) .gutter {
+        padding-inline-start: var(--space-12);
+    }
+
+    /*
+     * box-sizing keeps the inline min-width (N ch) as the label area, and the
+     * monospace advance makes N characters exactly N ch. text-align: end keeps
+     * numbers of different digit counts on the same right edge.
+     */
+    .lineNumber {
+        flex: none;
+        box-sizing: content-box;
+        padding-inline: var(--space-12);
+        text-align: end;
+        color: var(--color-on-surface-variant);
+        user-select: none;
+    }
+
+    .marker {
+        flex: none;
+        width: 1ch;
+        margin-inline-end: var(--space-8);
+        text-align: center;
+        color: var(--color-on-surface-variant);
+    }
+
+    .lineContent {
+        min-width: 0;
+    }
+}
+
+.wrapped {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+
+    .code {
+        min-width: 0;
+    }
+}
+
+/* max-content lets a line background span the horizontal scroll width. */
+.code {
+    display: block;
+    min-width: max-content;
+}
+
+/* Shiki emits only the two theme variables, so color-scheme and data-theme pick one. */
+.lineContent span {
+    color: light-dark(var(--shiki-light), var(--shiki-dark));
+    /*
+     * light-dark() only takes colors, so font styles come from the light variables.
+     * Both bundled themes set the same style and weight for a token.
+     */
+    font-style: var(--shiki-light-font-style, normal);
+    font-weight: var(--shiki-light-font-weight, normal);
+    text-decoration: var(--shiki-light-text-decoration, none);
+}
+
+/* The glyph fades and scales in whenever the copy state swaps the icon. */
+.copyButton svg {
+    animation: copy-feedback var(--motion-duration-effects-fast) var(--motion-easing-expressive-fast-effects);
+}
+
+@keyframes copy-feedback {
+    from {
+        opacity: 0;
+        scale: 0.6;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .copyButton svg {
+        animation: none;
+    }
+}

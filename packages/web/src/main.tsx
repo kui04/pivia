@@ -7,7 +7,9 @@ import "@/styles/reset.css";
 import "@/styles/global.css";
 
 import { App } from "./App";
+import { NotificationProvider } from "@/components/Notification/Notification";
 import { Log } from "@/lib/log";
+import { notificationManager } from "@/lib/notification";
 
 /** A keyboard inset below this size is usually browser chrome, not a virtual keyboard. */
 const KEYBOARD_THRESHOLD = 80;
@@ -102,6 +104,8 @@ if (container === null) {
 
 createRoot(container).render(
     <StrictMode>
-        <App />
+        <NotificationProvider toastManager={notificationManager} position="top-center">
+            <App />
+        </NotificationProvider>
     </StrictMode>,
 );

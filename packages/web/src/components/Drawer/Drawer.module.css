@@ -1,0 +1,126 @@
+/*
+ * An edge-anchored panel.
+ *
+ * The markup this file styles:
+ *
+ *   .backdrop                  dims the page; Base UI renders it beside the viewport
+ *   .viewport[data-side]       fixed full-screen flex row, above the keyboard
+ *   └─ :where(.popup)[data-side]  the panel; the caller's `className` extends it
+ *       └─ .content            Base UI Drawer.Content; display: contents keeps the panel layout
+ */
+.backdrop {
+    position: absolute;
+    z-index: var(--z-modal);
+    inset: 0;
+    background-color: var(--color-scrim);
+    /* Base UI writes the gesture progress here, so the scrim follows the finger. */
+    opacity: calc(1 - var(--drawer-swipe-progress, 0));
+    transition: opacity var(--motion-duration-effects-default) var(--motion-easing-standard);
+
+    &[data-starting-style],
+    &[data-ending-style] {
+        opacity: 0;
+    }
+
+    /* A transition would lag one frame behind the progress the finger writes. */
+    &[data-swiping] {
+        transition: none;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        & {
+            transition: none;
+        }
+    }
+}
+
+/*
+ * The panel bleeds past the edge it slides from, so the viewport only supplies the system insets.
+ * Base UI moves the popup with the swipe gesture through `--drawer-swipe-movement-x`.
+ *
+ * The portal sits on `document.body`, outside the `#root` safe-area padding, so the viewport adds
+ * the system insets itself. The bottom keeps the larger of the safe area and the keyboard: while
+ * the keyboard is open it covers the home indicator, so adding both would lift the panel twice.
+ */
+.viewport {
+    position: fixed;
+    z-index: var(--z-modal);
+    inset: 0;
+    display: flex;
+    align-items: stretch;
+    padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
+        max(var(--kb-inset, 0px), env(safe-area-inset-bottom, 0px)) env(safe-area-inset-left, 0px);
+
+    &[data-side="left"] {
+        justify-content: flex-start;
+    }
+
+    &[data-side="right"] {
+        justify-content: flex-end;
+    }
+
+    /*
+     * The panel reaches one bleed past the anchored edge, so its border and shadow stay off-screen
+     * there. The padding on that side returns the content to the visible width.
+     */
+    :where(.popup) {
+        --drawer-bleed: var(--space-48);
+        box-sizing: border-box;
+        display: flex;
+        flex-direction: column;
+        inline-size: calc(min(80vw, 18rem) + var(--drawer-bleed));
+        max-inline-size: calc(100% + var(--drawer-bleed));
+        block-size: 100%;
+        overflow: clip;
+        outline: none;
+        background-color: var(--color-surface-container);
+        color: var(--color-on-surface);
+        box-shadow: var(--elevation-3);
+        font-family: var(--font-sans);
+        transform: translateX(var(--drawer-swipe-movement-x, 0px));
+        transition: transform var(--motion-duration-spatial-fast) var(--motion-easing-standard);
+
+        /* Follow the finger; only the settle after release may ease. */
+        &[data-swiping] {
+            transition: none;
+        }
+
+        /* Only the inward corners round; the anchored edge stays square and flush. */
+        &[data-side="left"] {
+            margin-inline-start: calc(-1 * var(--drawer-bleed));
+            padding-inline-start: var(--drawer-bleed);
+            border-inline-end: var(--border-width) solid var(--color-outline-variant);
+            border-start-end-radius: var(--shape-corner-large);
+            border-end-end-radius: var(--shape-corner-large);
+        }
+
+        &[data-side="right"] {
+            margin-inline-end: calc(-1 * var(--drawer-bleed));
+            padding-inline-end: var(--drawer-bleed);
+            border-inline-start: var(--border-width) solid var(--color-outline-variant);
+            border-start-start-radius: var(--shape-corner-large);
+            border-end-start-radius: var(--shape-corner-large);
+        }
+
+        /* Stop with the inner edge just past the window so the off-screen bleed leaves no gap. */
+        &[data-side="left"][data-starting-style],
+        &[data-side="left"][data-ending-style] {
+            transform: translateX(calc(-100% + var(--drawer-bleed) - var(--space-2)));
+        }
+
+        &[data-side="right"][data-starting-style],
+        &[data-side="right"][data-ending-style] {
+            transform: translateX(calc(100% - var(--drawer-bleed) + var(--space-2)));
+        }
+
+        .content {
+            display: contents;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            & {
+                transition: none;
+            }
+        }
+    }
+}

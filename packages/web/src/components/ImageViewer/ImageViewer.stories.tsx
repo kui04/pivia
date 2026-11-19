@@ -1,0 +1,146 @@
+import type { Meta, StoryObj } from "@storybook/react-vite";
+import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
+import { expect, screen, userEvent, waitFor, within } from "storybook/test";
+
+import { ImageViewer } from "./ImageViewer";
+import { imageAlt, imageCaption, imageSrc } from "../Image/imageFixture";
+
+const brokenImage = "data:image/png;base64,not-an-image";
+
+const meta = {
+    title: "Components/ImageViewer",
+    component: ImageViewer,
+    args: {
+        open: false,
+        onOpenChange: () => {},
+        src: imageSrc,
+        alt: imageAlt,
+        caption: imageCaption,
+    },
+} satisfies Meta<typeof ImageViewer>;
+
+export default meta;
+
+type Story = StoryObj<typeof meta>;
+
+function ViewerHarness({ defaultOpen = false, src = imageSrc }: { defaultOpen?: boolean; src?: string }) {
+    const [open, setOpen] = useState(defaultOpen);
+
+    return (
+        <>
+            <button type="button" onClick={() => setOpen(true)}>
+                Open image
+            </button>
+            <ImageViewer open={open} onOpenChange={setOpen} src={src} alt={imageAlt} caption={imageCaption} />
+        </>
+    );
+}
+
+function DarkTheme({ children }: { children: ReactNode }) {
+    useEffect(() => {
+        const root = document.documentElement;
+        root.dataset.theme = "dark";
+
+        return () => {
+            delete root.dataset.theme;
+        };
+    }, []);
+
+    return <>{children}</>;
+}
+
+export const Default: Story = {
+    render: () => <ViewerHarness />,
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+        const trigger = canvas.getByRole("button", { name: "Open image" });
+
+        await userEvent.click(trigger);
+
+        const dialog = await screen.findByRole("dialog", { name: "Image viewer" });
+        const image = within(dialog).getByRole("img", { name: imageAlt });
+
+        await waitFor(() => expect(image).toHaveAttribute("data-status", "loaded"), { timeout: 5000 });
+
+        const caption = dialog.querySelector("[data-slot='image-viewer-caption']");
+        if (caption === null) {
+            throw new Error("The viewer did not render the caption");
+        }
+        await expect(caption).toHaveTextContent(imageCaption);
+
+        const zoom = dialog.querySelector("[data-slot='image-viewer-zoom']");
+        if (zoom === null) {
+            throw new Error("The viewer did not render the zoom status");
+        }
+
+        await expect(zoom).toHaveTextContent("100%");
+
+        await userEvent.click(within(dialog).getByRole("button", { name: "Zoom in" }));
+        await waitFor(() => expect(Number.parseInt(zoom.textContent ?? "0", 10)).toBeGreaterThan(100));
+
+        await userEvent.click(within(dialog).getByRole("button", { name: "Reset zoom" }));
+        await waitFor(() => expect(zoom).toHaveTextContent("100%"));
+
+        await userEvent.click(within(dialog).getByRole("button", { name: "Zoom in" }));
+        await waitFor(() => expect(Number.parseInt(zoom.textContent ?? "0", 10)).toBeGreaterThan(100));
+
+        await userEvent.click(within(dialog).getByRole("button", { name: "Zoom out" }));
+        await waitFor(() => expect(zoom).toHaveTextContent("100%"));
+
+        await userEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+        await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+        await waitFor(() => expect(trigger).toHaveFocus());
+    },
+};
+
+export const Escape: Story = {
+    render: () => <ViewerHarness />,
+    play: async () => {
+        const trigger = screen.getByRole("button", { name: "Open image" });
+
+        await userEvent.click(trigger);
+        await screen.findByRole("dialog", { name: "Image viewer" });
+
+        await userEvent.keyboard("{Escape}");
+
+        await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+        await waitFor(() => expect(trigger).toHaveFocus());
+    },
+};
+
+export const Open: Story = {
+    render: () => <ViewerHarness defaultOpen />,
+};
+
+export const Dark: Story = {
+    render: () => (
+        <DarkTheme>
+            <ViewerHarness defaultOpen />
+        </DarkTheme>
+    ),
+    play: async () => {
+        await screen.findByRole("dialog", { name: "Image viewer" });
+
+        const backdrop = document.querySelector("[data-slot='image-viewer-backdrop']");
+        if (backdrop === null) {
+            throw new Error("The viewer did not render a backdrop");
+        }
+
+        await expect(getComputedStyle(backdrop).backgroundColor).toBe("rgba(0, 0, 0, 0.85)");
+    },
+};
+
+export const Broken: Story = {
+    render: () => <ViewerHarness defaultOpen src={brokenImage} />,
+    play: async () => {
+        const dialog = await screen.findByRole("dialog", { name: "Image viewer" });
+        const alert = await screen.findByRole("alert");
+
+        await expect(alert).toHaveTextContent("Image could not be loaded.");
+        await expect(within(dialog).queryByRole("button", { name: "Zoom in" })).toBeNull();
+
+        await userEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+        await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    },
+};

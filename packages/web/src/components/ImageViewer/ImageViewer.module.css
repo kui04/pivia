@@ -1,0 +1,228 @@
+/*
+ * A full-screen image viewer with a pan and zoom canvas.
+ *
+ * The markup this file styles:
+ *
+ *   .backdrop                   the scrim; Base UI renders it beside the popup
+ *   .popup                      merged with the caller `className`
+ *   ├─ .srOnly                  the dialog title and description
+ *   ├─ .topbar
+ *   │   └─ .closeSurface        the close IconButton
+ *   └─ .stage
+ *       ├─ .status              the loading message
+ *       ├─ .footer
+ *       │   ├─ .caption
+ *       │   └─ .toolbar
+ *       │       └─ .zoom        the zoom percentage
+ *       └─ .error
+ *   .canvas                     the pan and zoom wrapper; one class deep
+ *   ├─ &:active
+ *   ├─ &:focus-visible
+ *   └─ .content
+ *       └─ .image               hidden while the image loads
+ */
+.backdrop {
+    position: absolute;
+    z-index: var(--z-modal);
+    inset: 0;
+    background-color: var(--color-viewer-backdrop);
+    transition: opacity var(--motion-duration-effects-default) var(--motion-easing-standard);
+
+    &[data-starting-style],
+    &[data-ending-style] {
+        opacity: 0;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        & {
+            transition: none;
+        }
+    }
+}
+
+.popup {
+    position: fixed;
+    z-index: var(--z-modal);
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    max-height: none;
+    padding: 0;
+    border: 0;
+    outline: none;
+    background-color: transparent;
+    color: var(--color-on-primary);
+    font-family: var(--font-sans);
+    transform-origin: center;
+    transition:
+        opacity var(--motion-duration-effects-default) var(--motion-easing-standard),
+        scale var(--motion-duration-effects-default) var(--motion-easing-standard);
+
+    &[data-starting-style],
+    &[data-ending-style] {
+        opacity: 0;
+        scale: 0.98;
+    }
+
+    .srOnly {
+        position: absolute;
+        width: var(--border-width);
+        height: var(--border-width);
+        padding: 0;
+        margin: calc(-1 * var(--border-width));
+        border: 0;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
+    }
+
+    .topbar {
+        position: absolute;
+        z-index: 1;
+        inset-block-start: calc(var(--space-16) + env(safe-area-inset-top, 0px));
+        inset-inline-end: calc(var(--space-16) + env(safe-area-inset-right, 0px));
+        display: flex;
+        justify-content: flex-end;
+        pointer-events: none;
+
+        .closeSurface {
+            padding: var(--space-4);
+            border: var(--border-width) solid var(--color-outline-variant);
+            border-radius: var(--shape-corner-full);
+            background-color: var(--color-surface-container-high);
+            box-shadow: var(--elevation-2);
+            pointer-events: auto;
+        }
+    }
+
+    .stage {
+        position: absolute;
+        inset: 0;
+        padding: calc(var(--space-64) + env(safe-area-inset-top, 0px))
+            calc(var(--space-24) + env(safe-area-inset-right, 0px))
+            calc(var(--space-64) + env(safe-area-inset-bottom, 0px))
+            calc(var(--space-24) + env(safe-area-inset-left, 0px));
+        box-sizing: border-box;
+
+        .status {
+            position: absolute;
+            inset: 0;
+            display: grid;
+            place-items: center;
+            pointer-events: none;
+            color: var(--color-on-primary);
+            font-size: var(--type-body-medium-size);
+            line-height: var(--type-body-medium-line-height);
+        }
+
+        .footer {
+            position: absolute;
+            z-index: 1;
+            inset-block-end: calc(var(--space-16) + env(safe-area-inset-bottom, 0px));
+            inset-inline-start: calc(var(--space-16) + env(safe-area-inset-left, 0px));
+            inset-inline-end: calc(var(--space-16) + env(safe-area-inset-right, 0px));
+            display: flex;
+            flex-wrap: wrap;
+            align-items: end;
+            justify-content: space-between;
+            gap: var(--space-12);
+            pointer-events: none;
+
+            .caption {
+                max-width: 55%;
+                margin: 0;
+                color: var(--color-on-primary);
+                font-size: var(--type-body-medium-size);
+                line-height: var(--type-body-medium-line-height);
+                overflow-wrap: anywhere;
+                pointer-events: auto;
+            }
+
+            .toolbar {
+                display: flex;
+                align-items: center;
+                gap: var(--space-4);
+                margin-inline-start: auto;
+                padding: var(--space-4);
+                border: var(--border-width) solid var(--color-outline-variant);
+                border-radius: var(--shape-corner-full);
+                background-color: var(--color-surface-container-high);
+                box-shadow: var(--elevation-2);
+                pointer-events: auto;
+
+                .zoom {
+                    min-width: var(--space-40);
+                    color: var(--color-on-surface-variant);
+                    font-size: var(--type-label-medium-size);
+                    font-variant-numeric: tabular-nums;
+                    font-weight: var(--type-label-medium-weight);
+                    letter-spacing: var(--type-label-medium-tracking);
+                    line-height: var(--type-label-medium-line-height);
+                    text-align: center;
+                }
+            }
+        }
+
+        .error {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: var(--space-8);
+            color: var(--color-on-primary);
+            font-size: var(--type-body-medium-size);
+            line-height: var(--type-body-medium-line-height);
+            text-align: center;
+        }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        & {
+            transition: none;
+        }
+    }
+}
+
+/*
+ * The canvas stays one class deep: it is the wrapper of a third-party component. global.css
+ * rings a focused `[tabindex]` element and `.canvas:focus-visible` at the same (0,2,0)
+ * specificity; this module loads later, so the inset ring wins by load order.
+ */
+.canvas {
+    width: 100%;
+    height: 100%;
+    cursor: grab;
+    touch-action: none;
+
+    &:active {
+        cursor: grabbing;
+    }
+
+    &:focus-visible {
+        outline: var(--border-width-strong) solid var(--color-primary);
+        outline-offset: calc(-1 * var(--border-width-strong));
+    }
+
+    .content {
+        align-items: center;
+        flex-wrap: nowrap;
+        justify-content: center;
+
+        .image {
+            max-width: 100%;
+            max-height: 100%;
+            width: auto;
+            height: auto;
+            border-radius: var(--shape-corner-none);
+            object-fit: contain;
+            user-select: none;
+
+            &[data-status="loading"] {
+                opacity: 0;
+            }
+        }
+    }
+}

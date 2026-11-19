@@ -1,0 +1,394 @@
+/*
+ * Markdown in a conversation is read, not browsed: it gets its own type scale,
+ * rhythm and colors instead of the application's UI tokens. The values follow
+ * the compact transcript styles agent clients converged on: body text at the
+ * UI size, headings only a step above it, and a 12px paragraph gap.
+ *
+ * Everything local starts with --md-. The scale is defined once here, so a
+ * reading-size or font setting can change the transcript in one place.
+ *
+ * The markup this file styles (react-markdown generates nearly all of it). The tree follows
+ * the markup, so a descendant selector is drawn under the element that holds it. The four
+ * classes at the end go to another component's root, so each stays top-level:
+ *
+ *   .root                                            one message; data-streaming while tokens arrive
+ *   ├─ & > :first-child, & > :last-child             the row owns the air around a message
+ *   ├─ :is(h1, h2, h3, h4, h5, h6)                   headings, close to the body size
+ *   ├─ h1, h2, h3, :is(h4, h5, h6)                   margin and size per level
+ *   ├─ :is(h5, h6)                                   muted and medium weight
+ *   ├─ :is(h1, h2, h3, h4, h5, h6) + *               the block after a heading drops its top margin
+ *   ├─ p, strong
+ *   ├─ :is(ul, ol)                                   the indent both lists share
+ *   │   ├─ ul, ol                                    the marker of each list type
+ *   │   └─ li
+ *   │       ├─ &::marker
+ *   │       ├─ > :is(ul, ol)                         a nested list, smaller indent
+ *   │       └─ > p, > p + p                          a loose item wraps its text in a paragraph
+ *   ├─ & > :global(.contains-task-list)              remark-gfm names the list
+ *   ├─ :global(.task-list-item)                      remark-gfm names the item
+ *   │   ├─ input                                     the disabled checkbox, drawn by hand
+ *   │   │   └─ &:checked
+ *   │   └─ @media (forced-colors: active) input      the native checkbox paints the state
+ *   ├─ blockquote
+ *   │   └─ & > :first-child, & > :last-child         no extra air at its edges
+ *   ├─ hr
+ *   ├─ .link                                         every generated a
+ *   │   └─ &:hover                                   hover-capable pointers only
+ *   ├─ .inlineCode                                   every generated code
+ *   ├─ :global(.katex-display)                       rehype-katex display math, it scrolls sideways
+ *   ├─ :global([data-footnotes])                     the footnote section remark-gfm writes
+ *   │   ├─ > h2                                      the hidden heading
+ *   │   └─ ol
+ *   └─ &[data-streaming] > :last-child,
+ *       &[data-streaming] > :last-child :is(p, li)   the growing block keeps greedy wrapping
+ *
+ *   .codeBlock                                       className of CodeBlock, so it lands on its .block
+ *   └─ pre                                           the fenced block inside it
+ *   .tableScroll                                     className of ScrollArea, so it lands on its .root
+ *   └─ .table
+ *       ├─ :is(th, td)
+ *       ├─ th                                        the tinted header row
+ *       └─ tr:last-child > *                         no rule under the last row
+ *   .image                                           className of Image, on its img or its open button
+ *   .mathScroll                                      className of ScrollArea around the display math
+ */
+.root {
+    /* Families. IBM Plex ships with the app in src/styles/fonts.css. */
+    --md-font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --md-font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+
+    /* Type scale: 14px body, 17/15/14 headings, 13px code and data. */
+    --md-text-size: 0.875rem;
+    --md-line-height: 1.6;
+    --md-h1-size: 1.0625rem;
+    --md-h2-size: 0.9375rem;
+    --md-h3-size: 0.875rem;
+    --md-code-size: 0.8125rem;
+    --md-table-size: 0.8125rem;
+    --md-weight-normal: 400;
+    --md-weight-medium: 500;
+    --md-weight-strong: 600;
+
+    /* Space scale (4px base) and the hairlines a transcript needs. */
+    --md-space-1: 0.25rem;
+    --md-space-2: 0.5rem;
+    --md-space-3: 0.75rem;
+    --md-space-4: 1rem;
+    --md-space-5: 1.25rem;
+    --md-space-6: 1.5rem;
+    --md-rule: 1px;
+    --md-rule-strong: 2px;
+
+    /* Shape: small radii keep tables and inline code from looking like cards. */
+    --md-radius-sm: 4px;
+    --md-radius-md: 6px;
+
+    /* Colors mirror the app's VS Code palette, but belong to the transcript. */
+    --md-text: light-dark(#3b3b3b, #cccccc);
+    --md-muted: light-dark(#616161, #9d9d9d);
+    --md-accent: light-dark(#005fb8, #4daafc);
+    --md-error: light-dark(#c72e0f, #f85149);
+    --md-border: light-dark(#e5e5e5, #2b2b2b);
+    --md-border-strong: color-mix(in oklab, var(--md-text) 22%, transparent);
+    --md-surface: light-dark(#ffffff, #1f1f1f);
+    --md-checkbox: light-dark(#005fb8, #0d6ebd);
+    --md-inline-bg: color-mix(in oklab, var(--md-text) 8%, transparent);
+    --md-header-bg: color-mix(in oklab, var(--md-text) 4%, transparent);
+
+    --md-list-indent: 1.75rem;
+    --md-list-indent-nested: 1.25rem;
+
+    color: var(--md-text);
+    font-family: var(--md-font-sans);
+    font-size: var(--md-text-size);
+    font-weight: var(--md-weight-normal);
+    line-height: var(--md-line-height);
+    overflow-wrap: break-word;
+
+    /* The chat row owns the air around a message, so the edges add none. */
+    & > :first-child {
+        margin-block-start: 0;
+    }
+
+    & > :last-child {
+        margin-block-end: 0;
+    }
+
+    /*
+     * A heading announces the next thought, not a new document: it stays close to
+     * the body size and keeps more air above it than below. A block after a heading
+     * drops its own top margin so the heading's bottom margin owns that gap.
+     */
+    :is(h1, h2, h3, h4, h5, h6) {
+        color: var(--md-text);
+        font-weight: var(--md-weight-strong);
+        line-height: 1.3;
+    }
+
+    h1 {
+        margin-block: var(--md-space-6) var(--md-space-3);
+        font-size: var(--md-h1-size);
+    }
+
+    h2 {
+        margin-block: var(--md-space-5) var(--md-space-2);
+        font-size: var(--md-h2-size);
+    }
+
+    h3 {
+        margin-block: var(--md-space-4) var(--md-space-2);
+        font-size: var(--md-h3-size);
+    }
+
+    :is(h4, h5, h6) {
+        margin-block: var(--md-space-4) var(--md-space-2);
+        font-size: var(--md-text-size);
+    }
+
+    :is(h5, h6) {
+        color: var(--md-muted);
+        font-weight: var(--md-weight-medium);
+    }
+
+    :is(h1, h2, h3, h4, h5, h6) + * {
+        margin-block-start: 0;
+    }
+
+    p {
+        margin-block: 0 var(--md-space-3);
+        text-wrap: pretty;
+    }
+
+    strong {
+        font-weight: var(--md-weight-strong);
+    }
+
+    :is(ul, ol) {
+        margin-block: var(--md-space-2) var(--md-space-3);
+        padding-inline-start: var(--md-list-indent);
+    }
+
+    ul {
+        list-style: disc;
+    }
+
+    ol {
+        list-style: decimal;
+    }
+
+    li {
+        margin-block: var(--md-space-1);
+        text-wrap: pretty;
+
+        &::marker {
+            color: var(--md-muted);
+        }
+
+        > :is(ul, ol) {
+            margin-block: var(--md-space-1);
+            padding-inline-start: var(--md-list-indent-nested);
+        }
+
+        /* A loose list wraps its items in paragraphs; keep the air inside a row small. */
+        > p {
+            margin-block: 0;
+        }
+
+        > p + p {
+            margin-block-start: var(--md-space-2);
+        }
+    }
+
+    /* remark-gfm names task lists in the output, so these names stay global. */
+    & > :global(.contains-task-list) {
+        padding-inline-start: 0;
+    }
+
+    :global(.task-list-item) {
+        list-style: none;
+
+        /*
+         * The native disabled checkbox is painted grey and ignores accent-color, so a
+         * task list would read checked and unchecked the same. Draw the box instead;
+         * the input stays the accessible control and keeps the item's name.
+         */
+        input {
+            display: inline-block;
+            inline-size: 0.8125rem;
+            block-size: 0.8125rem;
+            margin: 0 var(--md-space-2) 0 0;
+            border: var(--md-rule) solid var(--md-muted);
+            border-radius: var(--md-radius-sm);
+            background-color: var(--md-surface);
+            appearance: none;
+            vertical-align: -0.125em;
+
+            &:checked {
+                border-color: var(--md-checkbox);
+                background-color: var(--md-checkbox);
+                background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5 6.5 11.5 12.5 4.5' fill='none' stroke='%23fff' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+                background-position: center;
+                background-repeat: no-repeat;
+                background-size: 75%;
+            }
+        }
+
+        /* Forced colors replaces the custom background but keeps the white check image. */
+        @media (forced-colors: active) {
+            input {
+                appearance: auto;
+                background-image: none;
+            }
+        }
+    }
+
+    blockquote {
+        margin-block: var(--md-space-3);
+        padding-inline-start: var(--md-space-3);
+        border-inline-start: var(--md-rule-strong) solid var(--md-border-strong);
+        color: var(--md-muted);
+
+        & > :first-child {
+            margin-block-start: 0;
+        }
+
+        & > :last-child {
+            margin-block-end: 0;
+        }
+    }
+
+    hr {
+        margin-block: var(--md-space-6);
+        border-block-start: var(--md-rule) solid var(--md-border-strong);
+    }
+
+    .link {
+        color: var(--md-accent);
+        text-decoration: underline;
+        text-decoration-thickness: var(--md-rule);
+        text-underline-offset: 2px;
+
+        @media (hover: hover) {
+            &:hover {
+                text-decoration-thickness: var(--md-rule-strong);
+            }
+        }
+    }
+
+    .inlineCode {
+        padding: 0.1em 0.35em;
+        border-radius: var(--md-radius-sm);
+        background-color: var(--md-inline-bg);
+        color: var(--md-text);
+        font-family: var(--md-font-mono);
+        font-size: 0.9em;
+        font-weight: var(--md-weight-medium);
+        overflow-wrap: break-word;
+    }
+
+    /* Display math can be wider than the column; it scrolls instead of pushing the row. */
+    :global(.katex-display) {
+        margin-block: 0;
+        /* The 8px bottom padding keeps the 6px overlay bar below the formula. */
+        padding-block: var(--md-space-1) var(--md-space-2);
+    }
+
+    /*
+     * remark-gfm hides the footnotes heading with the sr-only class, which this
+     * project does not define; hide it here so the list starts the section.
+     */
+    :global([data-footnotes]) > h2 {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
+    }
+
+    :global([data-footnotes]) {
+        margin-block-start: var(--md-space-6);
+        padding-block-start: var(--md-space-2);
+        border-block-start: var(--md-rule) solid var(--md-border);
+        color: var(--md-muted);
+        font-size: var(--md-table-size);
+        line-height: 1.5;
+
+        ol {
+            padding-inline-start: var(--md-space-4);
+        }
+    }
+
+    /* Pretty wrapping reflows settled lines while tokens arrive; the growing block stays greedy. */
+    &[data-streaming] > :last-child,
+    &[data-streaming] > :last-child :is(p, li) {
+        text-wrap: auto;
+    }
+}
+
+/*
+ * The standalone block sets its own UI size (14px). In a transcript code sits
+ * one step below the prose and level with the tables, so the mono text does not
+ * outweigh the paragraph it belongs to.
+ */
+.codeBlock {
+    margin-block: var(--md-space-3);
+
+    pre {
+        font-size: var(--md-code-size);
+    }
+}
+
+/*
+ * A table is data inside a message: one small type size, tabular figures and
+ * rules only between rows. The frame and the tinted header separate it from
+ * prose without drawing a grid. GFM writes column alignment as an inline style,
+ * so the text-align default here does not override it.
+ */
+.tableScroll {
+    max-width: 100%;
+    margin-block: var(--md-space-4);
+    overflow: hidden;
+    border: var(--md-rule) solid var(--md-border);
+    border-radius: var(--md-radius-md);
+    background-color: var(--md-surface);
+
+    .table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: var(--md-table-size);
+        line-height: 1.5;
+        font-variant-numeric: tabular-nums;
+
+        :is(th, td) {
+            padding: var(--md-space-2) var(--md-space-3);
+            border-block-end: var(--md-rule) solid var(--md-border);
+            text-align: start;
+            vertical-align: top;
+        }
+
+        th {
+            background-color: var(--md-header-bg);
+            color: var(--md-muted);
+            font-weight: var(--md-weight-strong);
+        }
+
+        tr:last-child > * {
+            border-block-end: 0;
+        }
+    }
+}
+
+.image {
+    margin-block: var(--md-space-4);
+    border-radius: var(--md-radius-md);
+    background-color: var(--md-surface);
+}
+
+/*
+ * A wide formula starts at the inline start: a centered scroll container would
+ * leave its left overflow unreachable in LTR.
+ */
+.mathScroll {
+    margin-block: var(--md-space-3);
+}

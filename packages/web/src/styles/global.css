@@ -11,6 +11,7 @@ body,
 }
 
 body {
+    position: relative;
     background: var(--color-surface);
     color: var(--color-on-surface);
     overscroll-behavior: none;

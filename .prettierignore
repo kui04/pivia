@@ -5,3 +5,5 @@ storybook-static
 .devenv
 .direnv
 .pre-commit-config.yaml
+# SVG assets have no Prettier parser.
+packages/web/.storybook/fixtures/*.svg

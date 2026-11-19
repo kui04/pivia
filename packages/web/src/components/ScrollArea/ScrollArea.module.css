@@ -1,0 +1,138 @@
+/*
+ * The scroll container with overlay scrollbars.
+ *
+ * The markup this file styles (Base UI renders all of it). Base UI adds its
+ * native-scrollbar hiding class to the viewport.
+ *
+ *   .root
+ *   ├─ .scrollbar[data-orientation]
+ *   │   └─ .thumb              Base UI moves it from the start edge
+ *   └─ .corner
+ *
+ *   .viewport[tabindex]        DOM child of .root; top-level so viewportClassName keeps one class
+ *   └─ &:focus-visible
+ */
+.viewport {
+    width: 100%;
+    height: 100%;
+
+    /*
+     * global.css sets the ring at (0,2,0); this selector is (0,3,0), so the ring stays inside
+     * the viewport when the root clips its corners. The bars still paint over the ring's right
+     * and bottom edges.
+     */
+    &[tabindex]:focus-visible {
+        outline-offset: calc(-1 * var(--border-width-strong));
+    }
+}
+
+.root {
+    /* Component-specific values: a thumb that stays above 3:1 against the surface. */
+    --scrollbar-thumb-opacity: 0.7;
+    --scrollbar-thumb-hover-opacity: 0.85;
+
+    min-width: 0;
+    min-height: 0;
+
+    /*
+     * The track is transparent and the bar is only as thick as the thumb. Both bars are absolutely
+     * positioned by Base UI, so they overlay the content instead of taking a native scrollbar
+     * gutter. The bar is a flex container so the thumb fills its cross axis; do not center the
+     * thumb, because it is the main-axis item on the horizontal bar and Base UI moves it from the
+     * start edge with a transform.
+     */
+    .scrollbar {
+        /*
+         * Above the content, including an opaque sticky header inside the viewport, which would
+         * otherwise cut the thumb where the header crosses it. The header sits at 1.
+         */
+        z-index: 2;
+        display: flex;
+        background-color: transparent;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity var(--motion-duration-effects-fast) var(--motion-easing-standard);
+
+        &[data-orientation="vertical"] {
+            width: var(--space-6);
+        }
+
+        /*
+         * The horizontal bar is the cue that more content exists to the side, so it stays visible
+         * even while the pointer is elsewhere.
+         */
+        &[data-orientation="horizontal"] {
+            height: var(--space-6);
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        &[data-hovering],
+        &[data-scrolling] {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        /* Match a native scrollbar: visible immediately while scrolling, then fade out. */
+        &[data-scrolling] {
+            transition-duration: 0ms;
+        }
+
+        .thumb {
+            width: 100%;
+            height: 100%;
+            border-radius: var(--shape-corner-full);
+            background-color: var(--color-on-surface-variant);
+            opacity: var(--scrollbar-thumb-opacity);
+            transition: opacity var(--motion-duration-effects-fast) var(--motion-easing-standard);
+
+            &:hover,
+            &[data-scrolling] {
+                opacity: var(--scrollbar-thumb-hover-opacity);
+            }
+
+            /* The forced background replacement would otherwise leave a low-opacity thumb invisible. */
+            @media (forced-colors: active) {
+                & {
+                    background-color: CanvasText;
+                    opacity: 1;
+                }
+            }
+        }
+
+        /*
+         * A touch device has no hover to reveal the vertical bar. Keep it visible while scrollable
+         * and give the 6px thumb a wider invisible hit area; the visible thickness does not change.
+         * The 20px extends inward from the edge.
+         */
+        @media (hover: none) {
+            &[data-orientation="vertical"] {
+                opacity: 1;
+                pointer-events: auto;
+            }
+
+            &[data-orientation="vertical"] .thumb {
+                position: relative;
+
+                &::before {
+                    content: "";
+                    position: absolute;
+                    inset-block: 0;
+                    inset-inline: calc(-1 * var(--space-20)) 0;
+                }
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            &,
+            .thumb {
+                transition: none;
+            }
+        }
+    }
+
+    .corner {
+        background-color: transparent;
+        pointer-events: none;
+    }
+}

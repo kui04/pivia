@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800">
+    <defs>
+        <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#f6d7b0" />
+            <stop offset="1" stop-color="#c98d5c" />
+        </linearGradient>
+    </defs>
+    <rect width="1200" height="800" fill="url(#sky)" />
+    <circle cx="910" cy="220" r="70" fill="#fff5d6" opacity=".75" />
+    <path d="M0 620 240 470 430 610 650 500 880 650 1080 540 1200 620V800H0Z" fill="#3b3b3b" opacity=".22" />
+    <text x="60" y="120" fill="#3b3b3b" font-family="sans-serif" font-size="40">Sunset over layered mountains</text>
+</svg>

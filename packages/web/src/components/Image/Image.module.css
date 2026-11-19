@@ -1,0 +1,39 @@
+/*
+ * A display image, optionally wrapped in a dialog trigger.
+ *
+ * The markup this file styles:
+ *
+ *   .trigger                    the button around the image when `onOpen` is set
+ *   └─ &:focus-visible
+ *   .image                      the root, or the img inside .trigger; merges the caller classes
+ */
+.trigger {
+    display: inline-flex;
+    max-width: 100%;
+    padding: 0;
+    border: 0;
+    border-radius: var(--shape-corner-extra-small);
+    background: none;
+    color: inherit;
+    cursor: zoom-in;
+    line-height: 0;
+    overflow: hidden;
+    vertical-align: middle;
+
+    &:focus-visible {
+        outline: var(--border-width-strong) solid var(--color-primary);
+        outline-offset: var(--space-2);
+    }
+}
+
+/*
+ * The image stays one class deep: without a trigger it is the root element, and it always merges
+ * a caller class.
+ */
+.image {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    border-radius: var(--shape-corner-extra-small);
+    object-fit: contain;
+}

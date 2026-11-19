@@ -1,0 +1,160 @@
+/*
+ * A dropdown action menu: the positioner, the popup, its items and the separator.
+ *
+ * The markup this file styles (Base UI renders it):
+ *
+ *   .positioner           portaled after the modal that holds the menu
+ *   └─ :where(.popup)     Base UI Menu.Popup, with the caller's class; :where keeps its specificity
+ *   .item                 Base UI Menu.Item, on the same element as .destructive
+ *   ├─ &[data-highlighted]
+ *   ├─ &[data-disabled]   greys the icon and the shortcut too
+ *   ├─ .itemIcon          Icon's 16px box
+ *   ├─ .itemLabel
+ *   └─ .shortcut          the kbd glyphs
+ *   .destructive          added to the same element as .item
+ *   ├─ .itemIcon
+ *   └─ .shortcut
+ *   .separator            Base UI Menu.Separator
+ */
+.positioner {
+    /*
+     * Base UI mounts a menu inside the portal of the modal that contains it, after that modal's
+     * viewport, so the shared modal layer keeps the menu above the dialog or drawer. A dropdown
+     * layer would put it under the drawer scrim.
+     */
+    z-index: var(--z-modal);
+    outline: none;
+
+    /*
+     * The popup accepts a caller `className`, so :where() keeps its old specificity and the
+     * caller can still override it by load order.
+     */
+    :where(.popup) {
+        min-width: var(--anchor-width);
+        max-width: var(--available-width);
+        max-block-size: min(22rem, var(--available-height));
+        padding: var(--space-4);
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        scroll-padding-block: var(--space-4);
+        border: var(--border-width) solid var(--color-outline-variant);
+        border-radius: var(--shape-corner-small);
+        outline: none;
+        background-color: var(--color-surface-container-high);
+        color: var(--color-on-surface);
+        box-shadow: var(--elevation-2);
+        font-family: var(--font-sans);
+        transform-origin: var(--transform-origin);
+        transition:
+            opacity var(--motion-duration-effects-fast) var(--motion-easing-standard),
+            scale var(--motion-duration-effects-fast) var(--motion-easing-standard);
+
+        &[data-starting-style],
+        &[data-ending-style] {
+            opacity: 0;
+            scale: 0.98;
+        }
+
+        /* Base UI marks keyboard activation and dismiss closes as instant; skip the animation then. */
+        &[data-instant] {
+            transition: none;
+        }
+    }
+}
+
+/*
+ * The item is the root of MenuItem's markup and receives the caller's class, so it stays a top-level
+ * block: nested in the popup it would outrank that class, and the standalone `.destructive` modifier
+ * below would lose its color to the item's own rule.
+ */
+.item {
+    display: grid;
+    grid-template-columns: var(--space-16) minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--space-8);
+    min-height: var(--space-32);
+    padding: var(--space-6) var(--space-8);
+    border-radius: var(--shape-corner-extra-small);
+    color: var(--color-on-surface);
+    cursor: default;
+    font-size: var(--type-label-large-size);
+    font-weight: var(--type-label-large-weight);
+    line-height: var(--type-label-large-line-height);
+    letter-spacing: var(--type-label-large-tracking);
+    outline: none;
+    user-select: none;
+    transition: background-color var(--motion-duration-effects-fast) var(--motion-easing-standard);
+
+    &[data-highlighted] {
+        background-color: var(--state-hover);
+    }
+
+    .itemIcon {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: var(--space-16);
+        height: var(--space-16);
+        color: var(--color-on-surface-variant);
+    }
+
+    .itemLabel {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .shortcut {
+        color: var(--color-on-surface-variant);
+        font-family: var(--font-sans);
+        font-size: var(--type-label-medium-size);
+        font-weight: var(--type-label-medium-weight);
+        line-height: var(--type-label-medium-line-height);
+        letter-spacing: var(--type-label-medium-tracking);
+        font-variant-numeric: tabular-nums;
+    }
+
+    &[data-disabled] {
+        color: var(--color-on-surface-variant);
+
+        .itemIcon,
+        .shortcut {
+            color: var(--color-on-surface-variant);
+        }
+    }
+}
+
+.destructive {
+    color: var(--color-error);
+
+    .itemIcon,
+    .shortcut {
+        color: var(--color-error);
+    }
+}
+
+.separator {
+    height: var(--border-width);
+    margin: var(--space-4) var(--space-8);
+    background-color: var(--color-outline-variant);
+}
+
+/* A forced background replacement would otherwise erase the highlighted row. */
+@media (forced-colors: active) {
+    .item[data-highlighted] {
+        outline: var(--border-width-strong) solid Highlight;
+        outline-offset: calc(-1 * var(--border-width-strong));
+    }
+
+    .separator {
+        background-color: CanvasText;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .positioner .popup,
+    .item {
+        transition: none;
+    }
+}

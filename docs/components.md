@@ -23,6 +23,10 @@
   scroll idle timeout (500 ms in 1.9.0). On touch devices the vertical bar stays visible while scrollable and keeps a
   wider invisible hit area. `CodeBlock`, Markdown tables and display math use it for sideways overflow; do not
   reintroduce native `overflow-x: auto` there.
+- `CodeBlock` wraps Shiki with the light-plus and dark-plus themes. `language` picks the grammar; while `streaming` is true the
+  block stays plain, then highlights once the answer ends. The toolbar toggles wrapping and copies the source through
+  `lib/clipboard.ts`; `lineNumbers`, `startLine`, `formatLineNumber` and `copyable` control the gutter and copy action, and
+  `onCopy` runs after a successful write. Diff input keeps its signs in a sticky gutter.
 - `Markdown` renders model output with GFM, KaTeX and single-newline breaks. Fenced code goes through `CodeBlock`;
   `streaming` keeps those blocks plain until the answer ends. `remarkCurrency` keeps prices such as `$5` from becoming
   math, while `$x$` and `$$...$$` still render. External links open via `onOpenLink` (opening in a new tab/window) so
@@ -55,7 +59,8 @@
   padding, so the viewport adds `env(safe-area-inset-*)` itself and keeps the larger of the safe area and `--kb-inset`
   at the bottom: while the keyboard is open it covers the home indicator. The portal stays mounted while the drawer is
   closed, so the content keeps its own state such as search text and scroll position; Base UI hides the panel and the
-  backdrop from the accessibility tree meanwhile.
+  backdrop from the accessibility tree meanwhile. `useInsideDrawer` tells content whether it renders inside the panel, so
+  page-level gestures do not claim the drawer's swipe area.
 - `Field` wraps Base UI Field and supplies the label, description and error for one control. Base UI connects them
   to the control, tracks validity and exposes `data-invalid`/`data-disabled`. Pass `nativeLabel={false}` when the
   control is a Select trigger. An explicit `error` marks the field invalid and replaces the native message. The

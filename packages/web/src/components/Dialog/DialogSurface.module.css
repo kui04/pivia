@@ -1,0 +1,124 @@
+/*
+ * The shared backdrop, viewport and popup of the dialogs.
+ *
+ * The markup this file styles:
+ *
+ *   .backdrop                   a sibling of the viewport; fades in and out
+ *   .viewport
+ *   └─ :where(.popup)           the panel; merged with the caller `className`, which :where keeps at its specificity
+ *       ├─ :where(.header)
+ *       │   ├─ :where(.title)
+ *       │   └─ :where(.description)
+ *       └─ :where(.actions)     the right-aligned actions
+ */
+.backdrop {
+    position: absolute;
+    z-index: var(--z-modal);
+    inset: 0;
+    background-color: var(--color-scrim);
+    transition: opacity var(--motion-duration-effects-default) var(--motion-easing-standard);
+
+    &[data-starting-style],
+    &[data-ending-style] {
+        opacity: 0;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        & {
+            transition: none;
+        }
+    }
+}
+
+.viewport {
+    position: fixed;
+    z-index: var(--z-modal);
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: calc(var(--space-16) + env(safe-area-inset-top, 0px))
+        calc(var(--space-16) + env(safe-area-inset-right, 0px)) calc(var(--space-16) + env(safe-area-inset-bottom, 0px))
+        calc(var(--space-16) + env(safe-area-inset-left, 0px));
+
+    /*
+     * The popup and its parts accept a caller `className`, so they keep their old specificity:
+     * :where() adds no class, and the caller can still override them by load order.
+     */
+    :where(.popup) {
+        box-sizing: border-box;
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-16);
+        inline-size: min(100%, var(--dialog-width, 30rem));
+        max-block-size: calc(
+            100dvh - var(--space-32) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)
+        );
+        padding: var(--space-24);
+        overflow: auto;
+        border: var(--border-width) solid var(--color-outline-variant);
+        border-radius: var(--shape-corner-extra-large);
+        outline: none;
+        background-color: var(--color-surface-container-high);
+        color: var(--color-on-surface);
+        box-shadow: var(--elevation-3);
+        font-family: var(--font-sans);
+        transform-origin: center;
+        transition:
+            opacity var(--motion-duration-effects-default) var(--motion-easing-standard),
+            scale var(--motion-duration-effects-default) var(--motion-easing-standard);
+
+        &[data-starting-style],
+        &[data-ending-style] {
+            opacity: 0;
+            scale: 0.98;
+        }
+
+        :where(.header) {
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-8);
+            min-width: 0;
+
+            :where(.title),
+            :where(.description) {
+                margin: 0;
+                overflow-wrap: anywhere;
+            }
+
+            :where(.title) {
+                color: var(--color-on-surface);
+                font-size: var(--type-headline-small-size);
+                font-weight: var(--type-headline-small-emphasized-weight);
+                letter-spacing: var(--type-headline-small-tracking);
+                line-height: var(--type-headline-small-line-height);
+            }
+
+            :where(.description) {
+                color: var(--color-on-surface-variant);
+                font-size: var(--type-body-medium-size);
+                font-weight: var(--type-body-medium-weight);
+                letter-spacing: var(--type-body-medium-tracking);
+                line-height: var(--type-body-medium-line-height);
+            }
+        }
+
+        :where(.actions) {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+            gap: var(--space-8);
+        }
+
+        @media (forced-colors: active) {
+            & {
+                border-color: CanvasText;
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            & {
+                transition: none;
+            }
+        }
+    }
+}
