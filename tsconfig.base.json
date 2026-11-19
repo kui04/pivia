@@ -16,6 +16,7 @@
         "moduleDetection": "force",
         "resolveJsonModule": true,
         "esModuleInterop": true,
-        "skipLibCheck": true
+        "skipLibCheck": true,
+        "customConditions": ["@pivia/source"]
     }
 }

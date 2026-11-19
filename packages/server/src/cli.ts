@@ -7,6 +7,7 @@ import { parseArgs } from "node:util";
 import type { LevelWithSilent } from "pino";
 
 import { buildApp } from "./app.ts";
+import { generateStartupSecret, isLoopbackHost } from "./auth.ts";
 import { createLogger, isLogLevel, LOG_LEVELS } from "./logger.ts";
 
 const DEFAULT_HOST = "127.0.0.1";
@@ -20,7 +21,13 @@ export type CliAction =
           readonly host: string;
           readonly port: number;
           readonly logLevel: LevelWithSilent;
+          readonly noAuth: boolean;
+          readonly passwordFile: string | undefined;
       };
+
+/** Resolved startup authentication configuration. */
+export type ResolvedAuthConfig =
+    { readonly mode: "disabled" } | { readonly mode: "configured" | "generated"; readonly password: string };
 
 /** Raised when CLI arguments fail validation. */
 export class CliArgumentError extends Error {
@@ -38,10 +45,17 @@ export function formatHelp(): string {
         "Usage: pivia [serve] [options]",
         "",
         "Options:",
-        `  --host <addr>       Bind address (default: ${DEFAULT_HOST})`,
-        `  -p, --port <port>   Listen port, 0-65535 (default: ${DEFAULT_PORT})`,
-        `  --log-level <lvl>   ${LOG_LEVELS.join(" | ")} (default: info)`,
-        "  -h, --help          Show this help message",
+        `  --host <addr>           Bind address (default: ${DEFAULT_HOST})`,
+        `  -p, --port <port>       Listen port, 0-65535 (default: ${DEFAULT_PORT})`,
+        "  --password-file <path>  Read single-line login password from file (overrides PIVIA_PASSWORD)",
+        "  --no-auth               Disable authentication (loopback host only)",
+        `  --log-level <lvl>       ${LOG_LEVELS.join(" | ")} (default: info)`,
+        "  -h, --help              Show this help message",
+        "",
+        "Environment & Startup Auth:",
+        "  PIVIA_PASSWORD          Login password when --password-file is not provided",
+        "  If neither --password-file, PIVIA_PASSWORD, nor --no-auth is set,",
+        "  a random startup password is generated and printed to stderr.",
         "",
     ].join("\n");
 }
@@ -71,6 +85,8 @@ export function parseCliArgs(argv: readonly string[]): CliAction {
             options: {
                 host: { type: "string" },
                 port: { type: "string", short: "p" },
+                "password-file": { type: "string" },
+                "no-auth": { type: "boolean" },
                 "log-level": { type: "string" },
                 help: { type: "boolean", short: "h" },
             },
@@ -98,6 +114,15 @@ export function parseCliArgs(argv: readonly string[]): CliAction {
         throw new CliArgumentError("Host address must not be empty.");
     }
 
+    const noAuth = parsed.values["no-auth"] === true;
+    const passwordFile = parsed.values["password-file"];
+    if (noAuth && passwordFile !== undefined) {
+        throw new CliArgumentError("Cannot combine --no-auth with --password-file.");
+    }
+    if (noAuth && !isLoopbackHost(host)) {
+        throw new CliArgumentError("--no-auth is only permitted when binding a loopback address.");
+    }
+
     const port = parsed.values.port !== undefined ? parsePort(parsed.values.port) : DEFAULT_PORT;
 
     const rawLevel = parsed.values["log-level"] ?? "info";
@@ -110,7 +135,49 @@ export function parseCliArgs(argv: readonly string[]): CliAction {
         host,
         port,
         logLevel: rawLevel,
+        noAuth,
+        passwordFile,
     };
+}
+
+/**
+ * Resolve the startup authentication configuration from CLI options and environment variables.
+ */
+export function resolveAuthConfig(
+    action: Extract<CliAction, { kind: "serve" }>,
+    env: Readonly<Record<string, string | undefined>>,
+): ResolvedAuthConfig {
+    if (action.noAuth) {
+        if (env.PIVIA_PASSWORD !== undefined) {
+            throw new CliArgumentError("Cannot combine --no-auth with PIVIA_PASSWORD.");
+        }
+        return { mode: "disabled" };
+    }
+    if (action.passwordFile !== undefined) {
+        let content: string;
+        try {
+            content = readFileSync(action.passwordFile, "utf8");
+        } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error);
+            throw new CliArgumentError(`Failed to read password file "${action.passwordFile}": ${detail}`);
+        }
+        const stripped = content.replace(/[\r\n]+$/, "");
+        if (stripped.includes("\n") || stripped.includes("\r")) {
+            throw new CliArgumentError(`Password file "${action.passwordFile}" must contain a single line.`);
+        }
+        if (stripped.length === 0) {
+            throw new CliArgumentError(`Password file "${action.passwordFile}" is empty.`);
+        }
+        return { mode: "configured", password: stripped };
+    }
+    const envPassword = env.PIVIA_PASSWORD;
+    if (envPassword !== undefined) {
+        if (envPassword.length === 0) {
+            throw new CliArgumentError("PIVIA_PASSWORD must not be empty when set.");
+        }
+        return { mode: "configured", password: envPassword };
+    }
+    return { mode: "generated", password: generateStartupSecret() };
 }
 
 function readPackageVersion(): string {
@@ -124,8 +191,14 @@ function readPackageVersion(): string {
 
 async function runCli(argv: readonly string[]): Promise<void> {
     let action: CliAction;
+    let authResolution: ResolvedAuthConfig;
     try {
         action = parseCliArgs(argv);
+        if (action.kind === "help") {
+            process.stdout.write(formatHelp());
+            return;
+        }
+        authResolution = resolveAuthConfig(action, process.env);
     } catch (error) {
         if (error instanceof CliArgumentError) {
             process.stderr.write(`${error.message}\n`);
@@ -135,15 +208,11 @@ async function runCli(argv: readonly string[]): Promise<void> {
         throw error;
     }
 
-    if (action.kind === "help") {
-        process.stdout.write(formatHelp());
-        return;
-    }
-
     const logger = createLogger({ level: action.logLevel });
     const app = buildApp({
         version: readPackageVersion(),
         logger,
+        auth: authResolution.mode === "disabled" ? { disabled: true } : { password: authResolution.password },
     });
 
     let closing = false;
@@ -169,7 +238,12 @@ async function runCli(argv: readonly string[]): Promise<void> {
 
     try {
         const address = await app.listen({ host: action.host, port: action.port });
-        logger.info({ address }, "pivia server listening");
+        if (authResolution.mode === "generated") {
+            // Print directly to stderr so `--log-level warn|error|fatal|silent` never hides the only password,
+            // and omit the secret itself from the structured logger stream.
+            process.stderr.write(`pivia: generated startup password: ${authResolution.password}\n`);
+        }
+        logger.info({ address, authMode: authResolution.mode }, "pivia server listening");
     } catch (err) {
         process.off("SIGINT", shutdown);
         process.off("SIGTERM", shutdown);
