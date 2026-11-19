@@ -1,0 +1,23 @@
+# Dependencies and build output
+node_modules/
+dist/
+
+# Devenv
+.devenv*
+devenv.local.nix
+devenv.local.yaml
+.pre-commit-config.yaml
+
+# direnv
+.direnv/
+
+# Local files
+.env
+.env.local
+*.local
+
+# OS
+.DS_Store
+
+# Editor
+.vscode/
