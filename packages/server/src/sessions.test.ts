@@ -265,6 +265,8 @@ describe("SessionCatalog", () => {
             createdAtMs: Date.parse("2026-02-01T00:00:00.000Z"),
             modifiedAtMs: Date.parse("2026-02-01T00:00:02.000Z"),
             hasParent: false,
+            runtimeState: "idle",
+            attachedClients: 0,
         });
         expect(result.sessions[1]?.name).toBeNull();
         expect(result.sessions[1]?.hasParent).toBe(false);

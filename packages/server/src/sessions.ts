@@ -88,6 +88,15 @@ interface DiscoveryResult {
     readonly sessions: readonly DiscoveredSession[];
 }
 
+/** Result of resolving one session file for opening. */
+export interface ResolvedSession {
+    readonly summary: SessionSummary;
+    /** Canonical file path that passed the session root containment check. */
+    readonly realPath: string;
+    /** Configured session root; `realDir` is the canonical containment boundary. */
+    readonly root: SessionRoot & { readonly realDir: string };
+}
+
 function expandHomeDirectory(value: string): string {
     if (value === "~") {
         return homedir();
@@ -154,6 +163,19 @@ function isPathWithin(parent: string, child: string): boolean {
     return relativePath !== ".." && !relativePath.startsWith(`..${sep}`) && !isAbsolute(relativePath);
 }
 
+/**
+ * Compute the per-project directory of the default session layout.
+ *
+ * The SDK builds the same name from the project cwd and the agent directory: it strips the leading
+ * separator and replaces path separators and Windows drive colons with dashes. The server computes
+ * it explicitly so an injected agent directory is honored instead of the process-wide default.
+ */
+export function defaultProjectSessionDir(sessionsRoot: string, cwd: string): string {
+    const resolvedCwd = resolve(cwd);
+    const safePath = `--${resolvedCwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
+    return join(sessionsRoot, safePath);
+}
+
 function toFiniteMilliseconds(value: Date): number | undefined {
     const milliseconds = value.getTime();
     return Number.isFinite(milliseconds) ? milliseconds : undefined;
@@ -170,6 +192,8 @@ function toSessionSummary(info: SessionInfo): SessionSummary {
         createdAtMs: toFiniteMilliseconds(info.created) ?? modifiedAtMs,
         modifiedAtMs,
         hasParent: info.parentSessionPath !== undefined && info.parentSessionPath.length > 0,
+        runtimeState: "idle",
+        attachedClients: 0,
     };
 }
 
@@ -222,11 +246,18 @@ export class SessionCatalog {
     }
 
     /**
-     * Read one session by id, migrating entries to the current format in memory only.
-     * Returns `null` for an invalid or unknown id and for files that are unreadable, too large,
-     * or outside the session root.
+     * Resolve the session root used for reads and new sessions. The result is not checked on disk;
+     * callers that create directories must handle a missing root.
      */
-    async getById(id: string): Promise<SessionDetailResponse | null> {
+    resolveRoot(): SessionRoot {
+        return resolveSessionRoot(this.options);
+    }
+
+    /**
+     * Resolve one session file for opening. Applies the same id, containment, and file checks as
+     * {@link getById} without reading the transcript body.
+     */
+    async resolveById(id: string): Promise<ResolvedSession | null> {
         if (!isValidSessionId(id)) {
             return null;
         }
@@ -235,7 +266,43 @@ export class SessionCatalog {
         if (match === undefined) {
             return null;
         }
-        return this.readSession(root, id, match);
+        try {
+            // Resolve again after discovery so a swapped symbolic link cannot redirect the open.
+            const realPath = await realpath(match.path);
+            if (!isPathWithin(root.realDir, realPath)) {
+                this.logger.warn(
+                    { sessionId: id, path: match.path },
+                    "refused to open session outside the session root",
+                );
+                return null;
+            }
+            const stats = await stat(realPath);
+            if (!stats.isFile()) {
+                this.logger.warn({ sessionId: id, path: realPath }, "refused to open a non-file session path");
+                return null;
+            }
+            if (stats.size > MAX_SESSION_FILE_BYTES) {
+                this.logger.warn({ sessionId: id, size: stats.size }, "refused to open an oversized session file");
+                return null;
+            }
+            return { summary: match.summary, realPath, root };
+        } catch (error) {
+            this.logger.warn({ err: error, sessionId: id }, "failed to resolve session file");
+            return null;
+        }
+    }
+
+    /**
+     * Read one session by id, migrating entries to the current format in memory only.
+     * Returns `null` for an invalid or unknown id and for files that are unreadable, too large,
+     * or outside the session root.
+     */
+    async getById(id: string): Promise<SessionDetailResponse | null> {
+        const resolved = await this.resolveById(id);
+        if (resolved === null) {
+            return null;
+        }
+        return this.readSession(resolved.root, id, { summary: resolved.summary, path: resolved.realPath });
     }
 
     private async resolveDiscoveryRoot(): Promise<ResolvedDiscoveryRoot> {
