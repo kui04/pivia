@@ -1,0 +1,25 @@
+{
+    "name": "@pivia/server",
+    "private": true,
+    "version": "0.1.0",
+    "type": "module",
+    "bin": {
+        "pivia": "./dist/cli.js"
+    },
+    "exports": {
+        ".": {
+            "types": "./dist/app.d.ts",
+            "default": "./dist/app.js"
+        }
+    },
+    "scripts": {
+        "build": "tsc -p tsconfig.build.json",
+        "typecheck": "tsc -p tsconfig.json --noEmit",
+        "test": "vitest run"
+    },
+    "dependencies": {
+        "@pivia/protocol": "workspace:*",
+        "fastify": "^5.12.8",
+        "pino": "^10.4.0"
+    }
+}
