@@ -1,0 +1,89 @@
+/*
+ * The text input: a filled field with the hover, focus, error and disabled states.
+ *
+ * The markup this file styles (Base UI Input):
+ *
+ *   .input                                    the caller's class lands on the same element
+ *   ├─ &::placeholder                         the muted hint
+ *   ├─ &:hover:not(:disabled):not([aria-invalid="true"]):not(:focus-visible)
+ *   │                                          the border strengthens outside focus and error
+ *   ├─ &:focus-visible                        the primary ring, drawn inside the field
+ *   ├─ &[aria-invalid="true"]                 the error border and inset ring
+ *   ├─ &[aria-invalid="true"]:focus-visible   the error ring
+ *   └─ &:disabled                             the filled, muted and inert field
+ */
+.input {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: var(--space-40);
+    padding: 0 var(--space-12);
+    border: var(--border-width) solid var(--color-outline-control);
+    border-radius: var(--shape-corner-small);
+    outline: none;
+    background-color: var(--color-surface);
+    color: var(--color-on-surface);
+    font-family: var(--font-sans);
+    font-size: var(--type-body-medium-size);
+    font-weight: var(--type-body-medium-weight);
+    letter-spacing: var(--type-body-medium-tracking);
+    line-height: var(--type-body-medium-line-height);
+    transition:
+        border-color var(--motion-duration-effects-fast) var(--motion-easing-standard),
+        background-color var(--motion-duration-effects-fast) var(--motion-easing-standard);
+
+    &::placeholder {
+        color: var(--color-on-surface-variant);
+        opacity: 1;
+    }
+
+    &:hover:not(:disabled):not([aria-invalid="true"]):not(:focus-visible) {
+        border-color: var(--color-on-surface-variant);
+    }
+
+    &:focus-visible {
+        border-color: var(--color-primary);
+        outline: var(--border-width-strong) solid var(--color-primary);
+        outline-offset: calc(-1 * var(--border-width-strong));
+    }
+
+    &[aria-invalid="true"] {
+        border-color: var(--color-error);
+        /* A 1px border alone reads as a hairline at normal zoom; the inset ring
+           gives the error state a 2px edge without moving the text. */
+        box-shadow: inset 0 0 0 var(--border-width) var(--color-error);
+    }
+
+    &[aria-invalid="true"]:focus-visible {
+        outline-color: var(--color-error);
+    }
+
+    &:disabled {
+        background-color: var(--color-secondary-container);
+        color: var(--color-on-surface-variant);
+        cursor: not-allowed;
+    }
+
+    /* A coarse pointer needs 16px text to keep mobile browsers from zooming the field. */
+    @media (any-pointer: coarse) {
+        & {
+            font-size: var(--type-body-large-size);
+            line-height: var(--type-body-large-line-height);
+        }
+    }
+
+    @media (forced-colors: active) {
+        & {
+            border-color: CanvasText;
+        }
+
+        &[aria-invalid="true"] {
+            border-color: Mark;
+        }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        & {
+            transition: none;
+        }
+    }
+}

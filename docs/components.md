@@ -72,15 +72,17 @@
   radius parameter and the touch target; a coarse primary pointer always gets the 48px height. It keeps Base UI's
   disabled and `render` behaviour.
 - `Checkbox` wraps Base UI Checkbox. The 16px box draws its 12px check directly, because an `Icon` box would repeat
-  the control box. The label is a native `<label>`, so the text and the box share one hit area; the hidden input
-  holds the focus and the row projects the focus ring onto the box. It is not a `Field`: the label sits beside the
-  control, not above it.
+  the control box. The label is a native `<label>`, so the text and the box share one hit area; Base UI keeps focus
+  on the visible `role="checkbox"` box, so the document focus rule draws the ring there. A bare checkbox submits
+  through the native form; `Form.onFormSubmit` only collects registered Fields, so use native submission when that
+  value must reach the callback. It is not a `Field`: the label sits beside the control, not above it.
 - `Input` wraps Base UI Input as a bare control. Wrap it in `Field` for the label, description, error and validation
   wiring; `Input` only owns the text-field styling.
 - `Select` wraps Base UI Select as a bare single-select control. Wrap it in `Field` with `nativeLabel={false}` for
   the label, description, error and validation wiring. It renders the hidden input for forms, uses `items` for the
-  selected label, and defaults to a non-modal popup so it can open inside a Dialog. The popup shares `--z-modal` with
-  the dialog because its portal is appended after the dialog portal; keep that order when changing either layer.
+  selected label, and copies the trigger's label reference to the listbox so the open popup keeps the Field label as
+  its accessible name. It defaults to a non-modal popup so it can open inside a Dialog. The popup shares `--z-modal`
+  with the dialog because its portal is appended after the dialog portal; keep that order when changing either layer.
 - `Image` is the presentational image and optional trigger; it never owns viewer state. `ImageViewer` is a
   controlled single-image dialog built on Base UI Dialog with `react-zoom-pan-pinch` for zoom and pan. The dialog
   owns focus, scroll lock, Escape and focus return; zoom toolbar actions are immediate, so the dialog is the only

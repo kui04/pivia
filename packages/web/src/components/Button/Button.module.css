@@ -1,0 +1,141 @@
+/*
+ * A native button with size, emphasis and radius presets.
+ *
+ * The markup this file styles:
+ *
+ *   .button                      merged with a radius preset and the caller `className`
+ *   ├─ &[data-size="lg"]         larger type and padding
+ *   ├─ &[data-variant="primary"]
+ *   ├─ &[data-variant="secondary"]
+ *   ├─ &[data-variant="ghost"]
+ *   ├─ &:active:not(:disabled)   pressed tint; secondary and ghost reset it
+ *   ├─ @media (hover: hover)     a hover tint per variant while not pressed
+ *   ├─ &:disabled
+ *   ├─ @media (pointer: coarse)  a 48px target for every preset
+ *   ├─ @media (forced-colors: active)
+ *   └─ @media (prefers-reduced-motion: reduce)
+ *   .radiusNone … .radiusFull    same element as .button
+ */
+.button {
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-8);
+    padding: var(--space-4) var(--space-8);
+    border: var(--border-width) solid transparent;
+    font-family: var(--font-sans);
+    font-size: var(--type-label-large-size);
+    font-weight: var(--type-label-large-weight);
+    letter-spacing: var(--type-label-large-tracking);
+    line-height: var(--type-label-large-line-height);
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+    transition:
+        background-color var(--motion-duration-effects-fast) var(--motion-easing-standard),
+        color var(--motion-duration-effects-fast) var(--motion-easing-standard),
+        border-color var(--motion-duration-effects-fast) var(--motion-easing-standard);
+
+    &[data-size="lg"] {
+        padding: var(--space-8) var(--space-16);
+        font-size: var(--type-body-large-size);
+        font-weight: var(--type-body-large-weight);
+        letter-spacing: var(--type-body-large-tracking);
+        line-height: var(--type-body-large-line-height);
+    }
+
+    &[data-variant="primary"] {
+        background-color: var(--color-primary);
+        color: var(--color-on-primary);
+    }
+
+    &[data-variant="secondary"] {
+        border-color: var(--color-outline-control);
+        background-color: transparent;
+        color: var(--color-on-surface);
+    }
+
+    &[data-variant="ghost"] {
+        background-color: transparent;
+        color: var(--color-on-surface);
+    }
+
+    &:active:not(:disabled) {
+        background-color: var(--color-primary);
+        background-image: linear-gradient(var(--state-pressed), var(--state-pressed));
+    }
+
+    &[data-variant="secondary"]:active:not(:disabled),
+    &[data-variant="ghost"]:active:not(:disabled) {
+        background-color: transparent;
+        background-image: none;
+        color: var(--color-on-surface);
+        border-color: var(--color-outline-control);
+    }
+
+    @media (hover: hover) {
+        &[data-variant="primary"]:hover:not(:active):not(:disabled) {
+            background-image: linear-gradient(var(--state-hover), var(--state-hover));
+        }
+
+        &[data-variant="secondary"]:hover:not(:active):not(:disabled) {
+            background-color: var(--state-hover);
+        }
+
+        &[data-variant="ghost"]:hover:not(:active):not(:disabled) {
+            background-color: var(--state-hover);
+        }
+    }
+
+    &:disabled {
+        background-color: var(--color-secondary-container);
+        background-image: none;
+        border-color: transparent;
+        color: var(--color-on-surface-variant);
+        cursor: not-allowed;
+    }
+
+    /* A coarse primary pointer needs the larger target on every preset. */
+    @media (pointer: coarse) {
+        & {
+            min-block-size: var(--space-48);
+        }
+    }
+
+    @media (forced-colors: active) {
+        & {
+            border-color: ButtonText;
+        }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        & {
+            transition: none;
+        }
+    }
+}
+
+.radiusNone {
+    border-radius: var(--shape-corner-none);
+}
+
+.radiusExtraSmall {
+    border-radius: var(--shape-corner-extra-small);
+}
+
+.radiusSmall {
+    border-radius: var(--shape-corner-small);
+}
+
+.radiusMedium {
+    border-radius: var(--shape-corner-medium);
+}
+
+.radiusLarge {
+    border-radius: var(--shape-corner-large);
+}
+
+.radiusFull {
+    border-radius: var(--shape-corner-full);
+}

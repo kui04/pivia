@@ -1,0 +1,131 @@
+/*
+ * An icon-only button with a tooltip.
+ *
+ * The markup this file styles:
+ *
+ *   .button                     passed to Button as `className`; a radius preset joins it
+ *   ├─ &:hover                  inside (hover: hover); not while pressed or disabled
+ *   ├─ &[data-popup-open]       the tooltip is open
+ *   ├─ &:active
+ *   ├─ &[aria-pressed="true"]
+ *   ├─ &[data-disabled]
+ *   ├─ @media (pointer: coarse)  a 48px target
+ *   └─ @media (prefers-reduced-motion: reduce)
+ *   .radiusNone … .radiusFull   same element as .button
+ *   .positioner                 the tooltip portal, beside the button
+ *   └─ .tooltip
+ */
+.button {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    background-color: transparent;
+    color: var(--color-on-surface-variant);
+    cursor: pointer;
+    transition:
+        background-color var(--motion-duration-effects-fast) var(--motion-easing-standard),
+        color var(--motion-duration-effects-fast) var(--motion-easing-standard);
+
+    /* Hover only where a pointer exists, so a tap does not leave the state stuck. */
+    @media (hover: hover) {
+        &:hover:not([data-disabled]):not([aria-pressed="true"]) {
+            background-color: var(--state-hover);
+            color: var(--color-on-surface);
+        }
+    }
+
+    /* The tooltip can also open on keyboard focus, so keep this outside the hover query. */
+    &[data-popup-open]:not([aria-pressed="true"]) {
+        background-color: var(--state-hover);
+        color: var(--color-on-surface);
+    }
+
+    &:active:not([data-disabled]):not([aria-pressed="true"]) {
+        background-color: var(--state-pressed);
+    }
+
+    &[aria-pressed="true"] {
+        background-color: var(--color-primary-container);
+        color: var(--color-on-primary-container);
+    }
+
+    &[data-disabled] {
+        color: var(--color-outline);
+        cursor: default;
+    }
+
+    /* A coarse primary pointer needs a 48px target; the glyph keeps its preset size. */
+    @media (pointer: coarse) {
+        & {
+            min-inline-size: var(--space-48);
+            min-block-size: var(--space-48);
+        }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        & {
+            transition: none;
+        }
+    }
+}
+
+/* Radius comes from the shape scale; the component always applies one class. */
+.radiusNone {
+    border-radius: var(--shape-corner-none);
+}
+
+.radiusExtraSmall {
+    border-radius: var(--shape-corner-extra-small);
+}
+
+.radiusSmall {
+    border-radius: var(--shape-corner-small);
+}
+
+.radiusMedium {
+    border-radius: var(--shape-corner-medium);
+}
+
+.radiusLarge {
+    border-radius: var(--shape-corner-large);
+}
+
+.radiusFull {
+    border-radius: var(--shape-corner-full);
+}
+
+.positioner {
+    z-index: var(--z-tooltip);
+
+    .tooltip {
+        padding: var(--space-4) var(--space-8);
+        border: var(--border-width) solid var(--color-outline-variant);
+        border-radius: var(--shape-corner-extra-small);
+        background-color: var(--color-surface-container-high);
+        color: var(--color-on-surface);
+        box-shadow: var(--elevation-2);
+        font-family: var(--font-sans);
+        font-size: var(--type-label-medium-size);
+        line-height: var(--type-label-medium-line-height);
+        letter-spacing: var(--type-label-medium-tracking);
+        transform-origin: var(--transform-origin);
+        transition:
+            opacity var(--motion-duration-effects-fast) var(--motion-easing-standard),
+            scale var(--motion-duration-effects-fast) var(--motion-easing-standard);
+
+        &[data-starting-style],
+        &[data-ending-style] {
+            opacity: 0;
+            scale: 0.98;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            & {
+                transition: none;
+            }
+        }
+    }
+}

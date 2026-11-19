@@ -1,0 +1,60 @@
+/*
+ * The placeholder root view.
+ *
+ * The markup this file styles:
+ *
+ *   .app
+ *   └─ .panel
+ *       ├─ .eyebrow
+ *       ├─ .title
+ *       └─ .lead
+ */
+.app {
+    display: grid;
+    place-items: center;
+    min-block-size: 100%;
+    padding: var(--space-24);
+    background-color: var(--color-surface);
+}
+
+.panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-12);
+    inline-size: min(100%, var(--content-max-width));
+    padding: var(--space-32);
+    border: var(--border-width) solid var(--color-outline-variant);
+    border-radius: var(--shape-corner-large);
+    background-color: var(--color-surface-container);
+    box-shadow: var(--elevation-1);
+
+    .eyebrow {
+        color: var(--color-primary);
+        font-size: var(--type-label-medium-size);
+        font-weight: var(--type-label-medium-emphasized-weight);
+        letter-spacing: var(--type-label-medium-tracking);
+        line-height: var(--type-label-medium-line-height);
+        text-transform: uppercase;
+    }
+
+    .title {
+        max-inline-size: 32ch;
+        color: var(--color-on-surface);
+        font-family: var(--font-serif);
+        font-size: var(--type-headline-small-size);
+        font-weight: var(--type-headline-small-emphasized-weight);
+        letter-spacing: var(--type-headline-small-tracking);
+        line-height: var(--type-headline-small-line-height);
+        text-wrap: balance;
+    }
+
+    .lead {
+        max-inline-size: 60ch;
+        color: var(--color-on-surface-variant);
+        font-size: var(--type-body-large-size);
+        font-weight: var(--type-body-large-weight);
+        letter-spacing: var(--type-body-large-tracking);
+        line-height: var(--type-body-large-line-height);
+        text-wrap: pretty;
+    }
+}

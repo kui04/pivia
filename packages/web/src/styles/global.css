@@ -1,0 +1,48 @@
+:root {
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+}
+
+html,
+body,
+#root {
+    height: 100%;
+}
+
+body {
+    background: var(--color-surface);
+    color: var(--color-on-surface);
+    overscroll-behavior: none;
+}
+
+::placeholder {
+    color: var(--color-on-surface-variant);
+}
+
+::selection {
+    background: var(--color-primary-container);
+    color: var(--color-on-primary-container);
+}
+
+/*
+ * :where() keeps the attribute selector from outranking a component's own
+ * focus-visible rule; that rule then wins by load order and can draw an inset ring.
+ */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+:where([tabindex]):not([tabindex="-1"]):focus-visible {
+    outline: var(--border-width-strong) solid var(--color-primary);
+    outline-offset: var(--space-2);
+}
+
+/*
+ * The app fills the screen; the safe-area insets keep its content clear of
+ * notches and the home indicator on phones and installed PWAs.
+ */
+#root {
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}

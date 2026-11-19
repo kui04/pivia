@@ -1,0 +1,131 @@
+/*
+ * A labelled checkbox with an optional description.
+ *
+ * The markup this file styles:
+ *
+ *   .row                           merged with the caller `className`
+ *   ├─ .text
+ *   │   ├─ .label                  clicking it toggles the box
+ *   │   └─ .description
+ *   └─ &[data-disabled]            dims the label and the description
+ *   .box                           inside .row; the focusable role="checkbox" span
+ *   ├─ &[data-checked]
+ *   ├─ &[data-disabled]
+ *   └─ .indicator
+ *   (plus the top-level .indicator > svg rule that draws the 12px check)
+ *
+ * The focus rule lives in global.css: Base UI keeps focus on .box, not the hidden input.
+ */
+.row {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-12);
+    min-inline-size: 0;
+
+    .text {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-2);
+        min-inline-size: 0;
+
+        .label {
+            color: var(--color-on-surface);
+            font-size: var(--type-body-medium-size);
+            font-weight: var(--font-weight-medium);
+            letter-spacing: var(--type-body-medium-tracking);
+            line-height: var(--type-body-medium-line-height);
+            cursor: pointer;
+        }
+
+        .description {
+            color: var(--color-on-surface-variant);
+            font-size: var(--type-label-medium-size);
+            font-weight: var(--type-label-medium-weight);
+            letter-spacing: var(--type-label-medium-tracking);
+            line-height: var(--type-label-medium-line-height);
+        }
+    }
+
+    &[data-disabled] .label,
+    &[data-disabled] .description {
+        color: var(--color-on-surface-variant);
+        cursor: not-allowed;
+    }
+}
+
+/*
+ * The box stays one class deep: the coarse-pointer media resets its margin at one class of
+ * specificity, so nesting the base rule would make it outrank that reset. Base UI keeps focus
+ * on this span, so the document focus rule draws the ring here.
+ */
+.box {
+    box-sizing: border-box;
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    inline-size: var(--space-16);
+    block-size: var(--space-16);
+    margin-block-start: var(--space-2);
+    border: var(--border-width-strong) solid var(--color-outline-control);
+    border-radius: var(--shape-corner-extra-small);
+    background-color: var(--color-surface);
+    color: var(--color-on-primary);
+    cursor: pointer;
+    transition:
+        background-color var(--motion-duration-effects-fast) var(--motion-easing-standard),
+        border-color var(--motion-duration-effects-fast) var(--motion-easing-standard);
+
+    &[data-checked] {
+        border-color: var(--color-primary);
+        background-color: var(--color-primary);
+    }
+
+    &[data-disabled] {
+        background-color: var(--color-secondary-container);
+        border-color: var(--color-outline-variant);
+        color: var(--color-on-surface-variant);
+        cursor: not-allowed;
+    }
+
+    .indicator {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+    }
+}
+
+/* The control box is 16px, so the check is drawn at 12px without an Icon container. */
+.indicator > svg {
+    inline-size: 12px;
+    block-size: 12px;
+}
+
+/* A coarse pointer needs a 44px target; the label carries the hit area. */
+@media (any-pointer: coarse) {
+    .row {
+        align-items: center;
+        min-block-size: var(--space-48);
+    }
+
+    .box {
+        margin-block-start: 0;
+    }
+}
+
+@media (forced-colors: active) {
+    .box {
+        border-color: ButtonText;
+    }
+
+    .box[data-checked] {
+        background-color: Highlight;
+        color: HighlightText;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .box {
+        transition: none;
+    }
+}

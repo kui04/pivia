@@ -1,0 +1,11 @@
+/*
+ * The vertical layout of a form.
+ *
+ *   .form
+ */
+.form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-16);
+    min-width: 0;
+}

@@ -1,0 +1,70 @@
+/*
+ * A labelled field with a description and an error slot.
+ *
+ * The markup this file styles:
+ *
+ *   .field                      merged with the caller `className`
+ *   ├─ .label
+ *   ├─ &[data-invalid]          tints the label
+ *   ├─ &[data-disabled]         dims the label
+ *   ├─ .messages                hidden while empty; the error takes the description's row
+ *   │   ├─ .description
+ *   │   └─ .error
+ *   └─ &:has(.error)            hides the description under the error
+ */
+.field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-6);
+    min-width: 0;
+
+    .label {
+        color: var(--color-on-surface);
+        font-size: var(--type-label-large-size);
+        font-weight: var(--type-label-large-weight);
+        letter-spacing: var(--type-label-large-tracking);
+        line-height: var(--type-label-large-line-height);
+    }
+
+    &[data-invalid] .label {
+        color: var(--color-error);
+    }
+
+    &[data-disabled] .label {
+        color: var(--color-on-surface-variant);
+    }
+
+    .messages {
+        display: grid;
+        align-items: start;
+
+        /* A field without helper text must not reserve a blank row; the error adds it on demand. */
+        &:empty {
+            display: none;
+        }
+
+        .description,
+        .error {
+            /* Both messages share one row, so swapping them does not move the field. */
+            grid-area: 1 / 1;
+            margin: 0;
+            font-size: var(--type-label-medium-size);
+            font-weight: var(--type-label-medium-weight);
+            letter-spacing: var(--type-label-medium-tracking);
+            line-height: var(--type-label-medium-line-height);
+        }
+
+        .description {
+            color: var(--color-on-surface-variant);
+        }
+
+        .error {
+            color: var(--color-error);
+        }
+    }
+
+    /* The hidden helper keeps the row height while the error replaces its text. */
+    &:has(.error) .description {
+        visibility: hidden;
+    }
+}

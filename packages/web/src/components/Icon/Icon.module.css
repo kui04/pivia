@@ -1,0 +1,62 @@
+/*
+ * A fixed-size box around one glyph.
+ *
+ * The markup this file styles:
+ *
+ *   .icon                              merged with a size preset and the caller `className`
+ *   .sm, .noContainer, .md, .lg, .xl  size presets on the same element as .icon
+ *   (plus the top-level .icon > svg rule that sizes the glyph)
+ *
+ * The sketch names the glyph's markup position; its rule stays top-level so a caller can override
+ * the box without fighting a nested selector.
+ */
+.icon {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    /* An unset --icon-box-size leaves the box intrinsic, so padding alone decides its edge. */
+    inline-size: var(--icon-box-size, auto);
+    block-size: var(--icon-box-size, auto);
+    padding: var(--icon-padding);
+    /*
+     * A caller that must start flush with a text edge sets --icon-padding-inline-start. The custom
+     * property avoids a specificity or load-order contest with this rule; only the start side moves.
+     */
+    padding-inline-start: var(--icon-padding-inline-start, var(--icon-padding));
+}
+
+/* Size the glyph in CSS so Lucide's 24px width attribute never leaks through. */
+.icon > svg {
+    inline-size: var(--icon-glyph-size);
+    block-size: var(--icon-glyph-size);
+}
+
+/*
+ * Each preset keeps the box on the 4px grid:
+ * sm 12/2 = 16, no-container 16/0 = 16, md 16/4 = 24, lg 20/6 = 32, xl 24/8 = 40.
+ */
+.sm {
+    --icon-glyph-size: 12px;
+    --icon-padding: var(--space-2);
+}
+
+.noContainer {
+    --icon-glyph-size: 16px;
+    --icon-padding: 0;
+}
+
+.md {
+    --icon-glyph-size: 16px;
+    --icon-padding: var(--space-4);
+}
+
+.lg {
+    --icon-glyph-size: 20px;
+    --icon-padding: var(--space-6);
+}
+
+.xl {
+    --icon-glyph-size: 24px;
+    --icon-padding: var(--space-8);
+}

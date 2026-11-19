@@ -12,6 +12,8 @@ Component conventions live in [components.md](components.md). Frontend code live
 - `packages/web/src/styles/token.css` holds the design tokens: VS Code Modern colors mapped to Material 3 roles, the M3
   Expressive type and shape scales, spacing, elevation and motion. Use its tokens instead of raw values. If a token is
   missing, ask the user before adding it or using a raw value.
+- `--color-outline-control` is the 3:1 boundary for interactive controls (Input, Select, Checkbox and the secondary
+  Button), meeting WCAG 1.4.11 in both themes. `--color-outline` stays the decorative editor separator.
 - `packages/web/src/styles/reset.css` is a trimmed Tailwind CSS Preflight. Load order in `packages/web/src/main.tsx` is
   fonts, token, reset, global; `global.css` holds only document-level rules.
 - Colors use `light-dark()` with `color-scheme`. Set `data-theme="light"` or `data-theme="dark"` on `<html>` to

@@ -1,0 +1,237 @@
+/*
+ * Design tokens for Pivia.
+ *
+ * This file is the system layer: components consume these role tokens.
+ * Component-specific tokens stay in the CSS Module that owns them.
+ *
+ * Colors come from the VS Code Light Modern and Dark Modern themes and are
+ * mapped to Material 3 color roles. light-dark() lists the light value first
+ * and the dark value second. It is Baseline available since 2024: Chrome 123,
+ * Firefox 120 and Safari 17.5 all support it.
+ *
+ * Type, shape, and motion values follow Material 3 Expressive:
+ * https://m3.material.io/styles/typography/type-scale-tokens
+ * https://m3.material.io/styles/shape/overview-principles
+ * https://m3.material.io/styles/motion/overview/specs
+ */
+
+:root {
+    color-scheme: light dark;
+
+    /* Surface roles follow the VS Code elevation order: containers get lighter in both themes. */
+    --color-surface: light-dark(#f8f8f8, #181818);
+    --color-surface-container: light-dark(#ffffff, #1f1f1f);
+    --color-surface-container-high: light-dark(#ffffff, #202020);
+    --color-surface-container-highest: light-dark(#ffffff, #313131);
+    --color-on-surface: light-dark(#3b3b3b, #cccccc);
+    --color-on-surface-variant: light-dark(#616161, #9d9d9d);
+    --color-outline: light-dark(#cecece, #3c3c3c);
+    --color-outline-variant: light-dark(#e5e5e5, #2b2b2b);
+    /*
+     * An interactive control boundary needs 3:1 against the surface for WCAG 1.4.11.
+     * The editor outline above is a decorative separator and is too close to the surface
+     * to separate a field from the page; this mid neutral stays above 3:1 in both themes.
+     */
+    --color-outline-control: light-dark(#8c8c8c, #6a6a6a);
+    --color-scrim: rgb(0 0 0 / 0.45);
+    /* A near-opaque backdrop keeps a viewed image apart from the page behind it. */
+    --color-viewer-backdrop: rgb(0 0 0 / 0.85);
+
+    /* Primary roles: focusBorder, button.background, button.foreground and button.hoverBackground. */
+    --color-primary: light-dark(#005fb8, #0078d4);
+    --color-on-primary: #ffffff;
+    --color-primary-container: light-dark(rgb(0 95 184 / 0.12), rgb(0 120 212 / 0.12));
+    --color-on-primary-container: light-dark(#005fb8, #4daafc);
+
+    /* Secondary roles use the neutral end of the palette; no tertiary accent yet. */
+    --color-secondary: light-dark(#616161, #9d9d9d);
+    --color-on-secondary: light-dark(#ffffff, #181818);
+    --color-secondary-container: light-dark(#e8e8e8, #ffffff22);
+    --color-on-secondary-container: var(--color-on-surface);
+
+    /*
+     * Status roles for notifications. VS Code has no success notification role,
+     * so success uses its chart green; info and warning use the editor markers.
+     */
+    --color-info: light-dark(#0063d3, #59a4f9);
+    --color-success: light-dark(#388a34, #89d185);
+    --color-warning: light-dark(#bf8803, #cca700);
+
+    /* Error roles: statusBarItem.errorBackground and errorForeground. */
+    --color-error: light-dark(#c72e0f, #f85149);
+    --color-on-error: light-dark(#ffffff, #181818);
+    --color-error-container: light-dark(rgb(199 46 15 / 0.12), rgb(248 81 73 / 0.12));
+    --color-on-error-container: var(--color-error);
+
+    /*
+     * Diff roles: diffEditor.insertedLineBackground / removedLineBackground and
+     * editorGutter.addedBackground / deletedBackground. The line tints are the
+     * same translucent values in both themes; the accents are the gutter marks
+     * the Light and Dark Modern themes register for added and deleted lines.
+     */
+    --color-diff-added: rgb(155 185 85 / 0.2);
+    --color-diff-removed: rgb(255 0 0 / 0.2);
+    --color-diff-added-accent: #2ea043;
+    --color-diff-removed-accent: #f85149;
+
+    /* M3 state layer opacities: hover 8%, focus 10%, pressed 10%, dragged 16%. */
+    --state-hover: light-dark(rgb(0 0 0 / 0.08), rgb(255 255 255 / 0.08));
+    --state-focus: light-dark(rgb(0 0 0 / 0.1), rgb(255 255 255 / 0.1));
+    --state-pressed: light-dark(rgb(0 0 0 / 0.1), rgb(255 255 255 / 0.1));
+    --state-dragged: light-dark(rgb(0 0 0 / 0.16), rgb(255 255 255 / 0.16));
+
+    /*
+     * Type scale: a subset of the 15 baseline roles in M3 Expressive. 1rem = 16px.
+     * The IBM Plex faces ship in fonts.css; the system stacks cover glyphs the
+     * families do not have.
+     */
+    --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --font-serif: "IBM Plex Serif", ui-serif, Georgia, "Times New Roman", serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+
+    --font-weight-normal: 400;
+    --font-weight-medium: 500;
+    --font-weight-bold: 700;
+
+    --type-headline-small-size: 1.5rem; /* 24px */
+    --type-headline-small-line-height: 2rem; /* 32px */
+    --type-headline-small-weight: var(--font-weight-normal);
+    --type-headline-small-tracking: 0;
+    --type-headline-small-emphasized-weight: var(--font-weight-medium);
+
+    --type-title-large-size: 1.375rem; /* 22px */
+    --type-title-large-line-height: 1.75rem; /* 28px */
+    --type-title-large-weight: var(--font-weight-normal);
+    --type-title-large-tracking: 0;
+    --type-title-large-emphasized-weight: var(--font-weight-medium);
+
+    --type-title-medium-size: 1rem; /* 16px */
+    --type-title-medium-line-height: 1.5rem; /* 24px */
+    --type-title-medium-weight: var(--font-weight-medium);
+    --type-title-medium-tracking: 0.2px;
+    --type-title-medium-emphasized-weight: var(--font-weight-bold);
+
+    --type-title-small-size: 0.875rem; /* 14px */
+    --type-title-small-line-height: 1.25rem; /* 20px */
+    --type-title-small-weight: var(--font-weight-medium);
+    --type-title-small-tracking: 0.1px;
+    --type-title-small-emphasized-weight: var(--font-weight-bold);
+
+    --type-body-large-size: 1rem; /* 16px */
+    --type-body-large-line-height: 1.5rem; /* 24px */
+    --type-body-large-weight: var(--font-weight-normal);
+    --type-body-large-tracking: 0.5px;
+    --type-body-large-emphasized-weight: var(--font-weight-medium);
+
+    --type-body-medium-size: 0.875rem; /* 14px */
+    --type-body-medium-line-height: 1.25rem; /* 20px */
+    --type-body-medium-weight: var(--font-weight-normal);
+    --type-body-medium-tracking: 0.2px;
+    --type-body-medium-emphasized-weight: var(--font-weight-medium);
+
+    --type-label-large-size: 0.875rem; /* 14px */
+    --type-label-large-line-height: 1.25rem; /* 20px */
+    --type-label-large-weight: var(--font-weight-medium);
+    --type-label-large-tracking: 0.1px;
+    --type-label-large-emphasized-weight: var(--font-weight-bold);
+
+    --type-label-medium-size: 0.75rem; /* 12px */
+    --type-label-medium-line-height: 1rem; /* 16px */
+    --type-label-medium-weight: var(--font-weight-medium);
+    --type-label-medium-tracking: 0.5px;
+    --type-label-medium-emphasized-weight: var(--font-weight-bold);
+
+    --line-height-normal: 1.5;
+
+    /* Shape scale from M3 Expressive. Full is a pill shape in CSS. */
+    --shape-corner-none: 0;
+    --shape-corner-extra-small: 4px;
+    --shape-corner-small: 8px;
+    --shape-corner-medium: 12px;
+    --shape-corner-large: 16px;
+    --shape-corner-large-increased: 20px;
+    --shape-corner-extra-large: 28px;
+    --shape-corner-extra-large-increased: 32px;
+    --shape-corner-extra-extra-large: 48px;
+    --shape-corner-full: 999px;
+
+    /* Spacing: M3 uses an 8px base with 2, 4, 6 and 10px nested units. */
+    --space-2: 2px;
+    --space-4: 4px;
+    --space-6: 6px;
+    --space-8: 8px;
+    --space-10: 10px;
+    --space-12: 12px;
+    --space-16: 16px;
+    --space-20: 20px;
+    --space-24: 24px;
+    --space-32: 32px;
+    --space-40: 40px;
+    --space-48: 48px;
+    --space-64: 64px;
+
+    --border-width: 1px;
+    --border-width-strong: 2px;
+
+    /* Elevation levels 0-5. CSS needs shadows; M3 also uses surface tint. */
+    --elevation-0: none;
+    --elevation-1: 0 1px 2px rgb(0 0 0 / 0.08), 0 1px 3px 1px rgb(0 0 0 / 0.06);
+    --elevation-2: 0 1px 2px rgb(0 0 0 / 0.08), 0 2px 6px 2px rgb(0 0 0 / 0.06);
+    --elevation-3: 0 1px 3px rgb(0 0 0 / 0.1), 0 4px 8px 3px rgb(0 0 0 / 0.06);
+    --elevation-4: 0 2px 3px rgb(0 0 0 / 0.1), 0 6px 10px 4px rgb(0 0 0 / 0.06);
+    --elevation-5: 0 4px 4px rgb(0 0 0 / 0.1), 0 8px 12px 6px rgb(0 0 0 / 0.06);
+
+    /* M3 Expressive motion, using the documented web curve equivalents. */
+    --motion-duration-effects-fast: 150ms;
+    --motion-duration-effects-default: 200ms;
+    --motion-duration-effects-slow: 300ms;
+    --motion-duration-spatial-fast: 350ms;
+    --motion-duration-spatial-default: 500ms;
+    --motion-duration-spatial-slow: 650ms;
+
+    --motion-easing-expressive-fast-spatial: cubic-bezier(0.42, 1.67, 0.21, 0.9);
+    --motion-easing-expressive-default-spatial: cubic-bezier(0.38, 1.21, 0.22, 1);
+    --motion-easing-expressive-slow-spatial: cubic-bezier(0.39, 1.29, 0.35, 0.98);
+    --motion-easing-expressive-fast-effects: cubic-bezier(0.31, 0.94, 0.34, 1);
+    --motion-easing-expressive-default-effects: cubic-bezier(0.34, 0.8, 0.34, 1);
+    --motion-easing-expressive-slow-effects: cubic-bezier(0.34, 0.88, 0.34, 1);
+    --motion-easing-standard: cubic-bezier(0.2, 0, 0, 1);
+
+    /* Text shimmer for active streaming labels such as "Thinking...". */
+    --shimmer-base: var(--color-on-surface-variant);
+    --shimmer-peak: light-dark(#111111, #ffffff);
+    --shimmer-gradient: linear-gradient(
+        105deg,
+        var(--shimmer-base) 35%,
+        var(--shimmer-peak) 50%,
+        var(--shimmer-base) 65%
+    );
+    --shimmer-size: 220% 100%;
+    --shimmer-duration: 1.8s;
+
+    /* Layout and stacking. */
+    --content-max-width: 960px;
+    --z-dropdown: 100;
+    --z-overlay: 200;
+    --z-modal: 300;
+    --z-notification: 400;
+    --z-tooltip: 500;
+}
+
+/* A manual theme switch only has to set color-scheme; light-dark() does the rest. */
+:root[data-theme="light"] {
+    color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+    color-scheme: dark;
+}
+
+@keyframes shimmer {
+    from {
+        background-position: 100% 50%;
+    }
+    to {
+        background-position: 0% 50%;
+    }
+}

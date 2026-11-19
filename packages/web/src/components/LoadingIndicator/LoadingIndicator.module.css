@@ -1,0 +1,93 @@
+/*
+ * The indeterminate circular loading indicator: a full track and a rotating arc.
+ *
+ * The markup this file styles (Base UI Progress and Icon render it):
+ *
+ *   .root                the progressbar span that centers Icon
+ *   ├─ .track (circle)   the full circle under the arc
+ *   ├─ .spinner (g)      the group that rotates
+ *   └─ .arc (circle)     inside the spinner, at least 25% of the circle
+ */
+.root {
+    --loading-indicator-duration: calc(var(--motion-duration-spatial-slow) * 2);
+    --loading-indicator-stroke-width: 2.5;
+
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    vertical-align: middle;
+    color: var(--color-primary);
+
+    .spinner {
+        transform-box: view-box;
+        transform-origin: center;
+        animation: rotate var(--loading-indicator-duration) linear infinite;
+    }
+
+    .track {
+        stroke: var(--color-outline-variant);
+        stroke-width: var(--loading-indicator-stroke-width);
+    }
+
+    /*
+     * pathLength="100" normalizes the circumference so dasharray and dashoffset
+     * work in percentage units. The arc never drops below 25%: a shorter arc
+     * collapses into a few pixels and rasterizes unevenly at 16px.
+     */
+    .arc {
+        stroke: currentColor;
+        stroke-width: var(--loading-indicator-stroke-width);
+        stroke-linecap: round;
+        stroke-dasharray: 25 100;
+        stroke-dashoffset: 0;
+        animation: arc var(--loading-indicator-duration) var(--motion-easing-standard) infinite;
+    }
+
+    @media (forced-colors: active) {
+        .track {
+            stroke: GrayText;
+        }
+
+        .arc {
+            stroke: Highlight;
+        }
+    }
+
+    /*
+     * Reduced motion keeps the busy signal but slows the rotation and stops the
+     * arc from growing and shrinking. A static ring alone could read as idle.
+     */
+    @media (prefers-reduced-motion: reduce) {
+        --loading-indicator-duration: calc(var(--motion-duration-spatial-slow) * 8);
+
+        .arc {
+            animation: none;
+            stroke-dasharray: 75 100;
+            stroke-dashoffset: 0;
+        }
+    }
+}
+
+@keyframes rotate {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@keyframes arc {
+    0% {
+        stroke-dasharray: 25 100;
+        stroke-dashoffset: 0;
+    }
+
+    50% {
+        stroke-dasharray: 72 100;
+        stroke-dashoffset: -24;
+    }
+
+    100% {
+        stroke-dasharray: 25 100;
+        stroke-dashoffset: -100;
+    }
+}

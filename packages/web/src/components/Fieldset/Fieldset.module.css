@@ -1,0 +1,38 @@
+/*
+ * A fieldset with a legend and a stack of fields.
+ *
+ * The markup this file styles:
+ *
+ *   .fieldset                   merged with the caller `className`
+ *   └─ .content                 the fields
+ *   .legend                     inside .fieldset; one class deep so `legendClassName` wins
+ */
+.fieldset {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-12);
+    min-width: 0;
+    padding: 0;
+    margin: 0;
+    border: 0;
+
+    .content {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-16);
+        min-width: 0;
+    }
+}
+
+/*
+ * The legend stays one class deep: a caller styles it with `legendClassName`, and nesting would
+ * outrank that class.
+ */
+.legend {
+    padding: 0;
+    color: var(--color-on-surface);
+    font-size: var(--type-title-small-size);
+    font-weight: var(--type-title-small-emphasized-weight);
+    letter-spacing: var(--type-title-small-tracking);
+    line-height: var(--type-title-small-line-height);
+}

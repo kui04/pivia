@@ -1,0 +1,262 @@
+/*
+ * A single-select trigger and its portaled list of options.
+ *
+ * The markup this file styles (Base UI renders all of it). The tree follows the markup, so a
+ * selector that names a grandchild is drawn under the element that holds it:
+ *
+ *   .trigger                                              Base UI Select.Trigger, the caller's class lands here
+ *   ├─ &:hover:not([data-disabled]):not([aria-invalid="true"]):not(:focus-visible):not([data-popup-open])
+ *   │                                                     the border strengthens outside focus, error and open
+ *   ├─ &:focus-visible                                    the primary ring
+ *   ├─ &[data-popup-open]                                 the open trigger keeps the primary border and inset ring
+ *   ├─ &[aria-invalid="true"]                             the error border and inset ring
+ *   ├─ &[aria-invalid="true"]:focus-visible               the error ring
+ *   ├─ &[data-disabled]
+ *   ├─ .value                                             Base UI Select.Value
+ *   │   └─ &[data-placeholder]                            the muted placeholder
+ *   └─ .chevron                                           Base UI Select.Icon
+ *       └─ &[data-popup-open]                             rotated while the list is open
+ *   .positioner                                           portaled after the dialog portal, in the modal layer
+ *   └─ .popup                                             Base UI Select.Popup
+ *       ├─ &[data-starting-style], &[data-ending-style]   the open and close animation
+ *       ├─ &[data-instant]                                no transition on an instant close
+ *       └─ .list                                          Base UI Select.List, bounded by the available height
+ *           └─ .item                                      Base UI Select.Item
+ *               ├─ &[data-highlighted]
+ *               ├─ &[data-selected]                       readable on the tinted row
+ *               ├─ &[data-disabled]
+ *               ├─ &:hover:not([data-disabled])
+ *               ├─ .itemText                              Base UI Select.ItemText
+ *               ├─ .indicatorSlot                         the 16px slot
+ *               └─ .indicator                             Base UI Select.ItemIndicator, inside the slot
+ */
+.trigger {
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-8);
+    width: 100%;
+    min-height: var(--space-40);
+    padding: 0 var(--space-12);
+    border: var(--border-width) solid var(--color-outline-control);
+    border-radius: var(--shape-corner-small);
+    outline: none;
+    background-color: var(--color-surface);
+    color: var(--color-on-surface);
+    cursor: pointer;
+    font-family: var(--font-sans);
+    font-size: var(--type-body-medium-size);
+    font-weight: var(--type-body-medium-weight);
+    letter-spacing: var(--type-body-medium-tracking);
+    line-height: var(--type-body-medium-line-height);
+    text-align: start;
+    transition:
+        border-color var(--motion-duration-effects-fast) var(--motion-easing-standard),
+        background-color var(--motion-duration-effects-fast) var(--motion-easing-standard);
+
+    &:hover:not([data-disabled]):not([aria-invalid="true"]):not(:focus-visible):not([data-popup-open]) {
+        border-color: var(--color-on-surface-variant);
+    }
+
+    &:focus-visible {
+        border-color: var(--color-primary);
+        outline: var(--border-width-strong) solid var(--color-primary);
+        outline-offset: calc(-1 * var(--border-width-strong));
+    }
+
+    &[data-popup-open] {
+        border-color: var(--color-primary);
+        /* The open state needs the same 2px visual edge as the error and focus
+           states; the inset ring avoids moving the label or the value text. */
+        box-shadow: inset 0 0 0 var(--border-width) var(--color-primary);
+    }
+
+    &[aria-invalid="true"] {
+        border-color: var(--color-error);
+        /* A 1px border alone reads as a hairline at normal zoom; the inset ring
+           gives the error state a 2px edge without moving the text. */
+        box-shadow: inset 0 0 0 var(--border-width) var(--color-error);
+    }
+
+    &[aria-invalid="true"]:focus-visible {
+        outline-color: var(--color-error);
+    }
+
+    &[data-disabled] {
+        background-color: var(--color-secondary-container);
+        color: var(--color-on-surface-variant);
+        cursor: not-allowed;
+    }
+
+    .value {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+
+        &[data-placeholder] {
+            color: var(--color-on-surface-variant);
+        }
+    }
+
+    .chevron {
+        display: flex;
+        flex: none;
+        align-items: center;
+        justify-content: center;
+        color: var(--color-on-surface-variant);
+        transition: rotate var(--motion-duration-effects-fast) var(--motion-easing-standard);
+
+        &[data-popup-open] {
+            rotate: 180deg;
+        }
+    }
+
+    /* A coarse pointer needs 16px text to keep mobile browsers from zooming the field. */
+    @media (any-pointer: coarse) {
+        & {
+            font-size: var(--type-body-large-size);
+            line-height: var(--type-body-large-line-height);
+        }
+    }
+}
+
+.positioner {
+    /* The select portal is appended after the dialog portal, so the shared
+       modal layer keeps the list above the dialog that contains it. */
+    z-index: var(--z-modal);
+    outline: none;
+
+    .popup {
+        --select-list-max-height: 18rem;
+
+        box-sizing: border-box;
+        min-width: var(--anchor-width);
+        max-width: var(--available-width);
+        padding: var(--space-4);
+        border: var(--border-width) solid var(--color-outline-variant);
+        border-radius: var(--shape-corner-small);
+        outline: none;
+        background-color: var(--color-surface-container-high);
+        color: var(--color-on-surface);
+        box-shadow: var(--elevation-2);
+        font-family: var(--font-sans);
+        transform-origin: var(--transform-origin);
+        transition:
+            opacity var(--motion-duration-effects-fast) var(--motion-easing-standard),
+            scale var(--motion-duration-effects-fast) var(--motion-easing-standard);
+
+        &[data-starting-style],
+        &[data-ending-style] {
+            opacity: 0;
+            scale: 0.98;
+        }
+
+        &[data-instant] {
+            transition: none;
+        }
+
+        .list {
+            max-block-size: min(var(--select-list-max-height), var(--available-height));
+            margin: 0;
+            padding: 0;
+            overflow-y: auto;
+            overscroll-behavior: contain;
+        }
+
+        /* Keep option text on the same type role as the trigger. */
+        .item {
+            display: flex;
+            align-items: center;
+            gap: var(--space-8);
+            min-height: var(--space-32);
+            padding: var(--space-6) var(--space-8);
+            border-radius: var(--shape-corner-extra-small);
+            color: var(--color-on-surface);
+            cursor: default;
+            font-size: var(--type-body-medium-size);
+            font-weight: var(--type-body-medium-weight);
+            letter-spacing: var(--type-body-medium-tracking);
+            line-height: var(--type-body-medium-line-height);
+            outline: none;
+            user-select: none;
+            transition: background-color var(--motion-duration-effects-fast) var(--motion-easing-standard);
+
+            &[data-highlighted] {
+                background-color: var(--state-hover);
+            }
+
+            &[data-selected] {
+                /* The primary role is a button and focus color; its dark value is 3.64:1 on
+                   the popup surface, so the selected label uses the readable text role.
+                   The indicator follows it to keep the row one color. */
+                color: var(--color-on-primary-container);
+            }
+
+            &[data-disabled] {
+                color: var(--color-on-surface-variant);
+                cursor: not-allowed;
+            }
+
+            .itemText {
+                flex: 1;
+                min-width: 0;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
+            .indicatorSlot {
+                display: flex;
+                flex: none;
+                align-items: center;
+                justify-content: center;
+                width: var(--space-16);
+                height: var(--space-16);
+            }
+
+            .indicator {
+                display: flex;
+                color: var(--color-on-primary-container);
+            }
+
+            @media (hover: hover) {
+                &:hover:not([data-disabled]) {
+                    background-color: var(--state-hover);
+                }
+            }
+        }
+    }
+}
+
+/*
+ * These two queries cover parts in both the trigger and the popup block, so they stay at the top
+ * level. Each selector repeats the nesting path of its element: a shorter one would lose to that
+ * element's own nested rule whatever the load order.
+ */
+@media (forced-colors: active) {
+    .trigger,
+    .positioner .popup {
+        border-color: CanvasText;
+    }
+
+    .trigger[aria-invalid="true"] {
+        border-color: Mark;
+    }
+
+    .positioner .popup .item[data-highlighted] {
+        outline: var(--border-width-strong) solid Highlight;
+        outline-offset: calc(-1 * var(--border-width-strong));
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .trigger,
+    .positioner .popup,
+    .trigger .chevron,
+    .positioner .popup .item {
+        transition: none;
+    }
+}

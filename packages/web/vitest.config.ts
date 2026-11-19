@@ -1,0 +1,65 @@
+import { fileURLToPath, URL } from "node:url";
+
+import { storybookTest } from "@storybook/addon-vitest/vitest-plugin";
+import { playwright } from "@vitest/browser-playwright";
+import { defineConfig, mergeConfig } from "vitest/config";
+
+import viteConfig from "./vite.config.ts";
+
+// Vitest reuses vite.config.ts for the aliases and build target, then adds the
+// unit and Storybook projects. Storybook tests need Chromium, so they stay a
+// separate project from the fast Node unit tests.
+export default mergeConfig(
+    viteConfig,
+    defineConfig({
+        // Pre-bundle the Base UI entry points the stories use. A dependency
+        // discovered mid-run reloads the test page and invalidates the run.
+        optimizeDeps: {
+            include: [
+                "@base-ui/react/button",
+                "@base-ui/react/checkbox",
+                "@base-ui/react/field",
+                "@base-ui/react/fieldset",
+                "@base-ui/react/form",
+                "@base-ui/react/input",
+                "@base-ui/react/progress",
+                "@base-ui/react/select",
+                "@base-ui/react/tooltip",
+                "lucide-react",
+            ],
+        },
+        test: {
+            // Every worker loads the whole config, and each Storybook worker also
+            // loads the whole preview bundle. One worker per core cost several GB
+            // and pushed a 16 GB host into OOM, so both projects run two files at a time.
+            maxWorkers: 2,
+            projects: [
+                {
+                    extends: true,
+                    test: {
+                        name: "unit",
+                        include: ["src/**/*.test.ts"],
+                        environment: "node",
+                    },
+                },
+                {
+                    extends: true,
+                    plugins: [
+                        storybookTest({
+                            configDir: fileURLToPath(new URL("./.storybook", import.meta.url)),
+                        }),
+                    ],
+                    test: {
+                        name: "storybook",
+                        browser: {
+                            enabled: true,
+                            headless: true,
+                            provider: playwright(),
+                            instances: [{ browser: "chromium" }],
+                        },
+                    },
+                },
+            ],
+        },
+    }),
+);
