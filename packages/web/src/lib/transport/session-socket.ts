@@ -39,11 +39,22 @@ export interface SessionSocketLike {
 /** Constructor for an injectable WebSocket implementation. */
 export type SessionSocketConstructor = new (url: string) => SessionSocketLike;
 
+/** Handshake parameters sent on `/ws/sessions/:id` connect and reconnect. */
+export interface SessionSocketHandshakeParams {
+    readonly afterSeq?: number | undefined;
+    readonly runtimeId?: string | undefined;
+    readonly entriesVersion?: string | undefined;
+    readonly entryCount?: number | undefined;
+    readonly afterEntryId?: string | undefined;
+}
+
 /** Options for {@link SessionSocket}. */
 export interface SessionSocketOptions {
     readonly sessionId: string;
     /** Last sequence number the client applied; the server replays only newer events. */
     readonly afterSeq?: number | undefined;
+    /** Optional Tier 1/2 handshake anchors (`runtimeId`, `entriesVersion`, `entryCount`, `afterEntryId`). */
+    readonly handshake?: SessionSocketHandshakeParams | undefined;
     /** Absolute `ws://` or `wss://` URL. Defaults to the current origin and `/ws/sessions/:id`. */
     readonly url?: string | undefined;
     /** WebSocket constructor. Defaults to `globalThis.WebSocket`. */
@@ -88,8 +99,12 @@ interface PendingCommand {
 
 const WS_READY_STATE_OPEN = 1;
 
-/** Builds the default endpoint from a page URL and an optional replay position. */
-export function buildSessionSocketUrl(sessionId: string, afterSeq?: number, pageUrl?: string): string {
+/** Builds the default endpoint from a page URL and optional Tier 1/2 handshake anchors. */
+export function buildSessionSocketUrl(
+    sessionId: string,
+    handshakeOrAfterSeq?: number | SessionSocketHandshakeParams,
+    pageUrl?: string,
+): string {
     const source = pageUrl ?? globalThis.location?.href;
     if (source === undefined) {
         throw new Error("A WebSocket URL is required outside the browser.");
@@ -99,8 +114,22 @@ export function buildSessionSocketUrl(sessionId: string, afterSeq?: number, page
     url.pathname = `/ws/sessions/${encodeURIComponent(sessionId)}`;
     url.search = "";
     url.hash = "";
-    if (afterSeq !== undefined) {
-        url.searchParams.set("afterSeq", String(afterSeq));
+    const params: SessionSocketHandshakeParams =
+        typeof handshakeOrAfterSeq === "number" ? { afterSeq: handshakeOrAfterSeq } : (handshakeOrAfterSeq ?? {});
+    if (params.afterSeq !== undefined) {
+        url.searchParams.set("afterSeq", String(params.afterSeq));
+    }
+    if (params.runtimeId !== undefined && params.runtimeId !== "") {
+        url.searchParams.set("runtimeId", params.runtimeId);
+    }
+    if (params.entriesVersion !== undefined && params.entriesVersion !== "") {
+        url.searchParams.set("entriesVersion", params.entriesVersion);
+    }
+    if (params.entryCount !== undefined) {
+        url.searchParams.set("entryCount", String(params.entryCount));
+    }
+    if (params.afterEntryId !== undefined && params.afterEntryId !== "") {
+        url.searchParams.set("afterEntryId", params.afterEntryId);
     }
     return url.toString();
 }
@@ -138,7 +167,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  */
 export class SessionSocket {
     private readonly sessionId: string;
-    private readonly afterSeq: number | undefined;
+    private readonly handshake: SessionSocketHandshakeParams;
     private readonly url: string | undefined;
     private readonly socketConstructor: SessionSocketConstructor | undefined;
     private readonly onOpen: (() => void) | undefined;
@@ -154,7 +183,10 @@ export class SessionSocket {
 
     constructor(options: SessionSocketOptions) {
         this.sessionId = options.sessionId;
-        this.afterSeq = options.afterSeq;
+        this.handshake = {
+            ...options.handshake,
+            ...(options.afterSeq === undefined ? {} : { afterSeq: options.afterSeq }),
+        };
         this.url = options.url;
         this.socketConstructor = options.WebSocket;
         this.onOpen = options.onOpen;
@@ -175,7 +207,7 @@ export class SessionSocket {
         }
 
         const constructor = this.socketConstructor ?? defaultSocketConstructor();
-        const url = this.url ?? buildSessionSocketUrl(this.sessionId, this.afterSeq);
+        const url = this.url ?? buildSessionSocketUrl(this.sessionId, this.handshake);
         const socket = new constructor(url);
         this.socket = socket;
 

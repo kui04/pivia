@@ -519,4 +519,97 @@ describe("SessionCatalog", () => {
 
         expect(result.sessions.map((session) => session.id)).toEqual([...expectedIds].reverse());
     });
+
+    it("caches summaries by mtime/size, resolves indexed ids, refreshes on change, and prunes deleted files", async () => {
+        const sessionDir = createTempDir("pivia-sessions-");
+        const filePath = join(sessionDir, "cached.jsonl");
+        writeSessionFile(filePath, {
+            id: "session-cached",
+            timestamp: "2026-03-01T00:00:00.000Z",
+            messages: [{ role: "user", text: "initial question", timestamp: "2026-03-01T00:00:01.000Z" }],
+        });
+
+        const { logger } = createRecordingLogger();
+        const catalog = createCatalog({ sessionDir, agentDir: createTempDir("pivia-agent-"), logger });
+
+        const firstList = await catalog.list();
+        expect(firstList.sessions).toHaveLength(1);
+        expect(firstList.sessions[0]?.messageCount).toBe(1);
+
+        // Append a reply with a different size & mtime; resolveById must refresh single-file summary.
+        writeSessionFile(filePath, {
+            id: "session-cached",
+            timestamp: "2026-03-01T00:00:00.000Z",
+            name: "Updated Title",
+            messages: [
+                { role: "user", text: "initial question", timestamp: "2026-03-01T00:00:01.000Z" },
+                { role: "assistant", text: "updated reply", timestamp: "2026-03-01T00:00:05.000Z" },
+            ],
+        });
+        const resolved = await catalog.resolveById("session-cached");
+        expect(resolved?.summary.messageCount).toBe(2);
+        expect(resolved?.summary.name).toBe("Updated Title");
+        expect(resolved?.sizeBytes).toBe(statSync(filePath).size);
+
+        // Deleting the file removes it on the next list() and makes resolveById return null.
+        rmSync(filePath);
+        expect(await catalog.resolveById("session-cached")).toBeNull();
+        expect((await catalog.list()).sessions).toEqual([]);
+    });
+
+    it("returns null entriesVersion for unmigrated v1/v2 files and slices v3 files by prefix anchor", async () => {
+        const sessionDir = createTempDir("pivia-sessions-");
+        writeSessionFile(join(sessionDir, "v1.jsonl"), {
+            id: "session-v1",
+            version: null,
+            messages: [{ role: "user", text: "v1 question" }],
+        });
+        writeSessionFile(join(sessionDir, "v3.jsonl"), {
+            id: "session-v3",
+            version: 3,
+            messages: [
+                { role: "user", text: "q1" },
+                { role: "assistant", text: "a1" },
+            ],
+        });
+
+        const { logger } = createRecordingLogger();
+        const catalog = createCatalog({ sessionDir, agentDir: createTempDir("pivia-agent-"), logger });
+
+        const v1Detail = await catalog.getById("session-v1");
+        expect(v1Detail?.entriesVersion).toBeNull();
+        expect(v1Detail?.baseEntryCount).toBe(0);
+
+        const v3Full = await catalog.getById("session-v3");
+        expect(v3Full?.entriesVersion).toBe(catalog.entriesVersion);
+        expect(v3Full?.baseEntryCount).toBe(0);
+        expect(v3Full?.entries).toHaveLength(3);
+
+        // Header-only anchor (afterCount = 1, afterEntryId = sessionId) slices messages after header.
+        const fromHeader = await catalog.getById("session-v3", {
+            entriesVersion: catalog.entriesVersion,
+            afterCount: 1,
+            afterEntryId: "session-v3",
+        });
+        expect(fromHeader?.baseEntryCount).toBe(1);
+        expect(fromHeader?.entries).toHaveLength(2);
+
+        // Entry-level anchor slices trailing entry only.
+        const fromEntry0 = await catalog.getById("session-v3", {
+            entriesVersion: catalog.entriesVersion,
+            afterCount: 2,
+            afterEntryId: "entry-0",
+        });
+        expect(fromEntry0?.baseEntryCount).toBe(2);
+        expect(fromEntry0?.entries).toHaveLength(1);
+
+        // Mismatched anchor falls back to full entries gracefully.
+        const mismatched = await catalog.getById("session-v3", {
+            entriesVersion: catalog.entriesVersion,
+            afterCount: 2,
+            afterEntryId: "wrong-id",
+        });
+        expect(mismatched?.baseEntryCount).toBe(0);
+        expect(mismatched?.entries).toHaveLength(3);
+    });
 });

@@ -1,8 +1,10 @@
 import type { AuthLoginResponse, AuthLogoutResponse, AuthStatusResponse } from "@pivia/protocol";
 import { create } from "zustand";
 
+import { sessionCache, type SessionCacheStore } from "@/lib/cache/session-cache";
 import { Log } from "@/lib/log";
 import { ApiClientError, apiClient } from "@/lib/transport/http";
+import { useSessionStore } from "@/stores/session/store";
 
 /** Authentication states of the single host. */
 export type AuthPhase = "checking" | "unauthenticated" | "authenticated";
@@ -85,8 +87,27 @@ function retryAfterOf(error: unknown): number | null {
  * message, which lets the layout offer a retry instead of showing the password gate for a network
  * failure.
  */
-export function createAuthStore(client: AuthClient = apiClient) {
+/** Optional cache-clearing hooks invoked synchronously/asynchronously on logout and 401. */
+export interface AuthStoreHooks {
+    readonly cache?: SessionCacheStore | undefined;
+    readonly onClearSessionMemory?: (() => void) | undefined;
+}
+
+export function createAuthStore(client: AuthClient = apiClient, hooks: AuthStoreHooks = {}) {
     let statusRequest: Promise<void> | null = null;
+
+    const clearClientCaches = (): void => {
+        try {
+            hooks.onClearSessionMemory?.();
+        } catch (error) {
+            Log.warn("Failed to clear in-memory session cache", error);
+        }
+        if (hooks.cache !== undefined) {
+            void hooks.cache.clearAll().catch((error: unknown) => {
+                Log.warn("Failed to clear persisted session cache", error);
+            });
+        }
+    };
 
     return create<AuthStore>()((set, get) => {
         const check = async (): Promise<void> => {
@@ -150,6 +171,7 @@ export function createAuthStore(client: AuthClient = apiClient) {
                 set({ submitting: true, error: null, retryAfterSeconds: null });
                 try {
                     await client.logout();
+                    clearClientCaches();
                     set({
                         phase: "unauthenticated",
                         submitting: false,
@@ -165,20 +187,27 @@ export function createAuthStore(client: AuthClient = apiClient) {
                     Log.warn("Sign-out failed", error);
                 }
             },
-            markUnauthorized: () =>
+            markUnauthorized: () => {
+                clearClientCaches();
                 set({
                     phase: "unauthenticated",
                     submitting: false,
                     error: null,
                     retryAfterSeconds: null,
-                }),
+                });
+            },
             clearError: () => set({ error: null, retryAfterSeconds: null }),
         };
     });
 }
 
 /** The app-wide auth store. */
-export const useAuthStore = createAuthStore(apiClient);
+export const useAuthStore = createAuthStore(apiClient, {
+    cache: sessionCache,
+    onClearSessionMemory: () => {
+        useSessionStore.getState().clearCache();
+    },
+});
 
 apiClient.setUnauthorizedHandler(() => {
     useAuthStore.getState().markUnauthorized();

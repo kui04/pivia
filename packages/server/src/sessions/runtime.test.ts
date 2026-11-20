@@ -13,6 +13,7 @@ import {
     type ActiveSessionHandle,
     SessionRegistry,
     SessionRegistryError,
+    type SessionAttachOptions,
     type SessionAttachment,
     type SessionClient,
     type SessionRegistryLogger,
@@ -175,9 +176,13 @@ function findSessionFiles(dir: string): string[] {
     return results;
 }
 
-function attach(registry: SessionRegistry, sessionId: string): { collector: Collector; attachment: SessionAttachment } {
+function attach(
+    registry: SessionRegistry,
+    sessionId: string,
+    options?: SessionAttachOptions,
+): { collector: Collector; attachment: SessionAttachment } {
     const collector = createCollector();
-    const attachment = registry.attach(sessionId, collector.client);
+    const attachment = registry.attach(sessionId, collector.client, options);
     return { collector, attachment };
 }
 
@@ -1217,5 +1222,105 @@ describe("SessionRegistry", () => {
                     (entry.message as Record<string, unknown>).content === "integration seed",
             ),
         ).toBe(true);
+    });
+
+    it("supports Tier 1/2/3 handshake fallbacks, 512 KB HTTP offloading, and microtask entries_appended broadcasts", async () => {
+        const fixture = createFixture();
+        const handle = await fixture.registry.createSession(fixture.projectDir);
+        const session = fakeSession(fixture, handle);
+
+        const first = attach(fixture.registry, handle.sessionId);
+        const initialSnap = first.collector.messages[0];
+        if (initialSnap?.type !== "snapshot" || initialSnap.entriesMode !== "inline") {
+            throw new Error("expected inline snapshot");
+        }
+        const runtimeId = initialSnap.runtimeId;
+        const entriesVersion = initialSnap.entriesVersion;
+        expect(initialSnap.baseEntryCount).toBe(0);
+        expect(initialSnap.entries).toHaveLength(1);
+
+        // Appending multiple entries synchronously coalesces into one microtask entries_appended broadcast.
+        const e1 = session.appendUserMessage("hello");
+        const e2 = session.appendUserMessage("world");
+        expect(e1).not.toBe(e2);
+        // message_update alone does not trigger entries_appended.
+        session.emit(createTextDeltaEvent("Hi", "Hi"));
+
+        const appendedMsg = await waitForMessage(
+            first.collector.messages,
+            (message): message is Extract<WsServerMessage, { type: "entries_appended" }> =>
+                message.type === "entries_appended",
+        );
+        expect(appendedMsg.entriesMode).toBe("inline");
+        if (appendedMsg.entriesMode === "inline") {
+            expect(appendedMsg.baseEntryCount).toBe(1);
+            expect(appendedMsg.entries).toHaveLength(2);
+        }
+
+        // Tier 1 with matching runtimeId + prefixAnchor appends missed entries & includes liveMessage.
+        const e3 = session.appendUserMessage("missed while offline");
+        await Promise.resolve();
+        const tier1 = attach(fixture.registry, handle.sessionId, {
+            afterSeq: 0,
+            runtimeId,
+            prefixAnchor: { entriesVersion, afterCount: 3, afterEntryId: e2 },
+        });
+        const replayMsg = tier1.collector.messages[0];
+        expect(replayMsg?.type).toBe("replay");
+        if (replayMsg?.type === "replay") {
+            expect(replayMsg.baseEntryCount).toBe(3);
+            expect(replayMsg.appendedEntries).toHaveLength(1);
+            expect(replayMsg.liveMessage?.content[0]).toEqual({ type: "text", text: "Hi" });
+        }
+
+        // Tier 2 when runtimeId mismatches but prefixAnchor matches returns incremental inline snapshot.
+        const tier2 = attach(fixture.registry, handle.sessionId, {
+            afterSeq: 0,
+            runtimeId: "old-runtime",
+            prefixAnchor: { entriesVersion, afterCount: 3, afterEntryId: e2 },
+        });
+        const patchSnap = tier2.collector.messages[0];
+        expect(patchSnap?.type).toBe("snapshot");
+        if (patchSnap?.type === "snapshot" && patchSnap.entriesMode === "inline") {
+            expect(patchSnap.baseEntryCount).toBe(3);
+            expect(patchSnap.entries).toHaveLength(1);
+            expect(patchSnap.liveMessage?.content[0]).toEqual({ type: "text", text: "Hi" });
+        }
+
+        // Oversized (> 512 KB) payload offloads to entriesMode: "http" across Tier 1, Tier 2, Tier 3, and live entries_appended.
+        const huge = "z".repeat(600 * 1024);
+        session.appendUserMessage(huge);
+        const hugeBroadcast = await waitForMessage(
+            first.collector.messages,
+            (message): message is Extract<WsServerMessage, { type: "entries_appended" }> =>
+                message.type === "entries_appended" && message.entriesMode === "http",
+        );
+        expect(hugeBroadcast).toMatchObject({ entriesMode: "http", baseEntryCount: 4, entryCount: 5 });
+
+        const tier1Offload = attach(fixture.registry, handle.sessionId, {
+            afterSeq: 0,
+            runtimeId,
+            prefixAnchor: { entriesVersion, afterCount: 4, afterEntryId: e3 },
+        });
+        expect(tier1Offload.collector.messages[0]).toMatchObject({
+            type: "snapshot",
+            entriesMode: "http",
+            baseEntryCount: 4,
+            entryCount: 5,
+        });
+
+        const tier3Offload = attach(fixture.registry, handle.sessionId);
+        expect(tier3Offload.collector.messages[0]).toMatchObject({
+            type: "snapshot",
+            entriesMode: "http",
+            baseEntryCount: 0,
+            entryCount: 5,
+        });
+
+        first.attachment.detach();
+        tier1.attachment.detach();
+        tier2.attachment.detach();
+        tier1Offload.attachment.detach();
+        tier3Offload.attachment.detach();
     });
 });

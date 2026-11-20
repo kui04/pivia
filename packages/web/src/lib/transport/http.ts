@@ -62,6 +62,14 @@ export class ApiClientError extends Error {
     }
 }
 
+/** Optional incremental slice anchors and cancellation signal for {@link ApiClient.getSession}. */
+export interface GetSessionOptions {
+    readonly entriesVersion?: string | undefined;
+    readonly afterCount?: number | undefined;
+    readonly afterEntryId?: string | undefined;
+    readonly signal?: AbortSignal | undefined;
+}
+
 /** HTTP operations used by the auth and workspace stores. */
 export interface ApiClient {
     getHealth(): Promise<HealthResponse>;
@@ -70,7 +78,7 @@ export interface ApiClient {
     logout(): Promise<AuthLogoutResponse>;
     listSessions(): Promise<SessionListResponse>;
     createSession(cwd: string): Promise<CreateSessionResponse>;
-    getSession(id: string): Promise<SessionDetailResponse>;
+    getSession(id: string, options?: GetSessionOptions): Promise<SessionDetailResponse>;
     closeSession(id: string): Promise<CloseSessionResponse>;
     /** Registers or clears the callback for `401` responses from protected endpoints. */
     setUnauthorizedHandler(handler: (() => void) | null): void;
@@ -266,11 +274,30 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
                 headers: JSON_HEADERS,
                 body: JSON.stringify({ cwd }),
             }),
-        getSession: (id) =>
-            request<SessionDetailResponse>(`/api/sessions/${encodeURIComponent(id)}`, {
-                method: "GET",
-                headers: ACCEPT_HEADERS,
-            }),
+        getSession: (id, sessionOptions) => {
+            const params = new URLSearchParams();
+            if (
+                sessionOptions?.entriesVersion !== undefined &&
+                sessionOptions.afterCount !== undefined &&
+                Number.isSafeInteger(sessionOptions.afterCount) &&
+                sessionOptions.afterCount >= 1 &&
+                sessionOptions.afterEntryId !== undefined
+            ) {
+                params.set("entriesVersion", sessionOptions.entriesVersion);
+                params.set("afterCount", String(sessionOptions.afterCount));
+                params.set("afterEntryId", sessionOptions.afterEntryId);
+            }
+            const query = params.toString();
+            const path =
+                query === ""
+                    ? `/api/sessions/${encodeURIComponent(id)}`
+                    : `/api/sessions/${encodeURIComponent(id)}?${query}`;
+            const init: RequestInit = { method: "GET", headers: ACCEPT_HEADERS };
+            if (sessionOptions?.signal !== undefined) {
+                init.signal = sessionOptions.signal;
+            }
+            return request<SessionDetailResponse>(path, init);
+        },
         closeSession: (id) =>
             request<CloseSessionResponse>(`/api/sessions/${encodeURIComponent(id)}/close`, {
                 method: "POST",

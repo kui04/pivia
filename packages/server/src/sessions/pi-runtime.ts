@@ -10,6 +10,7 @@ import {
     createToolSearchExtension,
     getAgentDir,
     type PromptOptions,
+    type SessionManager,
 } from "@earendil-works/pi-coding-agent";
 
 import type { ImageContent, SessionModelInfo, ThinkingLevel } from "@pivia/protocol";
@@ -33,6 +34,53 @@ export interface PiRuntimeFactoryOptions {
     readonly logger?: SessionRegistryLogger | undefined;
     /** Extra resource loader options; the server always appends the three SDK built-in extension factories. */
     readonly resourceLoaderOptions?: ResourceLoaderOptions | undefined;
+}
+
+/** Entry-appending `SessionManager` methods whose calls must reach the broadcast hook. */
+export const SESSION_APPEND_METHODS = [
+    "appendMessage",
+    "appendThinkingLevelChange",
+    "appendModelChange",
+    "appendUsage",
+    "appendCompaction",
+    "appendCustomEntry",
+    "appendSessionInfo",
+    "appendCustomMessageEntry",
+    "appendContextEdit",
+    "appendLabelChange",
+    "branchWithSummary",
+] as const;
+
+type SessionAppendMethodName = (typeof SESSION_APPEND_METHODS)[number];
+
+/**
+ * Wrap all 11 public entry-appending methods on `SessionManager` so silent SDK writes
+ * (`setLabel`, `ctx.setModel`, `_recordModelSelection`, `_flushPendingBashMessages`, etc.) notify
+ * listeners synchronously without missing writes that emit no `AgentSessionEvent`.
+ */
+export function observeSessionManagerAppends(sessionManager: SessionManager, onAppend: () => void): () => void {
+    const target = sessionManager as unknown as Record<SessionAppendMethodName, (...args: unknown[]) => unknown>;
+    const originals = new Map<SessionAppendMethodName, (...args: unknown[]) => unknown>();
+
+    for (const methodName of SESSION_APPEND_METHODS) {
+        const original = target[methodName];
+        if (typeof original !== "function") {
+            continue;
+        }
+        originals.set(methodName, original);
+        target[methodName] = function (this: SessionManager, ...args: unknown[]): unknown {
+            const result = original.apply(this, args);
+            onAppend();
+            return result;
+        };
+    }
+
+    return () => {
+        for (const [methodName, original] of originals) {
+            target[methodName] = original;
+        }
+        originals.clear();
+    };
 }
 
 function toModelInfo(model: SessionModelInfo): SessionModelInfo {
@@ -69,6 +117,15 @@ class AgentSessionAdapter implements ManagedSession {
         const header = this.session.sessionManager.getHeader();
         const entries = this.session.sessionManager.getEntries();
         return header === null ? entries : [header, ...entries];
+    }
+
+    getEntryCount(): number {
+        const header = this.session.sessionManager.getHeader();
+        return this.session.sessionManager.getEntryCount() + (header !== null ? 1 : 0);
+    }
+
+    onEntryAppended(listener: () => void): () => void {
+        return observeSessionManagerAppends(this.session.sessionManager, listener);
     }
 
     getState(): ManagedSessionState {

@@ -1,4 +1,10 @@
-import type { ImageContent, RpcExtensionUIResponse, ThinkingLevel, WsClientCommand } from "@pivia/protocol";
+import type {
+    ImageContent,
+    RpcExtensionUIResponse,
+    SessionPrefixAnchor,
+    ThinkingLevel,
+    WsClientCommand,
+} from "@pivia/protocol";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -169,4 +175,58 @@ export function parseAfterSeq(value: unknown): number | undefined | null {
     }
     const parsed = Number(value);
     return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
+/** Validated WebSocket handshake anchors parsed at the upgrade boundary. */
+export interface ParsedWsHandshakeQuery {
+    readonly afterSeq?: number | undefined;
+    readonly runtimeId?: string | undefined;
+    readonly prefixAnchor?: SessionPrefixAnchor | undefined;
+}
+
+/**
+ * Parse `/ws/sessions/:id` handshake query parameters.
+ *
+ * Rejects malformed `afterSeq` with an explicit error (preserving HTTP 400 upgrade checks),
+ * while malformed or partial cache hints (`runtimeId`, `entriesVersion`, `entryCount`,
+ * `afterEntryId`) gracefully degrade to `undefined` so stale clients fall back to Tier 3.
+ */
+export function parseWsHandshakeQuery(
+    query: Readonly<Record<string, unknown>>,
+): { readonly ok: true; readonly value: ParsedWsHandshakeQuery } | { readonly ok: false; readonly message: string } {
+    const afterSeq = parseAfterSeq(query.afterSeq);
+    if (afterSeq === null) {
+        return { ok: false, message: "Invalid afterSeq parameter." };
+    }
+
+    const runtimeId = typeof query.runtimeId === "string" && query.runtimeId.length > 0 ? query.runtimeId : undefined;
+
+    let prefixAnchor: SessionPrefixAnchor | undefined;
+    const { entriesVersion, entryCount, afterEntryId } = query;
+    if (
+        typeof entriesVersion === "string" &&
+        entriesVersion.length > 0 &&
+        typeof afterEntryId === "string" &&
+        afterEntryId.length > 0 &&
+        typeof entryCount === "string" &&
+        /^[1-9]\d*$/.test(entryCount)
+    ) {
+        const parsedCount = Number(entryCount);
+        if (Number.isSafeInteger(parsedCount) && parsedCount >= 1) {
+            prefixAnchor = {
+                entriesVersion,
+                afterCount: parsedCount,
+                afterEntryId,
+            };
+        }
+    }
+
+    return {
+        ok: true,
+        value: {
+            ...(afterSeq === undefined ? {} : { afterSeq }),
+            ...(runtimeId === undefined ? {} : { runtimeId }),
+            ...(prefixAnchor === undefined ? {} : { prefixAnchor }),
+        },
+    };
 }

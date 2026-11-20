@@ -2,6 +2,8 @@ import type { SessionListResponse, SessionSummary } from "@pivia/protocol";
 import { create } from "zustand";
 import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
 
+import { sessionCache, type SessionCacheStore } from "@/lib/cache/session-cache";
+
 import { removeSession, upsertSession, type ScanPhase } from "./model";
 
 /** One in-memory storage so a browser context that denies localStorage still runs. */
@@ -81,6 +83,8 @@ export interface WorkspaceState {
 
 /** What a caller may change in the workspace store. */
 export interface WorkspaceActions {
+    /** Hydrate stale-while-revalidate catalog rows from IndexedDB before the first scan finishes. */
+    hydrateCatalog: (cache: SessionCacheStore) => Promise<void>;
     beginScan: (manual: boolean) => void;
     applyScan: (result: SessionListResponse) => void;
     failScan: (message: string) => void;
@@ -136,13 +140,28 @@ function persistedPins(persisted: unknown): readonly string[] {
 /**
  * The session catalog of the single host.
  *
- * Only pins persist. The session list belongs to a live scan, and a cached list from an earlier
- * server process would read as this host's current sessions.
+ * Pins persist in localStorage. The session list is a stale-while-revalidate snapshot: `applyScan`
+ * stores it in the IndexedDB cache and a view may call `hydrateCatalog` before this page scans, so
+ * every real scan still replaces it.
  */
 export const useWorkspaceStore = create<WorkspaceStore>()(
     persist(
-        (set) => ({
+        (set, get) => ({
             ...initialWorkspaceState,
+            hydrateCatalog: async (cache) => {
+                const cached = await cache.getWorkspaceCatalog();
+                if (cached === null) {
+                    return;
+                }
+                const current = get();
+                if (current.scan.kind !== "idle" || current.scannedAtMs !== null) {
+                    return;
+                }
+                set({
+                    sessions: cached.sessions,
+                    scannedAtMs: cached.scannedAtMs,
+                });
+            },
             beginScan: (manual) =>
                 set((state) =>
                     state.scan.kind === "scanning"
@@ -153,7 +172,8 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
                               scan: { kind: "scanning", manual },
                           },
                 ),
-            applyScan: (result) =>
+            applyScan: (result) => {
+                void sessionCache.putWorkspaceCatalog(result.sessions, result.scannedAtMs);
                 set((state) => {
                     const ids = new Set(result.sessions.map((session) => session.id));
                     return {
@@ -164,7 +184,8 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
                         pins: state.pins.filter((id) => ids.has(id)),
                         selectedId: state.selectedId !== null && ids.has(state.selectedId) ? state.selectedId : null,
                     };
-                }),
+                });
+            },
             failScan: (message) =>
                 set({
                     // The last rows and their timestamp stay, marked with the failure.

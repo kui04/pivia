@@ -256,7 +256,11 @@ describe("SessionSocket", () => {
             {
                 type: "snapshot",
                 sessionId: "session-1",
+                runtimeId: "runtime-1",
                 seq: 0,
+                entriesVersion: "3:1.5.2",
+                baseEntryCount: 0,
+                entriesMode: "inline",
                 state: {
                     sessionId: "session-1",
                     cwd: "/tmp",
@@ -274,12 +278,15 @@ describe("SessionSocket", () => {
                     followUpMessages: [],
                 },
                 entries: [],
+                liveMessage: null,
                 pendingUiRequests: [],
             },
             {
                 type: "replay",
                 sessionId: "session-1",
+                runtimeId: "runtime-1",
                 seq: 0,
+                entriesVersion: "3:1.5.2",
                 state: {
                     sessionId: "session-1",
                     cwd: "/tmp",
@@ -297,6 +304,7 @@ describe("SessionSocket", () => {
                     followUpMessages: [],
                 },
                 events: [],
+                liveMessage: null,
                 pendingUiRequests: [],
             },
             { type: "event", sessionId: "session-1", seq: 1, event: { type: "agent_start" } },

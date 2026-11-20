@@ -15,6 +15,7 @@ import type {
     RuntimeFactoryInput,
     SessionRegistryLogger,
 } from "../sessions/runtime.ts";
+import { observeSessionManagerAppends } from "../sessions/pi-runtime.ts";
 
 /** Handler installed by a test to control `prompt()` timing and failures. */
 export type FakePromptHandler = (text: string, options: ManagedPromptOptions) => Promise<void>;
@@ -95,6 +96,23 @@ export class FakeSession implements ManagedSession {
         const header = this.sessionManager.getHeader();
         const entries = this.sessionManager.getEntries();
         return header === null ? entries : [header, ...entries];
+    }
+
+    getEntryCount(): number {
+        const header = this.sessionManager.getHeader();
+        return this.sessionManager.getEntryCount() + (header !== null ? 1 : 0);
+    }
+
+    onEntryAppended(listener: () => void): () => void {
+        return observeSessionManagerAppends(this.sessionManager, listener);
+    }
+
+    appendUserMessage(text: string): string {
+        return this.sessionManager.appendMessage({
+            role: "user",
+            content: text,
+            timestamp: Date.now(),
+        });
     }
 
     getState(): ManagedSessionState {

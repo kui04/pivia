@@ -1,5 +1,5 @@
 import type { QueueMode, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { Api, Model } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
 import type {
     AgentSession,
     FileEntry,
@@ -13,6 +13,12 @@ import type {
 export type { QueueMode, ThinkingLevel } from "@earendil-works/pi-agent-core";
 export type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
 export type { FileEntry, RpcExtensionUIRequest, RpcExtensionUIResponse } from "@earendil-works/pi-coding-agent";
+export {
+    projectSessionTranscript,
+    type ProjectTranscriptOptions,
+    type ProjectedTranscriptItem,
+    type SessionTranscriptProjection,
+} from "./projection.ts";
 
 /** Health status payload returned by `GET /api/health`. */
 export interface HealthResponse {
@@ -136,10 +142,24 @@ export interface SessionListResponse {
     readonly scannedAtMs: number;
 }
 
+/**
+ * Prefix anchor verified by both HTTP slice reads (`GET /api/sessions/:id`) and WS Tier 1/2
+ * handshakes. `afterCount` includes the session header (`entries[0]`).
+ */
+export interface SessionPrefixAnchor {
+    readonly entriesVersion: string;
+    readonly afterCount: number;
+    readonly afterEntryId: string;
+}
+
 /** Response payload returned by `GET /api/sessions/:id`. */
 export interface SessionDetailResponse {
     readonly session: SessionSummary;
-    /** Session entries with the header first; live sessions return in-memory entries. */
+    /** Composite `${sessionVersion}:${sdkVersion}`, or `null` for unmigrated v1/v2 disk files. */
+    readonly entriesVersion: string | null;
+    /** Starting index in the session's `[header, ...entries]` array; `0` for a full response. */
+    readonly baseEntryCount: number;
+    /** Session entries (or slice from `baseEntryCount`) with header first on full responses. */
     readonly entries: readonly FileEntry[];
 }
 
@@ -226,26 +246,74 @@ export interface SequencedSessionEvent {
     readonly event: JsonAgentSessionEvent;
 }
 
-/** Initial state sent after a connection cannot be replayed incrementally. */
-export interface WsSnapshotMessage {
-    readonly type: "snapshot";
-    readonly sessionId: string;
-    readonly seq: number;
-    readonly state: SessionStateSnapshot;
-    readonly entries: readonly FileEntry[];
-    /** Dialog requests that are still waiting for a response. */
-    readonly pendingUiRequests: readonly RpcExtensionUIRequest[];
-}
+/** Initial or Tier 2 incremental state sent when a connection cannot use hot event replay. */
+export type WsSnapshotMessage =
+    | {
+          readonly type: "snapshot";
+          readonly sessionId: string;
+          readonly runtimeId: string;
+          readonly seq: number;
+          readonly entriesVersion: string;
+          /** Starting index of `entries` (`0` for full snapshot, `> 0` for Tier 2 slice). */
+          readonly baseEntryCount: number;
+          readonly entriesMode: "inline";
+          readonly entries: readonly FileEntry[];
+          readonly state: SessionStateSnapshot;
+          readonly liveMessage: AssistantMessage | null;
+          /** Dialog requests that are still waiting for a response. */
+          readonly pendingUiRequests: readonly RpcExtensionUIRequest[];
+      }
+    | {
+          readonly type: "snapshot";
+          readonly sessionId: string;
+          readonly runtimeId: string;
+          readonly seq: number;
+          readonly entriesVersion: string;
+          /** Anchor count for HTTP slice (`0` for full download, `> 0` for incremental slice). */
+          readonly baseEntryCount: number;
+          readonly entriesMode: "http";
+          /** Authoritative total entry count (including header) on the server at handshake time. */
+          readonly entryCount: number;
+          readonly state: SessionStateSnapshot;
+          readonly liveMessage: AssistantMessage | null;
+          /** Dialog requests that are still waiting for a response. */
+          readonly pendingUiRequests: readonly RpcExtensionUIRequest[];
+      };
 
-/** Incremental resend after a reconnect that asks for events after `afterSeq`. */
+/** Tier 1 hot replay after a reconnect that asks for events after `afterSeq`. */
 export interface WsReplayMessage {
     readonly type: "replay";
     readonly sessionId: string;
+    readonly runtimeId: string;
     readonly seq: number;
+    readonly entriesVersion: string;
     readonly state: SessionStateSnapshot;
     readonly events: readonly SequencedSessionEvent[];
+    /** Authoritative streaming assistant message at `seq`, or `null` when none is streaming. */
+    readonly liveMessage: AssistantMessage | null;
+    readonly baseEntryCount?: number;
+    readonly appendedEntries?: readonly FileEntry[];
     readonly pendingUiRequests: readonly RpcExtensionUIRequest[];
 }
+
+/** Orthogonal persisted-entry notification; carries no `seq` and never enters `EventBuffer`. */
+export type WsEntriesAppendedMessage =
+    | {
+          readonly type: "entries_appended";
+          readonly sessionId: string;
+          readonly entriesVersion: string;
+          readonly entriesMode: "inline";
+          readonly baseEntryCount: number;
+          readonly entries: readonly FileEntry[];
+      }
+    | {
+          readonly type: "entries_appended";
+          readonly sessionId: string;
+          readonly entriesVersion: string;
+          readonly entriesMode: "http";
+          readonly baseEntryCount: number;
+          readonly entryCount: number;
+      };
 
 /** One live session event. */
 export interface WsEventMessage {
@@ -301,6 +369,7 @@ export interface WsErrorMessage {
 export type WsServerMessage =
     | WsSnapshotMessage
     | WsReplayMessage
+    | WsEntriesAppendedMessage
     | WsEventMessage
     | WsExtensionUiRequestMessage
     | WsExtensionUiResolvedMessage

@@ -234,4 +234,23 @@ describe("createAuthStore", () => {
 
         expect(store.getState()).toMatchObject({ error: null, retryAfterSeconds: null });
     });
+
+    it("clears memory and persisted session caches on logout and markUnauthorized", async () => {
+        const clearAll = vi.fn(() => Promise.resolve());
+        const onClearSessionMemory = vi.fn();
+        const store = createAuthStore(authClient(), {
+            cache: { clearAll } as never,
+            onClearSessionMemory,
+        });
+
+        await store.getState().login("secret");
+        await store.getState().logout();
+        expect(onClearSessionMemory).toHaveBeenCalledTimes(1);
+        expect(clearAll).toHaveBeenCalledTimes(1);
+
+        await store.getState().login("secret");
+        store.getState().markUnauthorized();
+        expect(onClearSessionMemory).toHaveBeenCalledTimes(2);
+        expect(clearAll).toHaveBeenCalledTimes(2);
+    });
 });

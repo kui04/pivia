@@ -366,6 +366,9 @@ describe("session websocket route", () => {
         );
         expect(snapshot).toMatchObject({ sessionId: id, seq: 0 });
         expect(snapshot.state).toMatchObject({ sessionId: id, cwd: realpathSync(fixture.projectDir) });
+        if (snapshot.entriesMode !== "inline") {
+            throw new Error("expected inline snapshot entries");
+        }
         expect(snapshot.entries[0]).toMatchObject({ type: "session", id });
 
         client.send({ type: "get_state", id: "state" });
@@ -420,13 +423,26 @@ describe("session websocket route", () => {
         await client.close();
         fake.emit(createTextDeltaEvent("lo", "Hello"));
 
-        const replayClient = await connectWebSocket(`${url}?afterSeq=${lastSeq}`, fixture.authHeaders);
+        const replayClient = await connectWebSocket(
+            `${url}?afterSeq=${lastSeq}&runtimeId=${encodeURIComponent(snapshot.runtimeId)}`,
+            fixture.authHeaders,
+        );
         const replay = await replayClient.waitFor(
             (message): message is Extract<WsServerMessage, { type: "replay" }> => message.type === "replay",
         );
         expect(replay.seq).toBe(lastSeq + 1);
         expect(replay.events).toHaveLength(1);
         expect(replay.events[0]).toMatchObject({ seq: lastSeq + 1, event: { type: "message_update" } });
+
+        const mismatchedRuntimeClient = await connectWebSocket(
+            `${url}?afterSeq=${lastSeq}&runtimeId=stale-runtime`,
+            fixture.authHeaders,
+        );
+        const mismatchedSnapshot = await mismatchedRuntimeClient.waitFor(
+            (message): message is Extract<WsServerMessage, { type: "snapshot" }> => message.type === "snapshot",
+        );
+        expect(mismatchedSnapshot.runtimeId).toBe(snapshot.runtimeId);
+        await mismatchedRuntimeClient.close();
 
         const staleClient = await connectWebSocket(`${url}?afterSeq=99999`, fixture.authHeaders);
         const staleSnapshot = await staleClient.waitFor(

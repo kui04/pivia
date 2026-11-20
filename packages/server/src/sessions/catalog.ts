@@ -1,18 +1,20 @@
+import { createReadStream, readFileSync } from "node:fs";
 import { readFile, readdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { createInterface } from "node:readline";
+import { fileURLToPath } from "node:url";
 
 import {
+    CURRENT_SESSION_VERSION,
     getAgentDir,
     migrateSessionEntries,
     parseSessionEntries,
-    SessionManager,
     SettingsManager,
     type FileEntry,
-    type SessionInfo,
 } from "@earendil-works/pi-coding-agent";
 
-import type { SessionDetailResponse, SessionListResponse, SessionSummary } from "@pivia/protocol";
+import type { SessionDetailResponse, SessionListResponse, SessionPrefixAnchor, SessionSummary } from "@pivia/protocol";
 
 import { createLogger } from "../logger.ts";
 
@@ -88,13 +90,224 @@ interface DiscoveryResult {
     readonly sessions: readonly DiscoveredSession[];
 }
 
+interface CachedFileSummary {
+    readonly mtimeMs: number;
+    readonly size: number;
+    readonly summary: SessionSummary;
+}
+
 /** Result of resolving one session file for opening. */
 export interface ResolvedSession {
     readonly summary: SessionSummary;
     /** Canonical file path that passed the session root containment check. */
     readonly realPath: string;
+    /** File size in bytes from the verification `stat`, used to short-circuit WS inline checks. */
+    readonly sizeBytes: number;
     /** Configured session root; `realDir` is the canonical containment boundary. */
     readonly root: SessionRoot & { readonly realDir: string };
+}
+
+/** Slice result produced by {@link sliceEntriesForAnchor}. */
+export interface SlicedEntries {
+    readonly baseEntryCount: number;
+    readonly entries: readonly FileEntry[];
+    readonly prefixMatched: boolean;
+}
+
+let cachedEntriesVersion: string | undefined;
+
+/** Resolve the composite `${CURRENT_SESSION_VERSION}:${piSdkVersion}` cache version once at startup. */
+export function resolveEntriesVersion(): string {
+    if (cachedEntriesVersion !== undefined) {
+        return cachedEntriesVersion;
+    }
+    const entryPath = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"));
+    let currentDir = dirname(entryPath);
+    for (;;) {
+        const candidate = join(currentDir, "package.json");
+        try {
+            const raw = readFileSync(candidate, "utf8");
+            const parsed = JSON.parse(raw) as { readonly name?: unknown; readonly version?: unknown };
+            if (parsed.name === "@earendil-works/pi-coding-agent" && typeof parsed.version === "string") {
+                cachedEntriesVersion = `${CURRENT_SESSION_VERSION}:${parsed.version}`;
+                return cachedEntriesVersion;
+            }
+        } catch {
+            // Walk up until the package root is found.
+        }
+        const parent = dirname(currentDir);
+        if (parent === currentDir) {
+            break;
+        }
+        currentDir = parent;
+    }
+    cachedEntriesVersion = `${CURRENT_SESSION_VERSION}:unknown`;
+    return cachedEntriesVersion;
+}
+
+/**
+ * Verify a client's prefix anchor against `[header, ...entries]` in O(1) and return the trailing slice.
+ */
+export function sliceEntriesForAnchor(
+    sessionId: string,
+    entries: readonly FileEntry[],
+    serverEntriesVersion: string | null,
+    anchor: SessionPrefixAnchor | undefined,
+): SlicedEntries {
+    if (
+        serverEntriesVersion === null ||
+        anchor === undefined ||
+        anchor.entriesVersion !== serverEntriesVersion ||
+        !Number.isSafeInteger(anchor.afterCount) ||
+        anchor.afterCount < 1 ||
+        entries.length < anchor.afterCount
+    ) {
+        return { baseEntryCount: 0, entries, prefixMatched: false };
+    }
+    const header = entries[0];
+    if (header === undefined || header.type !== "session" || header.id !== sessionId) {
+        return { baseEntryCount: 0, entries, prefixMatched: false };
+    }
+    const anchorEntry = entries[anchor.afterCount - 1];
+    if (anchorEntry === undefined || anchorEntry.id !== anchor.afterEntryId) {
+        return { baseEntryCount: 0, entries, prefixMatched: false };
+    }
+    return {
+        baseEntryCount: anchor.afterCount,
+        entries: entries.slice(anchor.afterCount),
+        prefixMatched: true,
+    };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function extractMessageText(content: unknown): string {
+    if (typeof content === "string") {
+        return content;
+    }
+    if (!Array.isArray(content)) {
+        return "";
+    }
+    const parts: string[] = [];
+    for (const block of content) {
+        if (isRecord(block) && block.type === "text" && typeof block.text === "string") {
+            parts.push(block.text);
+        }
+    }
+    return parts.join(" ");
+}
+
+function messageActivityTimestampMs(
+    entry: Record<string, unknown>,
+    message: Record<string, unknown>,
+): number | undefined {
+    const role = message.role;
+    if (role !== "user" && role !== "assistant") {
+        return undefined;
+    }
+    if (typeof message.timestamp === "number" && Number.isFinite(message.timestamp)) {
+        return message.timestamp;
+    }
+    if (typeof entry.timestamp === "string") {
+        const parsed = Date.parse(entry.timestamp);
+        return Number.isFinite(parsed) ? parsed : undefined;
+    }
+    return undefined;
+}
+
+/**
+ * Streamingly parse a `.jsonl` session file into a {@link SessionSummary} without retaining the
+ * whole file or parsed entry objects in memory.
+ */
+export async function summarizeSessionFile(
+    realPath: string,
+    stats: { readonly mtimeMs: number; readonly size: number },
+): Promise<SessionSummary | null> {
+    let header: Record<string, unknown> | null = null;
+    let messageCount = 0;
+    let firstMessage = "";
+    let name: string | null = null;
+    let lastActivityTime = 0;
+
+    const stream = createReadStream(realPath, { encoding: "utf8" });
+    const rl = createInterface({ input: stream, crlfDelay: Infinity });
+    try {
+        for await (const line of rl) {
+            if (!line.trim()) {
+                continue;
+            }
+            let parsed: unknown;
+            try {
+                parsed = JSON.parse(line);
+            } catch {
+                continue;
+            }
+            if (!isRecord(parsed) || typeof parsed.type !== "string") {
+                continue;
+            }
+            if (header === null) {
+                if (parsed.type !== "session" || typeof parsed.id !== "string" || parsed.id.length === 0) {
+                    return null;
+                }
+                header = parsed;
+                continue;
+            }
+            if (parsed.type === "session_info") {
+                const trimmed = typeof parsed.name === "string" ? parsed.name.trim() : "";
+                name = trimmed.length > 0 ? trimmed : null;
+                continue;
+            }
+            if (parsed.type !== "message" || !isRecord(parsed.message)) {
+                continue;
+            }
+            messageCount += 1;
+            const activityMs = messageActivityTimestampMs(parsed, parsed.message);
+            if (activityMs !== undefined && activityMs > lastActivityTime) {
+                lastActivityTime = activityMs;
+            }
+            const role = parsed.message.role;
+            if ((role === "user" || role === "assistant") && firstMessage === "" && role === "user") {
+                const text = extractMessageText(parsed.message.content);
+                if (text !== "") {
+                    firstMessage = text;
+                }
+            }
+        }
+    } catch {
+        return null;
+    } finally {
+        rl.close();
+        stream.destroy();
+    }
+
+    if (header === null || typeof header.id !== "string") {
+        return null;
+    }
+    const headerTime = typeof header.timestamp === "string" ? Date.parse(header.timestamp) : Number.NaN;
+    const modifiedAtMs =
+        lastActivityTime > 0
+            ? lastActivityTime
+            : Number.isFinite(headerTime)
+              ? headerTime
+              : Number.isFinite(stats.mtimeMs)
+                ? stats.mtimeMs
+                : 0;
+    const createdAtMs = Number.isFinite(headerTime) ? headerTime : modifiedAtMs;
+
+    return {
+        id: header.id,
+        cwd: typeof header.cwd === "string" ? header.cwd : "",
+        name,
+        firstMessage: firstMessage !== "" ? firstMessage : "(no messages)",
+        messageCount,
+        createdAtMs,
+        modifiedAtMs,
+        hasParent: typeof header.parentSession === "string" && header.parentSession.length > 0,
+        runtimeState: "idle",
+        attachedClients: 0,
+    };
 }
 
 function expandHomeDirectory(value: string): string {
@@ -176,27 +389,6 @@ export function defaultProjectSessionDir(sessionsRoot: string, cwd: string): str
     return join(sessionsRoot, safePath);
 }
 
-function toFiniteMilliseconds(value: Date): number | undefined {
-    const milliseconds = value.getTime();
-    return Number.isFinite(milliseconds) ? milliseconds : undefined;
-}
-
-function toSessionSummary(info: SessionInfo): SessionSummary {
-    const modifiedAtMs = toFiniteMilliseconds(info.modified) ?? 0;
-    return {
-        id: info.id,
-        cwd: info.cwd,
-        name: info.name ?? null,
-        firstMessage: info.firstMessage,
-        messageCount: info.messageCount,
-        createdAtMs: toFiniteMilliseconds(info.created) ?? modifiedAtMs,
-        modifiedAtMs,
-        hasParent: info.parentSessionPath !== undefined && info.parentSessionPath.length > 0,
-        runtimeState: "idle",
-        attachedClients: 0,
-    };
-}
-
 function isFileEntryRecord(value: unknown): value is FileEntry {
     if (typeof value !== "object" || value === null || Array.isArray(value)) {
         return false;
@@ -226,14 +418,18 @@ function countNonEmptyLines(content: string): number {
  * on disk (append a missing trailing newline, rewrite the header, or create directories).
  */
 export class SessionCatalog {
+    readonly entriesVersion: string;
     private readonly options: SessionCatalogOptions;
     private readonly logger: SessionCatalogLogger;
     private readonly nowMs: () => number;
+    private readonly pathCache = new Map<string, CachedFileSummary>();
+    private readonly idToPath = new Map<string, string>();
 
     constructor(options: SessionCatalogOptions = {}) {
         this.options = options;
         this.logger = options.logger ?? createLogger();
         this.nowMs = options.nowMs ?? (() => Date.now());
+        this.entriesVersion = resolveEntriesVersion();
     }
 
     /** List every readable session under the session root, newest activity first. */
@@ -261,11 +457,69 @@ export class SessionCatalog {
         if (!isValidSessionId(id)) {
             return null;
         }
-        const { root, sessions } = await this.discover();
+        const root = await this.resolveDiscoveryRoot();
+        const indexedPath = this.idToPath.get(id);
+        if (indexedPath !== undefined) {
+            const fastHit = await this.verifyIndexedPath(root, id, indexedPath);
+            if (fastHit !== undefined) {
+                return fastHit;
+            }
+            this.idToPath.delete(id);
+        }
+
+        const { sessions } = await this.discover();
         const match = sessions.find((session) => session.summary.id === id);
         if (match === undefined) {
             return null;
         }
+        return this.verifyDiscoveredPath(root, id, match);
+    }
+
+    private async verifyIndexedPath(
+        root: ResolvedDiscoveryRoot,
+        id: string,
+        candidatePath: string,
+    ): Promise<ResolvedSession | null | undefined> {
+        try {
+            const realPath = await realpath(candidatePath);
+            if (!isPathWithin(root.realDir, realPath)) {
+                this.logger.warn(
+                    { sessionId: id, path: candidatePath },
+                    "refused to open session outside the session root",
+                );
+                return null;
+            }
+            const stats = await stat(realPath);
+            if (!stats.isFile()) {
+                return undefined;
+            }
+            if (stats.size > MAX_SESSION_FILE_BYTES) {
+                this.logger.warn({ sessionId: id, size: stats.size }, "refused to open an oversized session file");
+                return null;
+            }
+            const cached = this.pathCache.get(realPath);
+            if (cached !== undefined && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) {
+                if (cached.summary.id === id) {
+                    return { summary: cached.summary, realPath, sizeBytes: stats.size, root };
+                }
+                return undefined;
+            }
+            const refreshed = await summarizeSessionFile(realPath, stats);
+            if (refreshed === null || refreshed.id !== id) {
+                return undefined;
+            }
+            this.pathCache.set(realPath, { mtimeMs: stats.mtimeMs, size: stats.size, summary: refreshed });
+            return { summary: refreshed, realPath, sizeBytes: stats.size, root };
+        } catch {
+            return undefined;
+        }
+    }
+
+    private async verifyDiscoveredPath(
+        root: ResolvedDiscoveryRoot,
+        id: string,
+        match: DiscoveredSession,
+    ): Promise<ResolvedSession | null> {
         try {
             // Resolve again after discovery so a swapped symbolic link cannot redirect the open.
             const realPath = await realpath(match.path);
@@ -285,7 +539,7 @@ export class SessionCatalog {
                 this.logger.warn({ sessionId: id, size: stats.size }, "refused to open an oversized session file");
                 return null;
             }
-            return { summary: match.summary, realPath, root };
+            return { summary: match.summary, realPath, sizeBytes: stats.size, root };
         } catch (error) {
             this.logger.warn({ err: error, sessionId: id }, "failed to resolve session file");
             return null;
@@ -294,15 +548,16 @@ export class SessionCatalog {
 
     /**
      * Read one session by id, migrating entries to the current format in memory only.
+     * Supports optional prefix slicing when `sliceAnchor` matches; otherwise returns full entries.
      * Returns `null` for an invalid or unknown id and for files that are unreadable, too large,
      * or outside the session root.
      */
-    async getById(id: string): Promise<SessionDetailResponse | null> {
+    async getById(id: string, sliceAnchor?: SessionPrefixAnchor): Promise<SessionDetailResponse | null> {
         const resolved = await this.resolveById(id);
         if (resolved === null) {
             return null;
         }
-        return this.readSession(resolved.root, id, { summary: resolved.summary, path: resolved.realPath });
+        return this.readSession(resolved.root, id, { summary: resolved.summary, path: resolved.realPath }, sliceAnchor);
     }
 
     private async resolveDiscoveryRoot(): Promise<ResolvedDiscoveryRoot> {
@@ -313,20 +568,52 @@ export class SessionCatalog {
 
     private async discover(): Promise<DiscoveryResult> {
         const root = await this.resolveDiscoveryRoot();
-        const infos = await this.listSessionInfos(root);
+        const filePaths = await this.collectSessionFilePaths(root);
         const candidates: DiscoveredSession[] = [];
+        const seenRealPaths = new Set<string>();
 
-        for (const info of infos) {
-            if (typeof info.id !== "string" || !isValidSessionId(info.id)) {
-                this.logger.warn({ path: info.path }, "skipped session with an unusable id");
-                continue;
-            }
-            const realPath = await realpath(info.path).catch(() => null);
+        for (const filePath of filePaths) {
+            const realPath = await realpath(filePath).catch(() => null);
             if (realPath === null || !isPathWithin(root.realDir, realPath)) {
-                this.logger.warn({ path: info.path }, "skipped session outside the session root");
+                this.logger.warn({ path: filePath }, "skipped session outside the session root");
                 continue;
             }
-            candidates.push({ summary: toSessionSummary(info), path: realPath });
+            if (seenRealPaths.has(realPath)) {
+                continue;
+            }
+            const stats = await stat(realPath).catch(() => null);
+            if (stats === null || !stats.isFile()) {
+                continue;
+            }
+            seenRealPaths.add(realPath);
+
+            let summary: SessionSummary | null;
+            const cached = this.pathCache.get(realPath);
+            if (cached !== undefined && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) {
+                summary = cached.summary;
+            } else {
+                summary = await summarizeSessionFile(realPath, stats);
+                if (summary !== null) {
+                    this.pathCache.set(realPath, { mtimeMs: stats.mtimeMs, size: stats.size, summary });
+                } else {
+                    this.pathCache.delete(realPath);
+                }
+            }
+
+            if (summary === null) {
+                continue;
+            }
+            if (!isValidSessionId(summary.id)) {
+                this.logger.warn({ path: filePath }, "skipped session with an unusable id");
+                continue;
+            }
+            candidates.push({ summary, path: realPath });
+        }
+
+        for (const cachedPath of this.pathCache.keys()) {
+            if (!seenRealPaths.has(cachedPath)) {
+                this.pathCache.delete(cachedPath);
+            }
         }
 
         // A copied or restored session file can keep the header id of another file. Sorting by
@@ -350,17 +637,37 @@ export class SessionCatalog {
             byId.set(candidate.summary.id, candidate);
         }
 
+        this.idToPath.clear();
+        for (const [id, session] of byId) {
+            this.idToPath.set(id, session.path);
+        }
+
         return { root, sessions: [...byId.values()] };
     }
 
-    private async listSessionInfos(root: ResolvedDiscoveryRoot): Promise<readonly SessionInfo[]> {
+    private async collectJsonlInDir(dir: string): Promise<string[]> {
+        const entries = await readdir(dir, { withFileTypes: true }).catch(() => null);
+        if (entries === null) {
+            return [];
+        }
+        const paths: string[] = [];
+        for (const entry of entries) {
+            if (!entry.name.endsWith(".jsonl")) {
+                continue;
+            }
+            if (!entry.isFile() && !entry.isSymbolicLink()) {
+                continue;
+            }
+            paths.push(join(dir, entry.name));
+        }
+        return paths;
+    }
+
+    private async collectSessionFilePaths(root: ResolvedDiscoveryRoot): Promise<readonly string[]> {
         if (root.isCustom) {
-            return SessionManager.listAll(root.dir);
+            return this.collectJsonlInDir(root.dir);
         }
 
-        // SessionManager.listAll() without a directory reads getAgentDir() from process.env, so it
-        // cannot honor an injected agentDir. Scanning each project directory explicitly keeps the
-        // default layout, keeps discovery free of process-wide state, and skips unreadable roots.
         const entries = await readdir(root.dir, { withFileTypes: true }).catch(() => null);
         if (entries === null) {
             return [];
@@ -380,7 +687,7 @@ export class SessionCatalog {
             projectDirs.push(dir);
         }
 
-        const results: SessionInfo[] = [];
+        const results: string[] = [];
         let nextIndex = 0;
         const workerCount = Math.min(PROJECT_DISCOVERY_CONCURRENCY, projectDirs.length);
         const workers = Array.from({ length: workerCount }, async () => {
@@ -390,7 +697,7 @@ export class SessionCatalog {
                 if (dir === undefined) {
                     continue;
                 }
-                const listed = await SessionManager.listAll(dir);
+                const listed = await this.collectJsonlInDir(dir);
                 results.push(...listed);
             }
         });
@@ -402,6 +709,7 @@ export class SessionCatalog {
         root: ResolvedDiscoveryRoot,
         sessionId: string,
         session: DiscoveredSession,
+        sliceAnchor?: SessionPrefixAnchor,
     ): Promise<SessionDetailResponse | null> {
         try {
             // Resolve the path again right before the read so a swapped symbolic link cannot point
@@ -436,8 +744,19 @@ export class SessionCatalog {
                 this.logger.warn({ sessionId, skippedLines }, "skipped malformed session lines");
             }
 
+            // Capture the on-disk format version before in-memory migration updates `header.version`
+            // so clients never cache unmigrated v1/v2 transcripts whose random entry ids vary per read.
+            const diskVersion = header.version ?? 1;
+            const entriesVersion = diskVersion === CURRENT_SESSION_VERSION ? this.entriesVersion : null;
+
             migrateSessionEntries(entries);
-            return { session: session.summary, entries };
+            const sliced = sliceEntriesForAnchor(sessionId, entries, entriesVersion, sliceAnchor);
+            return {
+                session: session.summary,
+                entriesVersion,
+                baseEntryCount: sliced.baseEntryCount,
+                entries: sliced.entries,
+            };
         } catch (error) {
             this.logger.warn({ err: error, sessionId }, "failed to read session");
             return null;

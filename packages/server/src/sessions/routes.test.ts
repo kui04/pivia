@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { gunzipSync } from "node:zlib";
 
 import type { CreateSessionResponse, SessionDetailResponse, SessionListResponse } from "@pivia/protocol";
 
@@ -290,5 +291,41 @@ describe("session routes", () => {
         });
         expect(invalid.statusCode).toBe(400);
         expect(invalid.json()).toEqual({ error: "invalid_request", message: "Invalid session id." });
+    });
+
+    it("supports incremental slice queries and compresses session endpoints without compressing auth routes", async () => {
+        const sessionDir = createSessionDir();
+        const longText = "x".repeat(2048);
+        writeSessionFixture(sessionDir, "session-slice", longText);
+        const app = createReadOnlyApp(sessionDir);
+        const headers = { authorization: "Bearer secret", "accept-encoding": "gzip" };
+
+        const full = await app.inject({ method: "GET", url: "/api/sessions/session-slice", headers });
+        expect(full.statusCode).toBe(200);
+        expect(full.headers["content-encoding"]).toBe("gzip");
+
+        const fullBody = JSON.parse(gunzipSync(full.rawPayload).toString("utf8")) as SessionDetailResponse;
+        expect(fullBody.entriesVersion).toBeTruthy();
+        expect(fullBody.baseEntryCount).toBe(0);
+        expect(fullBody.entries).toHaveLength(2);
+
+        const slice = await app.inject({
+            method: "GET",
+            url: `/api/sessions/session-slice?entriesVersion=${encodeURIComponent(fullBody.entriesVersion ?? "")}&afterCount=1&afterEntryId=session-slice`,
+            headers: { authorization: "Bearer secret" },
+        });
+        expect(slice.statusCode).toBe(200);
+        const sliceBody = slice.json<SessionDetailResponse>();
+        expect(sliceBody.baseEntryCount).toBe(1);
+        expect(sliceBody.entries).toHaveLength(1);
+
+        // Auth routes must remain uncompressed even with accept-encoding: gzip (global: false).
+        const authStatus = await app.inject({
+            method: "GET",
+            url: "/api/auth/status",
+            headers: { "accept-encoding": "gzip" },
+        });
+        expect(authStatus.statusCode).toBe(200);
+        expect(authStatus.headers["content-encoding"]).toBeUndefined();
     });
 });

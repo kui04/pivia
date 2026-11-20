@@ -1,3 +1,4 @@
+import compress from "@fastify/compress";
 import cookie from "@fastify/cookie";
 import websocket from "@fastify/websocket";
 import Fastify, { type FastifyBaseLogger, type FastifyInstance } from "fastify";
@@ -76,6 +77,10 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
 
     // Must be registered before the auth `onRequest` hook so `request.cookies` is populated first.
     app.register(cookie);
+
+    // Enable compression only on explicitly opted-in session routes (`{ compress: {} }`) so auth
+    // endpoints, small error envelopes, and WebSocket upgrades stay untouched.
+    app.register(compress, { global: false });
 
     // `perMessageDeflate` stays off: streaming deltas are many small messages, and per-message
     // zlib state fragments the heap under sustained use. `maxPayload` bounds one client's frame.

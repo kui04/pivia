@@ -9,7 +9,7 @@ import type {
 } from "@pivia/protocol";
 import { describe, expect, it } from "vitest";
 
-import { initialSessionState, reduceSessionState, type SessionState } from "./reducer";
+import { initialSessionState, liveAssistantMessage, reduceSessionState, type SessionState } from "./reducer";
 
 function summary(overrides: Partial<SessionStateSnapshot> = {}): SessionStateSnapshot {
     return {
@@ -52,13 +52,20 @@ function connected(): SessionState {
     return reduceSessionState(initialSessionState, { type: "connect", sessionId: "session-1" });
 }
 
-function snapshot(seq: number, overrides: Partial<WsSnapshotMessage> = {}): WsSnapshotMessage {
+type InlineSnapshotMessage = Extract<WsSnapshotMessage, { readonly entriesMode: "inline" }>;
+
+function snapshot(seq: number, overrides: Partial<InlineSnapshotMessage> = {}): InlineSnapshotMessage {
     return {
         type: "snapshot",
         sessionId: "session-1",
+        runtimeId: "runtime-1",
         seq,
+        entriesVersion: "3:1.5.2",
+        baseEntryCount: 0,
+        entriesMode: "inline",
         state: summary(),
         entries: [],
+        liveMessage: null,
         pendingUiRequests: [],
         ...overrides,
     };
@@ -68,9 +75,12 @@ function replay(seq: number, overrides: Partial<WsReplayMessage> = {}): WsReplay
     return {
         type: "replay",
         sessionId: "session-1",
+        runtimeId: "runtime-1",
         seq,
+        entriesVersion: "3:1.5.2",
         state: summary(),
         events: [],
+        liveMessage: null,
         pendingUiRequests: [],
         ...overrides,
     };
@@ -116,11 +126,14 @@ describe("session reducer", () => {
         expect(initialSessionState).toEqual({
             status: "idle",
             sessionId: null,
+            runtimeId: null,
             seq: 0,
+            entriesVersion: null,
             state: null,
             entries: [],
+            entriesSync: { kind: "idle" },
             liveEvents: [],
-            liveMessage: null,
+            liveMessage: { kind: "none" },
             pendingUiRequests: [],
             lastError: null,
         });
@@ -332,7 +345,7 @@ describe("session reducer", () => {
             message: messageUpdate(4, { type: "text_delta", contentIndex: 0, delta: " world" }),
         });
 
-        expect(state.liveMessage?.content[0]).toEqual({ type: "text", text: "Hello world" });
+        expect(liveAssistantMessage(state)?.content[0]).toEqual({ type: "text", text: "Hello world" });
         expect(state.liveEvents.map((entry) => entry.seq)).toEqual([1]);
         expect(state.seq).toBe(4);
 
@@ -344,7 +357,7 @@ describe("session reducer", () => {
             }),
         });
 
-        expect(state.liveMessage).toBeNull();
+        expect(state.liveMessage.kind).toBe("settled");
         expect(state.liveEvents.map((entry) => entry.seq)).toEqual([1, 5]);
     });
 
@@ -427,5 +440,194 @@ describe("session reducer", () => {
         expect(serverError.lastError).toBe("Invalid command.");
 
         expect(reduceSessionState(base, { type: "reset" })).toEqual(initialSessionState);
+    });
+
+    it("eliminates message_end flicker by holding settled liveMessage until matching entry arrives", () => {
+        const headerEntry: FileEntry = {
+            type: "session",
+            version: 3,
+            id: "session-1",
+            timestamp: "2026-04-01T00:00:00.000Z",
+            cwd: "/tmp",
+        };
+        let state = reduceSessionState(connected(), {
+            type: "snapshot",
+            message: snapshot(0, { entries: [headerEntry] }),
+        });
+
+        const msg = assistant({ timestamp: 12345, content: [{ type: "text", text: "Final answer" }] });
+        state = reduceSessionState(state, {
+            type: "event",
+            message: event(1, { type: "message_start", message: assistant({ timestamp: 12345, content: [] }) }),
+        });
+        state = reduceSessionState(state, {
+            type: "event",
+            message: event(2, { type: "message_end", message: msg }),
+        });
+        expect(state.liveMessage).toEqual({ kind: "settled", message: msg });
+
+        // Non-matching entry (e.g. usage/custom) keeps settled message visible without 1-frame vanish.
+        state = reduceSessionState(state, {
+            type: "entries_appended",
+            message: {
+                type: "entries_appended",
+                sessionId: "session-1",
+                entriesVersion: "3:1.5.2",
+                entriesMode: "inline",
+                baseEntryCount: 1,
+                entries: [
+                    {
+                        type: "custom",
+                        id: "c1",
+                        parentId: null,
+                        timestamp: "2026-04-01T00:00:01.000Z",
+                        customType: "meta",
+                    },
+                ],
+            },
+        });
+        expect(state.liveMessage).toEqual({ kind: "settled", message: msg });
+
+        // Matching persisted assistant entry clears settled liveMessage atomically.
+        state = reduceSessionState(state, {
+            type: "entries_appended",
+            message: {
+                type: "entries_appended",
+                sessionId: "session-1",
+                entriesVersion: "3:1.5.2",
+                entriesMode: "inline",
+                baseEntryCount: 2,
+                entries: [
+                    {
+                        type: "message",
+                        id: "m1",
+                        parentId: "c1",
+                        timestamp: "2026-04-01T00:00:02.000Z",
+                        message: msg,
+                    },
+                ],
+            },
+        });
+        expect(state.liveMessage).toEqual({ kind: "none" });
+        expect(state.entries).toHaveLength(3);
+    });
+
+    it("stages entries_appended while HTTP sync is loading and deduplicates on completion", () => {
+        const headerEntry: FileEntry = {
+            type: "session",
+            version: 3,
+            id: "session-1",
+            timestamp: "2026-04-01T00:00:00.000Z",
+            cwd: "/tmp",
+        };
+        const msg1: FileEntry = {
+            type: "message",
+            id: "e1",
+            parentId: null,
+            timestamp: "2026-04-01T00:00:01.000Z",
+            message: { role: "user", content: "q1", timestamp: 1 },
+        };
+        const msg2: FileEntry = {
+            type: "message",
+            id: "e2",
+            parentId: "e1",
+            timestamp: "2026-04-01T00:00:02.000Z",
+            message: { role: "user", content: "q2", timestamp: 2 },
+        };
+
+        let state = reduceSessionState(connected(), {
+            type: "snapshot",
+            message: {
+                type: "snapshot",
+                sessionId: "session-1",
+                runtimeId: "runtime-1",
+                seq: 1,
+                entriesVersion: "3:1.5.2",
+                baseEntryCount: 0,
+                entriesMode: "http",
+                entryCount: 2,
+                state: summary(),
+                liveMessage: null,
+                pendingUiRequests: [],
+            },
+        });
+        expect(state.entriesSync).toEqual({
+            kind: "loading",
+            baseEntryCount: 0,
+            targetEntryCount: 2,
+            pendingAppendedEntries: [],
+        });
+
+        state = reduceSessionState(state, {
+            type: "entries_appended",
+            message: {
+                type: "entries_appended",
+                sessionId: "session-1",
+                entriesVersion: "3:1.5.2",
+                entriesMode: "inline",
+                baseEntryCount: 2,
+                entries: [msg2],
+            },
+        });
+        expect(state.entriesSync).toMatchObject({ kind: "loading", targetEntryCount: 3 });
+
+        // HTTP returns [header, msg1] (without msg2); reducer merges msg2 cleanly without duplication.
+        state = reduceSessionState(state, {
+            type: "entries_sync_succeeded",
+            sessionId: "session-1",
+            entriesVersion: "3:1.5.2",
+            baseEntryCount: 0,
+            entries: [headerEntry, msg1],
+        });
+        expect(state.entriesSync).toEqual({ kind: "idle" });
+        expect(state.entries.map((entry) => entry.id)).toEqual(["session-1", "e1", "e2"]);
+    });
+
+    it("caps staged appends while an HTTP sync owns the transcript", () => {
+        const staged = Array.from({ length: 600 }, (_, offset): FileEntry => {
+            return {
+                type: "message",
+                id: `e${String(offset)}`,
+                parentId: null,
+                timestamp: "2026-04-01T00:00:02.000Z",
+                message: { role: "user", content: "queued", timestamp: offset },
+            };
+        });
+
+        let state = reduceSessionState(connected(), {
+            type: "snapshot",
+            message: {
+                type: "snapshot",
+                sessionId: "session-1",
+                runtimeId: "runtime-1",
+                seq: 1,
+                entriesVersion: "3:1.5.2",
+                baseEntryCount: 0,
+                entriesMode: "http",
+                entryCount: 2,
+                state: summary(),
+                liveMessage: null,
+                pendingUiRequests: [],
+            },
+        });
+        state = reduceSessionState(state, {
+            type: "entries_appended",
+            message: {
+                type: "entries_appended",
+                sessionId: "session-1",
+                entriesVersion: "3:1.5.2",
+                entriesMode: "inline",
+                baseEntryCount: 2,
+                entries: staged,
+            },
+        });
+
+        // The target keeps the chase going; the queue is dropped instead of holding the whole delta.
+        expect(state.entriesSync).toEqual({
+            kind: "loading",
+            baseEntryCount: 0,
+            targetEntryCount: 602,
+            pendingAppendedEntries: [],
+        });
     });
 });

@@ -253,4 +253,26 @@ describe("createApiClient", () => {
             code: "unauthorized",
         });
     });
+
+    it("appends incremental slice query parameters and forwards AbortSignal on getSession", async () => {
+        const seen: { url: string; signal: AbortSignal | null | undefined }[] = [];
+        const fetchImpl: FetchLike = (url, init) => {
+            seen.push({ url: urlString(url), signal: init?.signal });
+            return Promise.resolve(
+                jsonResponse({ session: {}, entriesVersion: "3:1.5.2", baseEntryCount: 2, entries: [] }),
+            );
+        };
+        const client = createApiClient({ fetch: fetchImpl });
+        const controller = new AbortController();
+
+        await client.getSession("s1", {
+            entriesVersion: "3:1.5.2",
+            afterCount: 2,
+            afterEntryId: "e1",
+            signal: controller.signal,
+        });
+
+        expect(seen[0]?.url).toBe("/api/sessions/s1?entriesVersion=3%3A1.5.2&afterCount=2&afterEntryId=e1");
+        expect(seen[0]?.signal).toBe(controller.signal);
+    });
 });

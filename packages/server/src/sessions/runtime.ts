@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { realpath, stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 
@@ -15,27 +16,38 @@ import {
 
 import { SESSION_CLOSE_CODE } from "@pivia/protocol";
 import type {
+    AssistantMessage,
     ImageContent,
     QueueMode,
     SessionCloseCode,
     SessionDetailResponse,
     SessionListResponse,
     SessionModelInfo,
+    SessionPrefixAnchor,
     SessionQueuedInputDisposition,
     SessionRuntimeState,
     SessionStateSnapshot,
     SessionSummary,
     ThinkingLevel,
     WsClientCommand,
+    WsEntriesAppendedMessage,
+    WsReplayMessage,
     WsResponseMessage,
     WsServerMessage,
+    WsSnapshotMessage,
 } from "@pivia/protocol";
 
 import { SessionUiBridge } from "./extension-ui.ts";
 import { createLogger } from "../logger.ts";
 import { createPiRuntimeFactory } from "./pi-runtime.ts";
 import { SessionEventBuffer, toWireSessionEvent } from "./events.ts";
-import { defaultProjectSessionDir, type SessionCatalog } from "./catalog.ts";
+import { defaultProjectSessionDir, sliceEntriesForAnchor, type SessionCatalog } from "./catalog.ts";
+
+/** Maximum inline WebSocket payload size before offloading entries to compressed HTTP. */
+export const MAX_WS_INLINE_ENTRIES_BYTES = 512 * 1024;
+
+/** Short-circuit threshold on entry count to avoid serializing huge sessions over WS. */
+export const MAX_WS_INLINE_ENTRY_COUNT = 1000;
 
 /** How long an open runtime without clients is kept before it is reclaimed. */
 const DEFAULT_IDLE_TIMEOUT_MS = 15 * 60 * 1000;
@@ -104,6 +116,10 @@ export interface ManagedSession {
     getName(): string | null;
     getCwd(): string;
     getEntries(): readonly FileEntry[];
+    /** Total entries including the session header, computed in O(1) when supported. */
+    getEntryCount(): number;
+    /** Subscribe to synchronous `SessionManager` entry appends for microtask catch-up broadcasts. */
+    onEntryAppended?(listener: () => void): () => void;
     getState(): ManagedSessionState;
     subscribe(listener: (event: AgentSessionEvent) => void): () => void;
     bindExtensions(bindings: ManagedExtensionBindings): Promise<void>;
@@ -145,6 +161,8 @@ export type RuntimeFactory = (input: RuntimeFactoryInput) => Promise<ManagedRunt
 export interface SessionClient {
     /** Deliver one message. A backlogged transport must close itself; the close handler detaches it. */
     send(message: WsServerMessage): void;
+    /** Optional pre-serialized send path to avoid double `JSON.stringify` after size measurement. */
+    sendRaw?(raw: string): void;
     /** Close the transport because the session runtime went away. */
     close?(code: SessionCloseCode, reason: string): void;
 }
@@ -196,8 +214,12 @@ export interface CloseSessionOptions {
 
 /** Options for {@link SessionRegistry.attach}. */
 export interface SessionAttachOptions {
-    /** Replay events after this sequence; omit or send an out-of-range value to receive a snapshot. */
+    /** Replay events after this sequence; omit or send an out-of-range value to skip Tier 1. */
     readonly afterSeq?: number | undefined;
+    /** Runtime id held by the client; must match the active runtime for Tier 1 replay. */
+    readonly runtimeId?: string | undefined;
+    /** Client's persisted prefix anchor for Tier 1 append slicing and Tier 2 patch matching. */
+    readonly prefixAnchor?: SessionPrefixAnchor | undefined;
 }
 
 /** One attached client's command channel. */
@@ -211,6 +233,7 @@ type SessionPhase = "starting" | "open" | "closing";
 
 interface ActiveSession {
     readonly sessionId: string;
+    readonly runtimeId: string;
     readonly cwd: string;
     readonly runtime: ManagedRuntime;
     readonly buffer: SessionEventBuffer;
@@ -218,11 +241,16 @@ interface ActiveSession {
     readonly uiBridge: SessionUiBridge;
     readonly readyPromise: Promise<void>;
     unsubscribe: () => void;
+    unsubscribeEntries: () => void;
     phase: SessionPhase;
     closePromise: Promise<void> | undefined;
     lastActivityMs: number;
     lastClientDetachMs: number | undefined;
     idleTimer: NodeJS.Timeout | undefined;
+    lastBroadcastEntryCount: number;
+    flushScheduled: boolean;
+    liveMessage: AssistantMessage | null;
+    diskSizeBytes: number | undefined;
 }
 
 interface Deferred {
@@ -534,6 +562,7 @@ export class SessionRegistry {
             }
             entry.uiBridge.dispose();
             entry.unsubscribe();
+            entry.unsubscribeEntries();
             this.closeClients(entry, closeCode, closeReason);
             this.active.delete(entry.sessionId);
         }
@@ -582,19 +611,25 @@ export class SessionRegistry {
     }
 
     /** Prefer live runtime entries over the disk copy so an unflushed new session is readable. */
-    async getById(id: string): Promise<SessionDetailResponse | null> {
+    async getById(id: string, sliceAnchor?: SessionPrefixAnchor): Promise<SessionDetailResponse | null> {
         const entry = this.active.get(id);
         if (entry !== undefined) {
+            const entries = entry.runtime.session.getEntries();
+            const sliced = sliceAnchor
+                ? sliceEntriesForAnchor(id, entries, this.catalog.entriesVersion, sliceAnchor)
+                : { baseEntryCount: 0, entries, prefixMatched: false };
             return {
                 session: this.summarizeEntry(entry),
-                entries: entry.runtime.session.getEntries(),
+                entriesVersion: this.catalog.entriesVersion,
+                baseEntryCount: sliced.baseEntryCount,
+                entries: sliced.entries,
             };
         }
-        return this.catalog.getById(id);
+        return this.catalog.getById(id, sliceAnchor);
     }
 
     /**
-     * Register one transport for a session and send its initial snapshot or replay.
+     * Register one transport for a session and send its initial Tier 1 replay or Tier 2/3 snapshot.
      *
      * Attach is allowed while the session is `starting` so startup dialogs can reach a client.
      * It is rejected in `closing`.
@@ -613,31 +648,11 @@ export class SessionRegistry {
         // Build the initial payload before adding the client so a failed snapshot cannot leak a
         // client that no attachment can detach.
         const state = this.buildState(entry);
-        const replay = entry.buffer.since(options.afterSeq);
         const pendingUiRequests = entry.uiBridge.pendingRequests();
 
         entry.clients.add(client);
         this.clearIdleTimer(entry);
-
-        if (replay.kind === "snapshot_required") {
-            this.sendClient(client, {
-                type: "snapshot",
-                sessionId,
-                seq: replay.seq,
-                state,
-                entries: entry.runtime.session.getEntries(),
-                pendingUiRequests,
-            });
-        } else {
-            this.sendClient(client, {
-                type: "replay",
-                sessionId,
-                seq: replay.seq,
-                state,
-                events: replay.events,
-                pendingUiRequests,
-            });
-        }
+        this.sendHandshakeWithSizeGuard(entry, client, state, pendingUiRequests, options);
 
         let attached = true;
         return {
@@ -688,10 +703,14 @@ export class SessionRegistry {
             sessionManager,
             sessionDir,
         });
-        return this.registerRuntime(id, runtime);
+        return this.registerRuntime(id, runtime, resolved.sizeBytes);
     }
 
-    private async registerRuntime(sessionId: string, runtime: ManagedRuntime): Promise<ActiveSessionHandle> {
+    private async registerRuntime(
+        sessionId: string,
+        runtime: ManagedRuntime,
+        diskSizeBytes?: number,
+    ): Promise<ActiveSessionHandle> {
         if (this.disposed) {
             await runtime.dispose().catch((error: unknown) => {
                 this.logger.warn({ err: error, sessionId }, "failed to dispose runtime after shutdown");
@@ -716,6 +735,7 @@ export class SessionRegistry {
         });
         const entry: ActiveSession = {
             sessionId,
+            runtimeId: randomUUID(),
             cwd: session.getCwd(),
             runtime,
             buffer: new SessionEventBuffer(),
@@ -723,11 +743,16 @@ export class SessionRegistry {
             uiBridge,
             readyPromise: ready.promise,
             unsubscribe: () => {},
+            unsubscribeEntries: () => {},
             phase: "starting",
             closePromise: undefined,
             lastActivityMs: this.nowMs(),
             lastClientDetachMs: undefined,
             idleTimer: undefined,
+            lastBroadcastEntryCount: session.getEntryCount(),
+            flushScheduled: false,
+            liveMessage: null,
+            diskSizeBytes,
         };
 
         // The entry is visible while extensions bind so clients can answer session_start dialogs.
@@ -736,6 +761,10 @@ export class SessionRegistry {
         entry.unsubscribe = session.subscribe((event) => {
             this.handleSessionEvent(entry, event);
         });
+        entry.unsubscribeEntries =
+            session.onEntryAppended?.(() => {
+                this.scheduleFlushAppendedEntries(entry);
+            }) ?? (() => {});
         void ready.promise.catch(() => {
             // Commands and closeSession await the original promise; this only prevents an
             // unhandled rejection from the background bind task.
@@ -811,6 +840,7 @@ export class SessionRegistry {
         entry.phase = "closing";
         this.clearIdleTimer(entry);
         entry.unsubscribe();
+        entry.unsubscribeEntries();
         entry.uiBridge.dispose();
         this.closeClients(entry, SESSION_CLOSE_CODE.internalError, "Session failed to initialize");
         this.active.delete(entry.sessionId);
@@ -1044,6 +1074,248 @@ export class SessionRegistry {
         this.sendClient(client, { type: "error", code, message, ...(id === undefined ? {} : { id }) });
     }
 
+    private sendClientRaw(client: SessionClient, raw: string, fallbackMessage: WsServerMessage): void {
+        try {
+            if (client.sendRaw !== undefined) {
+                client.sendRaw(raw);
+            } else {
+                client.send(fallbackMessage);
+            }
+        } catch (error) {
+            this.logger.warn({ err: error }, "failed to send raw websocket message");
+        }
+    }
+
+    private sendHandshakeWithSizeGuard(
+        entry: ActiveSession,
+        client: SessionClient,
+        state: SessionStateSnapshot,
+        pendingUiRequests: readonly WsSnapshotMessage["pendingUiRequests"][number][],
+        options: SessionAttachOptions,
+    ): void {
+        const entriesVersion = this.catalog.entriesVersion;
+        const entries = entry.runtime.session.getEntries();
+        const totalCount = entries.length;
+        const replay = entry.buffer.since(options.afterSeq);
+
+        if (options.runtimeId === entry.runtimeId && replay.kind === "replay") {
+            if (options.prefixAnchor === undefined) {
+                const replayMsg: WsReplayMessage = {
+                    type: "replay",
+                    sessionId: entry.sessionId,
+                    runtimeId: entry.runtimeId,
+                    seq: replay.seq,
+                    entriesVersion,
+                    state,
+                    events: replay.events,
+                    liveMessage: entry.liveMessage,
+                    pendingUiRequests,
+                };
+                const raw = JSON.stringify(replayMsg);
+                if (Buffer.byteLength(raw, "utf8") <= MAX_WS_INLINE_ENTRIES_BYTES) {
+                    this.sendClientRaw(client, raw, replayMsg);
+                    return;
+                }
+                this.sendClient(client, {
+                    type: "snapshot",
+                    sessionId: entry.sessionId,
+                    runtimeId: entry.runtimeId,
+                    seq: replay.seq,
+                    entriesVersion,
+                    baseEntryCount: 0,
+                    entriesMode: "http",
+                    entryCount: totalCount,
+                    state,
+                    liveMessage: entry.liveMessage,
+                    pendingUiRequests,
+                });
+                return;
+            }
+
+            const sliced = sliceEntriesForAnchor(entry.sessionId, entries, entriesVersion, options.prefixAnchor);
+            if (sliced.prefixMatched) {
+                if (sliced.entries.length > MAX_WS_INLINE_ENTRY_COUNT) {
+                    this.sendClient(client, {
+                        type: "snapshot",
+                        sessionId: entry.sessionId,
+                        runtimeId: entry.runtimeId,
+                        seq: replay.seq,
+                        entriesVersion,
+                        baseEntryCount: sliced.baseEntryCount,
+                        entriesMode: "http",
+                        entryCount: totalCount,
+                        state,
+                        liveMessage: entry.liveMessage,
+                        pendingUiRequests,
+                    });
+                    return;
+                }
+                const replayMsg: WsReplayMessage = {
+                    type: "replay",
+                    sessionId: entry.sessionId,
+                    runtimeId: entry.runtimeId,
+                    seq: replay.seq,
+                    entriesVersion,
+                    state,
+                    events: replay.events,
+                    liveMessage: entry.liveMessage,
+                    ...(sliced.entries.length > 0
+                        ? { baseEntryCount: sliced.baseEntryCount, appendedEntries: sliced.entries }
+                        : {}),
+                    pendingUiRequests,
+                };
+                const raw = JSON.stringify(replayMsg);
+                if (Buffer.byteLength(raw, "utf8") <= MAX_WS_INLINE_ENTRIES_BYTES) {
+                    this.sendClientRaw(client, raw, replayMsg);
+                    return;
+                }
+                this.sendClient(client, {
+                    type: "snapshot",
+                    sessionId: entry.sessionId,
+                    runtimeId: entry.runtimeId,
+                    seq: replay.seq,
+                    entriesVersion,
+                    baseEntryCount: sliced.baseEntryCount,
+                    entriesMode: "http",
+                    entryCount: totalCount,
+                    state,
+                    liveMessage: entry.liveMessage,
+                    pendingUiRequests,
+                });
+                return;
+            }
+        }
+
+        const sliced =
+            options.prefixAnchor !== undefined
+                ? sliceEntriesForAnchor(entry.sessionId, entries, entriesVersion, options.prefixAnchor)
+                : { baseEntryCount: 0, entries, prefixMatched: false };
+
+        const overDiskHint =
+            sliced.baseEntryCount === 0 &&
+            entry.diskSizeBytes !== undefined &&
+            entry.diskSizeBytes > MAX_WS_INLINE_ENTRIES_BYTES;
+        if (sliced.entries.length > MAX_WS_INLINE_ENTRY_COUNT || overDiskHint) {
+            this.sendClient(client, {
+                type: "snapshot",
+                sessionId: entry.sessionId,
+                runtimeId: entry.runtimeId,
+                seq: replay.seq,
+                entriesVersion,
+                baseEntryCount: sliced.baseEntryCount,
+                entriesMode: "http",
+                entryCount: totalCount,
+                state,
+                liveMessage: entry.liveMessage,
+                pendingUiRequests,
+            });
+            return;
+        }
+
+        const inlineSnapshot: WsSnapshotMessage = {
+            type: "snapshot",
+            sessionId: entry.sessionId,
+            runtimeId: entry.runtimeId,
+            seq: replay.seq,
+            entriesVersion,
+            baseEntryCount: sliced.baseEntryCount,
+            entriesMode: "inline",
+            entries: sliced.entries,
+            state,
+            liveMessage: entry.liveMessage,
+            pendingUiRequests,
+        };
+        const raw = JSON.stringify(inlineSnapshot);
+        if (Buffer.byteLength(raw, "utf8") <= MAX_WS_INLINE_ENTRIES_BYTES) {
+            this.sendClientRaw(client, raw, inlineSnapshot);
+            return;
+        }
+
+        this.sendClient(client, {
+            type: "snapshot",
+            sessionId: entry.sessionId,
+            runtimeId: entry.runtimeId,
+            seq: replay.seq,
+            entriesVersion,
+            baseEntryCount: sliced.baseEntryCount,
+            entriesMode: "http",
+            entryCount: totalCount,
+            state,
+            liveMessage: entry.liveMessage,
+            pendingUiRequests,
+        });
+    }
+
+    private scheduleFlushAppendedEntries(entry: ActiveSession): void {
+        if (entry.phase === "closing" || entry.flushScheduled) {
+            return;
+        }
+        entry.flushScheduled = true;
+        queueMicrotask(() => {
+            entry.flushScheduled = false;
+            if (entry.phase === "closing" || this.active.get(entry.sessionId) !== entry) {
+                return;
+            }
+            const currentCount = entry.runtime.session.getEntryCount();
+            if (currentCount <= entry.lastBroadcastEntryCount) {
+                return;
+            }
+            const allEntries = entry.runtime.session.getEntries();
+            const baseEntryCount = entry.lastBroadcastEntryCount;
+            const appended = allEntries.slice(baseEntryCount);
+            entry.lastBroadcastEntryCount = allEntries.length;
+            if (appended.length === 0 || entry.clients.size === 0) {
+                return;
+            }
+            this.sendEntriesAppendedWithSizeGuard(entry, baseEntryCount, appended, allEntries.length);
+        });
+    }
+
+    private sendEntriesAppendedWithSizeGuard(
+        entry: ActiveSession,
+        baseEntryCount: number,
+        appended: readonly FileEntry[],
+        totalCount: number,
+    ): void {
+        const entriesVersion = this.catalog.entriesVersion;
+        if (appended.length > MAX_WS_INLINE_ENTRY_COUNT) {
+            this.broadcastSession(entry, {
+                type: "entries_appended",
+                sessionId: entry.sessionId,
+                entriesVersion,
+                entriesMode: "http",
+                baseEntryCount,
+                entryCount: totalCount,
+            });
+            return;
+        }
+
+        const inlineMsg: WsEntriesAppendedMessage = {
+            type: "entries_appended",
+            sessionId: entry.sessionId,
+            entriesVersion,
+            entriesMode: "inline",
+            baseEntryCount,
+            entries: appended,
+        };
+        const raw = JSON.stringify(inlineMsg);
+        if (Buffer.byteLength(raw, "utf8") <= MAX_WS_INLINE_ENTRIES_BYTES) {
+            for (const client of [...entry.clients]) {
+                this.sendClientRaw(client, raw, inlineMsg);
+            }
+            return;
+        }
+
+        this.broadcastSession(entry, {
+            type: "entries_appended",
+            sessionId: entry.sessionId,
+            entriesVersion,
+            entriesMode: "http",
+            baseEntryCount,
+            entryCount: totalCount,
+        });
+    }
+
     private sendClient(client: SessionClient, message: WsServerMessage): void {
         try {
             client.send(message);
@@ -1053,6 +1325,20 @@ export class SessionRegistry {
     }
 
     private handleSessionEvent(entry: ActiveSession, event: AgentSessionEvent): void {
+        if (event.type === "message_start") {
+            entry.liveMessage = event.message.role === "assistant" ? event.message : null;
+        } else if (event.type === "message_update") {
+            if (event.message.role === "assistant") {
+                entry.liveMessage = event.message;
+            }
+        } else if (event.type === "message_end") {
+            if (event.message.role === "assistant") {
+                entry.liveMessage = null;
+            }
+        } else if (event.type === "agent_settled") {
+            entry.liveMessage = null;
+        }
+
         let wire: JsonAgentSessionEvent;
         try {
             wire = toWireSessionEvent(event);

@@ -10,7 +10,7 @@ import {
     type SessionRegistry,
     SessionRegistryError,
 } from "../sessions/runtime.ts";
-import { commandIdOf, parseAfterSeq, parseWsClientCommand } from "./protocol.ts";
+import { commandIdOf, parseWsClientCommand, parseWsHandshakeQuery } from "./protocol.ts";
 
 /** Largest WebSocket frame the server accepts. */
 export const MAX_WS_PAYLOAD_BYTES = 4 * 1024 * 1024;
@@ -27,6 +27,10 @@ interface WsSessionParams {
 
 interface WsSessionQuery {
     readonly afterSeq?: string;
+    readonly runtimeId?: string;
+    readonly entriesVersion?: string;
+    readonly entryCount?: string;
+    readonly afterEntryId?: string;
 }
 
 /** Decode one text frame from the `ws` raw data union without `[object Object]` fallbacks. */
@@ -67,8 +71,9 @@ export function registerSessionSocketRoute(app: FastifyInstance, sessionRegistry
                     if (!isValidSessionId(id)) {
                         return sendWsUpgradeError(reply, 400, "invalid_request", "Invalid session id.");
                     }
-                    if (parseAfterSeq(request.query.afterSeq) === null) {
-                        return sendWsUpgradeError(reply, 400, "invalid_request", "Invalid afterSeq parameter.");
+                    const parsedQuery = parseWsHandshakeQuery(request.query as Record<string, unknown>);
+                    if (!parsedQuery.ok) {
+                        return sendWsUpgradeError(reply, 400, "invalid_request", parsedQuery.message);
                     }
                     // A plain HTTP request to a WebSocket route falls through to the plugin's 404 handler.
                     if (!request.ws) {
@@ -94,9 +99,9 @@ export function registerSessionSocketRoute(app: FastifyInstance, sessionRegistry
                     return;
                 }
 
-                const afterSeq = parseAfterSeq(request.query.afterSeq);
-                if (afterSeq === null) {
-                    socket.close(SESSION_CLOSE_CODE.internalError, "Invalid afterSeq");
+                const parsedQuery = parseWsHandshakeQuery(request.query as Record<string, unknown>);
+                if (!parsedQuery.ok) {
+                    socket.close(SESSION_CLOSE_CODE.internalError, parsedQuery.message);
                     return;
                 }
 
@@ -113,27 +118,33 @@ export function registerSessionSocketRoute(app: FastifyInstance, sessionRegistry
                         request.log.warn({ err: error, sessionId: handle.sessionId }, "failed to close websocket");
                     }
                 };
+                const sendRawText = (payload: string): void => {
+                    if (socketClosed || socket.readyState !== WS_READY_STATE_OPEN) {
+                        return;
+                    }
+                    if (socket.bufferedAmount > MAX_WS_BUFFERED_BYTES) {
+                        request.log.warn(
+                            { sessionId: handle.sessionId, bufferedAmount: socket.bufferedAmount },
+                            "closing slow websocket consumer",
+                        );
+                        closeSocket(SESSION_CLOSE_CODE.slowConsumer, "Slow consumer");
+                        return;
+                    }
+                    try {
+                        socket.send(payload);
+                    } catch (error) {
+                        request.log.warn(
+                            { err: error, sessionId: handle.sessionId },
+                            "failed to send websocket message",
+                        );
+                    }
+                };
                 const client: SessionClient = {
                     send(message) {
-                        if (socketClosed || socket.readyState !== WS_READY_STATE_OPEN) {
-                            return;
-                        }
-                        if (socket.bufferedAmount > MAX_WS_BUFFERED_BYTES) {
-                            request.log.warn(
-                                { sessionId: handle.sessionId, bufferedAmount: socket.bufferedAmount },
-                                "closing slow websocket consumer",
-                            );
-                            closeSocket(SESSION_CLOSE_CODE.slowConsumer, "Slow consumer");
-                            return;
-                        }
-                        try {
-                            socket.send(JSON.stringify(message));
-                        } catch (error) {
-                            request.log.warn(
-                                { err: error, sessionId: handle.sessionId },
-                                "failed to send websocket message",
-                            );
-                        }
+                        sendRawText(JSON.stringify(message));
+                    },
+                    sendRaw(raw) {
+                        sendRawText(raw);
                     },
                     close(code, reason) {
                         closeSocket(code, reason);
@@ -226,7 +237,7 @@ export function registerSessionSocketRoute(app: FastifyInstance, sessionRegistry
                 });
 
                 try {
-                    attachment = sessionRegistry.attach(handle.sessionId, client, { afterSeq });
+                    attachment = sessionRegistry.attach(handle.sessionId, client, parsedQuery.value);
                 } catch (error) {
                     if (error instanceof SessionRegistryError && error.code === "not_found") {
                         sendProtocolError("not_found", "Session is not open.");

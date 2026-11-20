@@ -218,4 +218,20 @@ describe("useWorkspaceStore", () => {
         state = useWorkspaceStore.getState();
         expect(state.pins).toEqual([]);
     });
+
+    it("hydrates stale-while-revalidate catalog rows from cache only before the first live scan", async () => {
+        const fakeCache = {
+            getWorkspaceCatalog: vi.fn(() =>
+                Promise.resolve({ key: "default" as const, sessions: [summary("cached")], scannedAtMs: 5_000 }),
+            ),
+        };
+        await useWorkspaceStore.getState().hydrateCatalog(fakeCache as never);
+        expect(useWorkspaceStore.getState().sessions.map((session) => session.id)).toEqual(["cached"]);
+        expect(useWorkspaceStore.getState().scannedAtMs).toBe(5_000);
+
+        useWorkspaceStore.getState().applyScan(listResponse([summary("live")], 9_000));
+        // A late cache hydration after a live scan must not overwrite live sessions.
+        await useWorkspaceStore.getState().hydrateCatalog(fakeCache as never);
+        expect(useWorkspaceStore.getState().sessions.map((session) => session.id)).toEqual(["live"]);
+    });
 });
