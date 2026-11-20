@@ -31,11 +31,7 @@ export {
     type MenuProps,
     type MenuSeparatorProps,
 } from "./Menu/Menu";
-export {
-    NotificationProvider,
-    type NotificationPosition,
-    type NotificationProviderProps,
-} from "./Notification/Notification";
-export { createNotificationManager, useNotification } from "./Notification/useNotification";
 export { ScrollArea, type ScrollAreaProps } from "./ScrollArea/ScrollArea";
 export { Select, type SelectOption, type SelectProps } from "./Select/Select";
+export { ToastProvider, type ToastPosition, type ToastProviderProps } from "./Toast/Toast";
+export { createToastManager, useToast } from "./Toast/useToast";

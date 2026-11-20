@@ -25,16 +25,16 @@ function withDefaultTimeout<Data extends object>(options: ToastManagerAddOptions
 }
 
 /**
- * Adds and updates notifications inside the nearest `NotificationProvider`.
- * The semantic types `info`, `success`, `warning` and `error` add a colored
- * status icon; other strings keep the neutral presentation.
+ * Adds and updates toasts inside the nearest `ToastProvider`. The semantic types
+ * `info`, `success`, `warning` and `error` add a colored status icon; other
+ * strings keep the neutral presentation.
  *
  * A `warning` or an `error` has no default timeout, so it stays until the user
  * dismisses it. Pass an explicit `timeout` to override that. The rule covers
  * `add` only: an `update` that turns a message into a warning or an error keeps
  * the timeout the message was added with.
  */
-export function useNotification() {
+export function useToast() {
     const manager = BaseToast.useToastManager();
 
     return useMemo(
@@ -48,11 +48,11 @@ export function useNotification() {
 }
 
 /**
- * Creates a notification manager for messages sent outside the React tree.
+ * Creates a toast manager for messages sent outside the React tree.
  * The same rule applies here, so a `warning` or an `error` sent through this
  * manager also stays until the user dismisses it.
  */
-export function createNotificationManager() {
+export function createToastManager() {
     const manager = BaseToast.createToastManager();
 
     return {

@@ -50,7 +50,7 @@
     --color-on-secondary-container: var(--color-on-surface);
 
     /*
-     * Status roles for notifications. VS Code has no success notification role,
+     * Status roles for toasts. VS Code has no success toast role,
      * so success uses its chart green; info and warning use the editor markers.
      */
     --color-info: light-dark(#0063d3, #59a4f9);
@@ -214,7 +214,7 @@
     --z-dropdown: 100;
     --z-overlay: 200;
     --z-modal: 300;
-    --z-notification: 400;
+    --z-toast: 400;
     --z-tooltip: 500;
 }
 

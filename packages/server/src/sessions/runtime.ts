@@ -13,9 +13,11 @@ import {
     SessionManager,
 } from "@earendil-works/pi-coding-agent";
 
+import { SESSION_CLOSE_CODE } from "@pivia/protocol";
 import type {
     ImageContent,
     QueueMode,
+    SessionCloseCode,
     SessionDetailResponse,
     SessionListResponse,
     SessionModelInfo,
@@ -144,7 +146,7 @@ export interface SessionClient {
     /** Deliver one message. A backlogged transport must close itself; the close handler detaches it. */
     send(message: WsServerMessage): void;
     /** Close the transport because the session runtime went away. */
-    close?(code: number, reason: string): void;
+    close?(code: SessionCloseCode, reason: string): void;
 }
 
 /** Options for {@link SessionRegistryOptions}. */
@@ -186,6 +188,10 @@ export interface ActiveSessionHandle {
 export interface CloseSessionOptions {
     /** Dispose dialogs and close clients immediately instead of waiting for the shutdown grace period. */
     readonly force?: boolean;
+    /** Close code sent to every attached client. Defaults to `sessionClosed`. */
+    readonly closeCode?: SessionCloseCode;
+    /** Human-readable close reason sent to every attached client. Defaults to "Session closed". */
+    readonly closeReason?: string;
 }
 
 /** Options for {@link SessionRegistry.attach}. */
@@ -451,11 +457,13 @@ export class SessionRegistry {
         if (entry === undefined) {
             return false;
         }
+        const closeCode = options.closeCode ?? SESSION_CLOSE_CODE.sessionClosed;
+        const closeReason = options.closeReason ?? "Session closed";
 
         if (entry.closePromise !== undefined) {
             if (options.force === true) {
                 entry.uiBridge.dispose();
-                this.closeClients(entry, 1001, "Session closed");
+                this.closeClients(entry, closeCode, closeReason);
             }
             await entry.closePromise;
             return true;
@@ -463,13 +471,25 @@ export class SessionRegistry {
 
         const wasStarting = entry.phase === "starting";
         entry.phase = "closing";
-        const closePromise = this.closeSessionInternal(entry, wasStarting, options.force === true);
+        const closePromise = this.closeSessionInternal(
+            entry,
+            wasStarting,
+            options.force === true,
+            closeCode,
+            closeReason,
+        );
         entry.closePromise = closePromise;
         await closePromise;
         return true;
     }
 
-    private async closeSessionInternal(entry: ActiveSession, wasStarting: boolean, force: boolean): Promise<void> {
+    private async closeSessionInternal(
+        entry: ActiveSession,
+        wasStarting: boolean,
+        force: boolean,
+        closeCode: SessionCloseCode,
+        closeReason: string,
+    ): Promise<void> {
         this.clearIdleTimer(entry);
 
         if (wasStarting) {
@@ -493,7 +513,7 @@ export class SessionRegistry {
         try {
             if (immediate) {
                 entry.uiBridge.dispose();
-                this.closeClients(entry, 1001, "Session closed");
+                this.closeClients(entry, closeCode, closeReason);
             } else {
                 // Keep clients and the bridge alive so session_shutdown can still ask the user.
                 // The timeout and a last-client detach both dispose the bridge to unblock dispose().
@@ -514,7 +534,7 @@ export class SessionRegistry {
             }
             entry.uiBridge.dispose();
             entry.unsubscribe();
-            this.closeClients(entry, 1001, "Session closed");
+            this.closeClients(entry, closeCode, closeReason);
             this.active.delete(entry.sessionId);
         }
     }
@@ -536,7 +556,11 @@ export class SessionRegistry {
 
     private forceCloseAll(): Array<Promise<void>> {
         return [...this.active.keys()].map((id) =>
-            this.closeSession(id, { force: true }).then(
+            this.closeSession(id, {
+                force: true,
+                closeCode: SESSION_CLOSE_CODE.goingAway,
+                closeReason: "Server going away",
+            }).then(
                 () => {},
                 (error: unknown) => {
                     this.logger.warn({ err: error, sessionId: id }, "failed to close session during shutdown");
@@ -788,7 +812,7 @@ export class SessionRegistry {
         this.clearIdleTimer(entry);
         entry.unsubscribe();
         entry.uiBridge.dispose();
-        this.closeClients(entry, 1011, "Session failed to initialize");
+        this.closeClients(entry, SESSION_CLOSE_CODE.internalError, "Session failed to initialize");
         this.active.delete(entry.sessionId);
         try {
             await entry.runtime.dispose();
@@ -1149,7 +1173,7 @@ export class SessionRegistry {
         entry.idleTimer = undefined;
     }
 
-    private closeClients(entry: ActiveSession, code: number, reason: string): void {
+    private closeClients(entry: ActiveSession, code: SessionCloseCode, reason: string): void {
         for (const client of [...entry.clients]) {
             try {
                 client.close?.(code, reason);

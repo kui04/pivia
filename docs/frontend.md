@@ -134,10 +134,10 @@ in step with the file: a new nested rule updates the sketch in the same change.
   for. A background scan keeps the rows, because it would otherwise empty the sidebar every five minutes. The refresh
   button stays focusable while it is `aria-disabled`, so the click that disables it does not drop the focus.
 
-## Notifications
+## Toasts
 
-- `packages/web/src/lib/notification.ts` owns the app's single notification manager plus `showError` and `showWarning`.
-  `main.tsx` mounts the one `NotificationProvider` at the top center, so every route and outside-React caller reports
+- `packages/web/src/lib/toast.ts` owns the app's single toast manager plus `showError` and `showWarning`.
+  `main.tsx` mounts the one `ToastProvider` at the top center, so every route and outside-React caller reports
   to the same stack. Do not mount a second provider.
 
 ## Checks

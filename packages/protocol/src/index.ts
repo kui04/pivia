@@ -11,8 +11,8 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 
 export type { QueueMode, ThinkingLevel } from "@earendil-works/pi-agent-core";
-export type { ImageContent } from "@earendil-works/pi-ai";
-export type { RpcExtensionUIRequest, RpcExtensionUIResponse } from "@earendil-works/pi-coding-agent";
+export type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
+export type { FileEntry, RpcExtensionUIRequest, RpcExtensionUIResponse } from "@earendil-works/pi-coding-agent";
 
 /** Health status payload returned by `GET /api/health`. */
 export interface HealthResponse {
@@ -29,6 +29,47 @@ export interface ApiErrorResponse {
     readonly error: ApiErrorCode;
     readonly message: string;
 }
+
+/** WebSocket close codes shared by the session server and the browser client. */
+export const SESSION_CLOSE_CODE = {
+    normal: 1000,
+    goingAway: 1001,
+    internalError: 1011,
+    slowConsumer: 1013,
+    sessionClosed: 4400,
+    sessionNotFound: 4404,
+} as const;
+
+/** One known close code used by the session WebSocket route. */
+export type SessionCloseCode = (typeof SESSION_CLOSE_CODE)[keyof typeof SESSION_CLOSE_CODE];
+
+/** Why the server closed a session socket. */
+export type SessionRemoteCloseReason = "session" | "slow-consumer" | "disconnected";
+
+/** Why a browser client closed a session socket. */
+export type SessionCloseReason = "client" | SessionRemoteCloseReason;
+
+/**
+ * Classifies a server-sent close code.
+ *
+ * A deliberate session close and a missing session are terminal. A slow consumer is closed so
+ * the client can reconnect and replay. Everything else, including the standard `goingAway` code,
+ * is treated as a transport drop that can be retried.
+ */
+export function classifySessionClose(code: number): SessionRemoteCloseReason {
+    switch (code) {
+        case SESSION_CLOSE_CODE.sessionClosed:
+        case SESSION_CLOSE_CODE.sessionNotFound:
+            return "session";
+        case SESSION_CLOSE_CODE.slowConsumer:
+            return "slow-consumer";
+        default:
+            return "disconnected";
+    }
+}
+
+/** API endpoints that stay public so the login gate can be reached. */
+export const PUBLIC_API_PATHS = ["/api/health", "/api/auth", "/api/auth/status", "/api/auth/logout"] as const;
 
 /** Authentication state returned by `GET /api/auth/status`. */
 export interface AuthStatusResponse {

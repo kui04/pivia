@@ -1,15 +1,16 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { RouterProvider } from "react-router/dom";
 
 import "@/styles/fonts.css";
 import "@/styles/token.css";
 import "@/styles/reset.css";
 import "@/styles/global.css";
 
-import { App } from "./App";
-import { NotificationProvider } from "@/components/Notification/Notification";
+import { ToastProvider } from "@/components/Toast/Toast";
 import { Log } from "@/lib/log";
-import { notificationManager } from "@/lib/notification";
+import { toastManager } from "@/lib/toast";
+import { router } from "./router";
 
 /** A keyboard inset below this size is usually browser chrome, not a virtual keyboard. */
 const KEYBOARD_THRESHOLD = 80;
@@ -104,8 +105,8 @@ if (container === null) {
 
 createRoot(container).render(
     <StrictMode>
-        <NotificationProvider toastManager={notificationManager} position="top-center">
-            <App />
-        </NotificationProvider>
+        <ToastProvider toastManager={toastManager} position="top-center">
+            <RouterProvider router={router} />
+        </ToastProvider>
     </StrictMode>,
 );

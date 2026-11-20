@@ -346,7 +346,7 @@ describe("SessionRegistry", () => {
         await expect(shutdownDialog).resolves.toBe(true);
         await expect(closePromise).resolves.toBe(true);
         expect(fixture.registry.activeSessionCount).toBe(0);
-        expect(collector.closes).toEqual([{ code: 1001, reason: "Session closed" }]);
+        expect(collector.closes).toEqual([{ code: 4400, reason: "Session closed" }]);
     });
 
     it("times out a session_shutdown dialog when the client does not answer", async () => {
@@ -409,6 +409,7 @@ describe("SessionRegistry", () => {
         await expect(fixture.registry.disposeAll()).resolves.toBeUndefined();
         expect(fixture.registry.activeSessionCount).toBe(0);
         expect(collector.closes.some((close) => close.code === 1001)).toBe(true);
+        expect(collector.closes.find((close) => close.code === 1001)?.reason).toBe("Server going away");
     });
 
     it("disposes a shutdown dialog when the last client detaches during closing", async () => {
@@ -1088,7 +1089,7 @@ describe("SessionRegistry", () => {
 
         expect(await fixture.registry.closeSession(handle.sessionId)).toBe(true);
         await expect(pending).resolves.toBeUndefined();
-        expect(collector.closes).toEqual([{ code: 1001, reason: "Session closed" }]);
+        expect(collector.closes).toEqual([{ code: 4400, reason: "Session closed" }]);
         expect(await fixture.registry.closeSession(handle.sessionId)).toBe(false);
     });
 

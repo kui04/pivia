@@ -46,6 +46,8 @@ export default mergeConfig(
                 "shiki/engine/oniguruma",
                 "shiki/langs",
                 "shiki/wasm",
+                "zustand",
+                "zustand/middleware",
             ],
         },
         test: {

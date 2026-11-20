@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createNotificationManager } from "../components/Notification/useNotification";
+import { createToastManager } from "../components/Toast/useToast";
 
-import { notificationManager, showError, showWarning } from "./notification";
+import { toastManager, showError, showWarning } from "./toast";
 
 function probeTimeouts() {
-    const manager = createNotificationManager();
+    const manager = createToastManager();
     const timeouts: Array<number | undefined> = [];
     const unsubscribe = manager[" subscribe"]((event) => {
         if (event.action === "add") {
@@ -16,7 +16,7 @@ function probeTimeouts() {
     return { manager, timeouts, unsubscribe };
 }
 
-describe("notification manager timeouts", () => {
+describe("toast manager timeouts", () => {
     it("keeps a warning and an error until the user dismisses them", () => {
         const { manager, timeouts, unsubscribe } = probeTimeouts();
 
@@ -49,13 +49,13 @@ describe("notification manager timeouts", () => {
     });
 });
 
-describe("app notifications", () => {
+describe("app toasts", () => {
     afterEach(() => {
         vi.restoreAllMocks();
     });
 
     it("sends errors urgently and warnings politely", () => {
-        const add = vi.spyOn(notificationManager, "add").mockReturnValue("toast-id");
+        const add = vi.spyOn(toastManager, "add").mockReturnValue("toast-id");
 
         showError({ id: "save", title: "Save failed" });
         showWarning({ id: "connection", title: "Slow connection" });
@@ -75,7 +75,7 @@ describe("app notifications", () => {
     });
 
     it("passes the description and action through unchanged", () => {
-        const add = vi.spyOn(notificationManager, "add").mockReturnValue("toast-id");
+        const add = vi.spyOn(toastManager, "add").mockReturnValue("toast-id");
         const onClick = vi.fn();
 
         showError({
@@ -92,7 +92,7 @@ describe("app notifications", () => {
     });
 
     it("forwards the same id so Base UI replaces the earlier message", () => {
-        const add = vi.spyOn(notificationManager, "add").mockReturnValue("toast-id");
+        const add = vi.spyOn(toastManager, "add").mockReturnValue("toast-id");
 
         showError({ id: "same", title: "First message" });
         showError({ id: "same", title: "Second message" });

@@ -5,72 +5,71 @@ import type { ComponentProps, ReactNode } from "react";
 import { cn } from "../../lib/cn";
 
 import { Icon } from "../Icon/Icon";
-import styles from "./Notification.module.css";
+import styles from "./Toast.module.css";
 
 type BaseProviderProps = ComponentProps<typeof BaseToast.Provider>;
 
-export type NotificationPosition =
-    "top-left" | "top-center" | "top-right" | "bottom-left" | "bottom-center" | "bottom-right";
+export type ToastPosition = "top-left" | "top-center" | "top-right" | "bottom-left" | "bottom-center" | "bottom-right";
 
-export type NotificationProviderProps = BaseProviderProps & {
-    /** Accessible name for the live region. Defaults to "Notifications". */
+export type ToastProviderProps = BaseProviderProps & {
+    /** Accessible name for the live region. Defaults to "Toasts". */
     label?: string | undefined;
     /** Where the stack sits in the viewport. Defaults to "bottom-right". */
-    position?: NotificationPosition;
+    position?: ToastPosition;
     /** Class on the fixed viewport, which is portaled outside the app tree. */
     viewportClassName?: string | undefined;
 };
 
 /**
  * Wraps Base UI Toast and renders the single fixed viewport for the app.
- * Children call `useNotification()` to add messages. Base UI owns timers, the
+ * Children call `useToast()` to add messages. Base UI owns timers, the
  * stack limit, keyboard navigation, swipe dismissal and the live-region
  * semantics.
  */
-export function NotificationProvider({
+export function ToastProvider({
     children,
-    label = "Notifications",
+    label = "Toasts",
     position = "bottom-right",
     viewportClassName,
     ...props
-}: NotificationProviderProps) {
+}: ToastProviderProps) {
     return (
         <BaseToast.Provider {...props}>
             {children}
             <BaseToast.Portal>
                 <BaseToast.Viewport
-                    data-slot="notification-viewport"
+                    data-slot="toast-viewport"
                     data-position={position}
                     aria-label={label}
                     className={cn(styles.viewport, viewportClassName)}
                 >
-                    <NotificationList position={position} />
+                    <ToastList position={position} />
                 </BaseToast.Viewport>
             </BaseToast.Portal>
         </BaseToast.Provider>
     );
 }
 
-function NotificationList({ position }: { position: NotificationPosition }) {
+function ToastList({ position }: { position: ToastPosition }) {
     const { toasts } = BaseToast.useToastManager();
 
-    return toasts.map((notification) => {
-        const statusIcon = statusIconFor(notification.type);
-        const hasTitle = hasRenderableText(notification.title);
-        const accessibleName = hasTitle ? undefined : "Notification";
+    return toasts.map((toast) => {
+        const statusIcon = statusIconFor(toast.type);
+        const hasTitle = hasRenderableText(toast.title);
+        const accessibleName = hasTitle ? undefined : "Toast";
 
         return (
             <BaseToast.Root
-                key={notification.id}
-                toast={notification}
-                data-slot="notification"
+                key={toast.id}
+                toast={toast}
+                data-slot="toast"
                 data-position={position}
                 swipeDirection={swipeDirectionsFor(position)}
                 aria-label={accessibleName}
-                className={styles.notification}
+                className={styles.toast}
             >
                 <BaseToast.Content
-                    data-slot="notification-content"
+                    data-slot="toast-content"
                     className={cn(styles.content, statusIcon === null && styles.contentWithoutIcon)}
                 >
                     {statusIcon}
@@ -79,12 +78,12 @@ function NotificationList({ position }: { position: NotificationPosition }) {
                         <BaseToast.Description className={styles.description} />
                         <BaseToast.Action type="button" className={styles.action} />
                     </div>
-                    {/* Base UI hides this visible control when collapsed; the CSS keeps it accessible only for the front notification. */}
+                    {/* Base UI hides this visible control when collapsed; the CSS keeps it accessible only for the front toast. */}
                     <BaseToast.Close
                         type="button"
-                        aria-label="Dismiss notification"
+                        aria-label="Dismiss toast"
                         aria-hidden={false}
-                        data-slot="notification-close"
+                        data-slot="toast-close"
                         className={styles.close}
                     >
                         <Icon size="no-container">
@@ -105,7 +104,7 @@ function statusIconFor(type: string | undefined) {
     switch (type) {
         case "info":
             return (
-                <span className={styles.statusIcon} data-slot="notification-icon">
+                <span className={styles.statusIcon} data-slot="toast-icon">
                     <Icon size="md">
                         <Info />
                     </Icon>
@@ -113,7 +112,7 @@ function statusIconFor(type: string | undefined) {
             );
         case "success":
             return (
-                <span className={styles.statusIcon} data-slot="notification-icon">
+                <span className={styles.statusIcon} data-slot="toast-icon">
                     <Icon size="md">
                         <CircleCheck />
                     </Icon>
@@ -121,7 +120,7 @@ function statusIconFor(type: string | undefined) {
             );
         case "warning":
             return (
-                <span className={styles.statusIcon} data-slot="notification-icon">
+                <span className={styles.statusIcon} data-slot="toast-icon">
                     <Icon size="md">
                         <TriangleAlert />
                     </Icon>
@@ -129,7 +128,7 @@ function statusIconFor(type: string | undefined) {
             );
         case "error":
             return (
-                <span className={styles.statusIcon} data-slot="notification-icon">
+                <span className={styles.statusIcon} data-slot="toast-icon">
                     <Icon size="md">
                         <CircleAlert />
                     </Icon>
@@ -140,7 +139,7 @@ function statusIconFor(type: string | undefined) {
     }
 }
 
-function swipeDirectionsFor(position: NotificationPosition): ("up" | "down" | "left" | "right")[] {
+function swipeDirectionsFor(position: ToastPosition): ("up" | "down" | "left" | "right")[] {
     const vertical: "up" | "down" = position.startsWith("top") ? "up" : "down";
 
     if (position.endsWith("left")) {

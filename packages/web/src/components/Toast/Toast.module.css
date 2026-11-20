@@ -1,15 +1,15 @@
 /*
- * The single notification stack of the app: a fixed live region in one corner.
+ * The single toast stack of the app: a fixed live region in one corner.
  *
  * The markup this file styles (Base UI renders all of it). A state that differs only by an
  * attribute value shares one node. The provider's position reaches the viewport and every
- * notification as data-position, one token per axis (top or bottom, then -left, -right or -center):
+ * toast as data-position, one token per axis (top or bottom, then -left, -right or -center):
  *
  *   .viewport                                             Base UI Toast.Viewport, the fixed live region
  *   ├─ &[data-position^="top"], &[data-position^="bottom"]
  *   ├─ &[data-position$="-left"], &[data-position$="-right"]
  *   ├─ &[data-position$="-center"]
- *   └─ .notification                                      Base UI Toast.Root, one per message
+ *   └─ .toast                                            Base UI Toast.Root, one per message
  *       ├─ &[data-position^="top"], &[data-position^="bottom"]
  *       ├─ &[data-starting-style], &[data-ending-style]   the slide in and out
  *       ├─ &[data-position^="top"][data-starting-style]
@@ -18,13 +18,13 @@
  *       ├─ &[data-expanded]                               the expanded stack
  *       ├─ &[data-limited]                                over the stack limit
  *       ├─ &[data-type]                                   info, success, warning and error
- *       ├─ &::after                                       the swipe gap below the notification
+ *       ├─ &::after                                       the swipe gap below the toast
  *       ├─ &[data-position^="top"]::after                 the same gap above a top stack
- *       ├─ &:focus-visible                                the ring of the front notification
+ *       ├─ &:focus-visible                                the ring of the front toast
  *       └─ .content                                       Base UI Toast.Content, the message's only child
- *           ├─ &[data-behind], &[data-expanded]           a row that slides behind the front notification
+ *           ├─ &[data-behind], &[data-expanded]           a row that slides behind the front toast
  *           ├─ &[data-behind]:not([data-expanded])        hides its close button
- *           ├─ .statusIcon                                the icon of a typed notification, on the close button's line
+ *           ├─ .statusIcon                                the icon of a typed toast, on the close button's line
  *           ├─ .text                                      the title, the body and the action
  *           │   ├─ .title, .description                   no margin, the content owns the gaps
  *           │   ├─ .title                                 Base UI Toast.Title
@@ -34,40 +34,41 @@
  *   .contentWithoutIcon                                   the same element as .content, when no icon is drawn
  *   └─ .text                                              reserves the close button's width
  *
- * The --toast-* names that survive below are Base UI's, not this file's: the library writes the
- * index, the offsets, the height and the swipe movement onto the root, so those names stay.
+ * The `--toast-*` names below that do not carry the `stack` infix are Base UI's: the library writes the
+ * index, the offsets, the height and the swipe movement onto the root, so those names stay. Local stack
+ * variables use the `--toast-stack-*` prefix so they cannot collide with them.
  */
 .viewport {
-    --notification-width: 22.5rem;
-    --notification-gap: var(--space-12);
-    --notification-peek: var(--space-12);
-    --notification-inset: var(--space-16);
+    --toast-stack-width: 22.5rem;
+    --toast-stack-gap: var(--space-12);
+    --toast-stack-peek: var(--space-12);
+    --toast-stack-inset: var(--space-16);
 
     position: fixed;
-    z-index: var(--z-notification);
-    width: min(calc(100vw - var(--space-32)), var(--notification-width));
+    z-index: var(--z-toast);
+    width: min(calc(100vw - var(--space-32)), var(--toast-stack-width));
     margin: 0;
     outline: none;
     pointer-events: none;
 
     &[data-position^="bottom"] {
         inset-block-start: auto;
-        inset-block-end: calc(var(--notification-inset) + env(safe-area-inset-bottom, 0px));
+        inset-block-end: calc(var(--toast-stack-inset) + env(safe-area-inset-bottom, 0px));
     }
 
     &[data-position^="top"] {
-        inset-block-start: calc(var(--notification-inset) + env(safe-area-inset-top, 0px));
+        inset-block-start: calc(var(--toast-stack-inset) + env(safe-area-inset-top, 0px));
         inset-block-end: auto;
     }
 
     &[data-position$="-left"] {
-        inset-inline-start: calc(var(--notification-inset) + env(safe-area-inset-left, 0px));
+        inset-inline-start: calc(var(--toast-stack-inset) + env(safe-area-inset-left, 0px));
         inset-inline-end: auto;
     }
 
     &[data-position$="-right"] {
         inset-inline-start: auto;
-        inset-inline-end: calc(var(--notification-inset) + env(safe-area-inset-right, 0px));
+        inset-inline-end: calc(var(--toast-stack-inset) + env(safe-area-inset-right, 0px));
     }
 
     &[data-position$="-center"] {
@@ -78,22 +79,22 @@
 
     @media (min-width: 500px) {
         & {
-            --notification-inset: var(--space-24);
+            --toast-stack-inset: var(--space-24);
         }
     }
 
-    .notification {
-        --notification-scale: calc(max(0, 1 - (var(--toast-index) * 0.1)));
-        --notification-shrink: calc(1 - var(--notification-scale));
-        --notification-local-height: var(--toast-frontmost-height, var(--toast-height));
-        --notification-accent: var(--color-outline-variant);
+    .toast {
+        --toast-stack-scale: calc(max(0, 1 - (var(--toast-index) * 0.1)));
+        --toast-stack-shrink: calc(1 - var(--toast-stack-scale));
+        --toast-stack-local-height: var(--toast-frontmost-height, var(--toast-height));
+        --toast-stack-accent: var(--color-outline-variant);
 
         position: absolute;
         z-index: calc(1000 - var(--toast-index));
         inset-inline: 0;
         box-sizing: border-box;
         width: 100%;
-        height: var(--notification-local-height);
+        height: var(--toast-stack-local-height);
         border: var(--border-width) solid var(--color-outline-variant);
         border-radius: var(--shape-corner-medium);
         background-color: var(--color-surface-container-high);
@@ -108,8 +109,8 @@
             height var(--motion-duration-spatial-fast) var(--motion-easing-standard);
 
         &[data-position^="bottom"] {
-            --notification-local-offset-y: calc(
-                (var(--toast-offset-y) * -1) + (var(--toast-index) * var(--notification-gap) * -1) +
+            --toast-stack-local-offset-y: calc(
+                (var(--toast-offset-y) * -1) + (var(--toast-index) * var(--toast-stack-gap) * -1) +
                     var(--toast-swipe-movement-y)
             );
 
@@ -119,16 +120,16 @@
             transform: translateX(var(--toast-swipe-movement-x))
                 translateY(
                     calc(
-                        var(--toast-swipe-movement-y) - (var(--toast-index) * var(--notification-peek)) -
-                            (var(--notification-shrink) * var(--notification-local-height))
+                        var(--toast-swipe-movement-y) - (var(--toast-index) * var(--toast-stack-peek)) -
+                            (var(--toast-stack-shrink) * var(--toast-stack-local-height))
                     )
                 )
-                scale(var(--notification-scale));
+                scale(var(--toast-stack-scale));
         }
 
         &[data-position^="top"] {
-            --notification-local-offset-y: calc(
-                var(--toast-offset-y) + (var(--toast-index) * var(--notification-gap)) + var(--toast-swipe-movement-y)
+            --toast-stack-local-offset-y: calc(
+                var(--toast-offset-y) + (var(--toast-index) * var(--toast-stack-gap)) + var(--toast-swipe-movement-y)
             );
 
             inset-block-start: 0;
@@ -137,17 +138,17 @@
             transform: translateX(var(--toast-swipe-movement-x))
                 translateY(
                     calc(
-                        var(--toast-swipe-movement-y) + (var(--toast-index) * var(--notification-peek)) +
-                            (var(--notification-shrink) * var(--notification-local-height))
+                        var(--toast-swipe-movement-y) + (var(--toast-index) * var(--toast-stack-peek)) +
+                            (var(--toast-stack-shrink) * var(--toast-stack-local-height))
                     )
                 )
-                scale(var(--notification-scale));
+                scale(var(--toast-stack-scale));
         }
 
         /* The viewport expands the stack on hover or keyboard focus. */
         &[data-expanded] {
             height: var(--toast-height);
-            transform: translateX(var(--toast-swipe-movement-x)) translateY(var(--notification-local-offset-y));
+            transform: translateX(var(--toast-swipe-movement-x)) translateY(var(--toast-stack-local-offset-y));
         }
 
         &[data-starting-style] {
@@ -182,19 +183,19 @@
 
         &[data-ending-style][data-swipe-direction="left"] {
             transform: translateX(calc(var(--toast-swipe-movement-x) - 150%))
-                translateY(var(--notification-local-offset-y));
+                translateY(var(--toast-stack-local-offset-y));
         }
 
         &[data-ending-style][data-swipe-direction="right"] {
             transform: translateX(calc(var(--toast-swipe-movement-x) + 150%))
-                translateY(var(--notification-local-offset-y));
+                translateY(var(--toast-stack-local-offset-y));
         }
 
         &::after {
             position: absolute;
             inset-block-start: 100%;
             inset-inline: 0;
-            height: calc(var(--notification-gap) + var(--border-width));
+            height: calc(var(--toast-stack-gap) + var(--border-width));
             content: "";
         }
 
@@ -204,19 +205,19 @@
         }
 
         &[data-type="info"] {
-            --notification-accent: var(--color-info);
+            --toast-stack-accent: var(--color-info);
         }
 
         &[data-type="success"] {
-            --notification-accent: var(--color-success);
+            --toast-stack-accent: var(--color-success);
         }
 
         &[data-type="warning"] {
-            --notification-accent: var(--color-warning);
+            --toast-stack-accent: var(--color-warning);
         }
 
         &[data-type="error"] {
-            --notification-accent: var(--color-error);
+            --toast-stack-accent: var(--color-error);
         }
 
         &:focus-visible {
@@ -240,7 +241,7 @@
                 opacity: 1;
             }
 
-            /* A visible close button must not be focusable or announced while it is behind the front notification. */
+            /* A visible close button must not be focusable or announced while it is behind the front toast. */
             &[data-behind]:not([data-expanded]) .close {
                 visibility: hidden;
             }
@@ -255,7 +256,7 @@
                 display: flex;
                 flex: none;
                 width: fit-content;
-                color: var(--notification-accent);
+                color: var(--toast-stack-accent);
             }
 
             .text {

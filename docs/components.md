@@ -92,17 +92,16 @@
   controlled single-image dialog built on Base UI Dialog with `react-zoom-pan-pinch` for zoom and pan. The dialog
   owns focus, scroll lock, Escape and focus return; zoom toolbar actions are immediate, so the dialog is the only
   timed transition. Its backdrop uses `--color-viewer-backdrop`. Galleries are deliberately out of scope.
-- `Notification` wraps Base UI Toast. `NotificationProvider` renders the notification portal, fixed viewport and
-  stack; callers use `useNotification` from `useNotification.ts` inside it. The viewport defaults to bottom-right and
-  accepts the six logical `position` values; the stack mirrors its vertical side, and swipe directions follow the
-  corner. It shows at most three notifications by default, expands on hover or focus and uses `info`, `success`,
-  `warning` and `error` for semantic status icons. Base UI owns timers, focus, swipe and live-region semantics. A
-  `warning` or an `error` has no default timeout, so it stays until the user dismisses it, while the other types use
-  the provider timeout; an explicit `timeout` on one message always wins. The stack uses Base UI's `--toast-*`
-  variables, which the library writes and this project cannot rename, plus the local `--notification-gap` and
-  `--notification-peek`; motion comes from the token durations and easing, and the viewport uses `--z-notification`.
-  A status icon sits on the close button's 24px line, so both glyphs share one centre, and it keeps only the start
-  padding off so its glyph stays flush with the title. The close button stays visible and actionable at rest; behind
-  notifications hide it while the stack is collapsed so it cannot take focus out of order. The app mounts one
-  provider at the root with the manager from `packages/web/src/lib/notification.ts`, top center, and reports errors
-  and warnings through `showError` and `showWarning`.
+- `Toast` wraps Base UI Toast. `ToastProvider` renders the toast portal, fixed viewport and stack; callers use
+  `useToast` from `useToast.ts` inside it. The viewport defaults to bottom-right and accepts the six logical
+  `position` values; the stack mirrors its vertical side, and swipe directions follow the corner. It shows at most
+  three toasts by default, expands on hover or focus and uses `info`, `success`, `warning` and `error` for semantic
+  status icons. Base UI owns timers, focus, swipe and live-region semantics. A `warning` or an `error` has no default
+  timeout, so it stays until the user dismisses it, while the other types use the provider timeout; an explicit
+  `timeout` on one message always wins. The stack uses Base UI's `--toast-*` variables, which the library writes and
+  this project cannot rename, plus the local `--toast-stack-gap` and `--toast-stack-peek`; motion comes from the
+  token durations and easing, and the viewport uses `--z-toast`. A status icon sits on the close button's 24px line,
+  so both glyphs share one centre, and it keeps only the start padding off so its glyph stays flush with the title.
+  The close button stays visible and actionable at rest; behind toasts hide it while the stack is collapsed so it
+  cannot take focus out of order. The app mounts one provider at the root with the manager from
+  `packages/web/src/lib/toast.ts`, top center, and reports errors and warnings through `showError` and `showWarning`.

@@ -1,0 +1,85 @@
+/*
+ * The routed session column.
+ *
+ * The nesting this file styles:
+ *
+ *   .page
+ *   ├─ .stage            the transcript placeholder, centred until a transcript exists
+ *   │   └─ .empty
+ *   │       ├─ .title
+ *   │       ├─ .text
+ *   │       └─ .id       the route session id
+ *   └─ .composerArea     the bottom slot reserved for the composer
+ *       └─ .composerSlot
+ */
+.page {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-block-size: 0;
+    overflow-y: auto;
+
+    .stage {
+        display: grid;
+        flex: 1;
+        place-items: center;
+        padding: var(--space-24);
+
+        .empty {
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-8);
+            align-items: center;
+            max-inline-size: 44rem;
+            text-align: center;
+        }
+
+        .title {
+            color: var(--color-on-surface);
+            font-family: var(--font-serif);
+            font-size: var(--type-title-large-size);
+            font-weight: var(--type-title-large-emphasized-weight);
+            letter-spacing: var(--type-title-large-tracking);
+            line-height: var(--type-title-large-line-height);
+            text-wrap: balance;
+        }
+
+        .text {
+            color: var(--color-on-surface-variant);
+            font-family: var(--font-sans);
+            font-size: var(--type-body-medium-size);
+            font-weight: var(--type-body-medium-weight);
+            letter-spacing: var(--type-body-medium-tracking);
+            line-height: var(--type-body-medium-line-height);
+            text-wrap: pretty;
+        }
+
+        .id {
+            max-inline-size: 100%;
+            padding: var(--space-2) var(--space-8);
+            border-radius: var(--shape-corner-extra-small);
+            background-color: var(--color-surface-container-high);
+            color: var(--color-on-surface-variant);
+            font-family: var(--font-mono);
+            font-size: var(--type-label-medium-size);
+            line-height: var(--type-label-medium-line-height);
+            overflow-wrap: anywhere;
+        }
+    }
+
+    .composerArea {
+        flex: none;
+        padding: var(--space-12) var(--space-16);
+        border-block-start: var(--border-width) solid var(--color-outline-variant);
+
+        .composerSlot {
+            color: var(--color-on-surface-variant);
+            font-family: var(--font-sans);
+            font-size: var(--type-label-large-size);
+            font-weight: var(--type-label-large-weight);
+            letter-spacing: var(--type-label-large-tracking);
+            line-height: var(--type-label-large-line-height);
+            text-align: center;
+        }
+    }
+}

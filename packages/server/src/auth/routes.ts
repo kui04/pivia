@@ -1,16 +1,17 @@
-import type {
-    ApiErrorCode,
-    AuthLoginRequest,
-    AuthLoginResponse,
-    AuthLogoutResponse,
-    AuthStatusResponse,
+import {
+    PUBLIC_API_PATHS,
+    type ApiErrorCode,
+    type AuthLoginRequest,
+    type AuthLoginResponse,
+    type AuthLogoutResponse,
+    type AuthStatusResponse,
 } from "@pivia/protocol";
 import type { FastifyInstance, FastifyReply } from "fastify";
 
 import { sendApiError, sendWsUpgradeError } from "../http/errors.ts";
 import { type AuthService, SESSION_COOKIE_NAME } from "./service.ts";
 
-const PUBLIC_API_PATHS = new Set(["/api/health", "/api/auth", "/api/auth/status", "/api/auth/logout"]);
+const PUBLIC_PATHS: ReadonlySet<string> = new Set(PUBLIC_API_PATHS);
 
 const LOGIN_BODY_SCHEMA = {
     type: "object",
@@ -47,7 +48,7 @@ export function registerAuthRoutes(app: FastifyInstance, authService: AuthServic
         if (!pathname.startsWith("/api/") && !pathname.startsWith("/ws/")) {
             return;
         }
-        if (PUBLIC_API_PATHS.has(pathname)) {
+        if (PUBLIC_PATHS.has(pathname)) {
             return;
         }
 

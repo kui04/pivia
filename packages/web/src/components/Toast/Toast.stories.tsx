@@ -3,12 +3,12 @@ import { useEffect } from "react";
 import type { ReactNode } from "react";
 import { expect, screen, userEvent, waitFor, within } from "storybook/test";
 
-import { NotificationProvider } from "./Notification";
-import { createNotificationManager, useNotification } from "./useNotification";
+import { ToastProvider } from "./Toast";
+import { createToastManager, useToast } from "./useToast";
 
 const meta = {
-    title: "Components/Notification",
-    component: NotificationProvider,
+    title: "Components/Toast",
+    component: ToastProvider,
     args: {
         timeout: 0,
         limit: 3,
@@ -20,62 +20,60 @@ const meta = {
             options: ["top-left", "top-center", "top-right", "bottom-left", "bottom-center", "bottom-right"],
         },
     },
-} satisfies Meta<typeof NotificationProvider>;
+} satisfies Meta<typeof ToastProvider>;
 
 export default meta;
 
 type Story = StoryObj<typeof meta>;
 
-function ShowNotification({ title, description }: { title: string; description: string }) {
-    const notification = useNotification();
+function ShowToast({ title, description }: { title: string; description: string }) {
+    const toast = useToast();
 
     return (
-        <button type="button" onClick={() => notification.add({ title, description })}>
-            Show notification
+        <button type="button" onClick={() => toast.add({ title, description })}>
+            Show toast
         </button>
     );
 }
 
 export const Default: Story = {
     render: (args) => (
-        <NotificationProvider {...args}>
-            <ShowNotification title="Changes saved" description="Your edits are now available on this device." />
-        </NotificationProvider>
+        <ToastProvider {...args}>
+            <ShowToast title="Changes saved" description="Your edits are now available on this device." />
+        </ToastProvider>
     ),
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
 
-        await userEvent.click(canvas.getByRole("button", { name: "Show notification" }));
+        await userEvent.click(canvas.getByRole("button", { name: "Show toast" }));
 
-        const notification = await screen.findByRole("dialog", { name: "Changes saved" });
+        const toast = await screen.findByRole("dialog", { name: "Changes saved" });
 
-        await expect(
-            within(notification).getByText("Your edits are now available on this device."),
-        ).toBeInTheDocument();
-        await expect(getComputedStyle(notification).transitionProperty).toContain("transform");
-        await expect(getComputedStyle(notification).transitionDuration).toContain("0.5s");
+        await expect(within(toast).getByText("Your edits are now available on this device.")).toBeInTheDocument();
+        await expect(getComputedStyle(toast).transitionProperty).toContain("transform");
+        await expect(getComputedStyle(toast).transitionDuration).toContain("0.5s");
 
-        const close = within(notification).getByRole("button", { name: "Dismiss notification" });
+        const close = within(toast).getByRole("button", { name: "Dismiss toast" });
 
         await expect(Math.round(Number.parseFloat(getComputedStyle(close).borderRadius))).toBe(8);
         await expect(Math.round(Number.parseFloat(getComputedStyle(close).width))).toBe(24);
         await userEvent.click(close);
 
-        await waitFor(() => expect(document.querySelectorAll("[data-slot='notification']")).toHaveLength(0));
+        await waitFor(() => expect(document.querySelectorAll("[data-slot='toast']")).toHaveLength(0));
     },
 };
 
 function StackDemo() {
-    const notification = useNotification();
+    const toast = useToast();
 
     return (
         <button
             type="button"
             onClick={() => {
                 ["Saved", "Copied", "Uploaded", "Queued"].forEach((title) => {
-                    notification.add({
+                    toast.add({
                         title,
-                        description: "This notification is part of the stack.",
+                        description: "This toast is part of the stack.",
                     });
                 });
             }}
@@ -87,20 +85,20 @@ function StackDemo() {
 
 export const Stacked: Story = {
     render: (args) => (
-        <NotificationProvider {...args}>
+        <ToastProvider {...args}>
             <StackDemo />
-        </NotificationProvider>
+        </ToastProvider>
     ),
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
 
         await userEvent.click(canvas.getByRole("button", { name: "Show stack" }));
 
-        await waitFor(() => expect(document.querySelectorAll("[data-slot='notification']")).toHaveLength(4));
+        await waitFor(() => expect(document.querySelectorAll("[data-slot='toast']")).toHaveLength(4));
 
-        const notifications = [...document.querySelectorAll<HTMLElement>("[data-slot='notification']")];
-        const visible = notifications.filter((notification) => !notification.hasAttribute("data-limited"));
-        const viewport = screen.getByRole("region", { name: "Notifications" });
+        const toasts = [...document.querySelectorAll<HTMLElement>("[data-slot='toast']")];
+        const visible = toasts.filter((toast) => !toast.hasAttribute("data-limited"));
+        const viewport = screen.getByRole("region", { name: "Toasts" });
 
         await expect(visible).toHaveLength(3);
         await userEvent.hover(visible[0] as HTMLElement);
@@ -111,11 +109,11 @@ export const Stacked: Story = {
 
         const front = visible[0] as HTMLElement;
         const behind = visible[1] as HTMLElement;
-        const frontClose = within(front).getByRole("button", { name: "Dismiss notification" });
-        const behindClose = behind.querySelector<HTMLElement>("[data-slot='notification-close']");
+        const frontClose = within(front).getByRole("button", { name: "Dismiss toast" });
+        const behindClose = behind.querySelector<HTMLElement>("[data-slot='toast-close']");
 
         if (behindClose === null) {
-            throw new Error("The behind notification close button is missing");
+            throw new Error("The behind toast close button is missing");
         }
 
         await expect(getComputedStyle(frontClose).visibility).toBe("visible");
@@ -124,50 +122,50 @@ export const Stacked: Story = {
 };
 
 function ActionDemo() {
-    const notification = useNotification();
+    const toast = useToast();
 
     return (
         <button
             type="button"
             onClick={() => {
-                notification.add({
+                toast.add({
                     title: "Message deleted",
                     description: "The message can still be restored.",
                     actionProps: {
                         children: "Undo",
                         onClick: () => {
-                            notification.add({ title: "Message restored" });
+                            toast.add({ title: "Message restored" });
                         },
                     },
                 });
             }}
         >
-            Show action notification
+            Show action toast
         </button>
     );
 }
 
 export const WithAction: Story = {
     render: (args) => (
-        <NotificationProvider {...args}>
+        <ToastProvider {...args}>
             <ActionDemo />
-        </NotificationProvider>
+        </ToastProvider>
     ),
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
 
-        await userEvent.click(canvas.getByRole("button", { name: "Show action notification" }));
+        await userEvent.click(canvas.getByRole("button", { name: "Show action toast" }));
 
-        const notification = await screen.findByRole("dialog", { name: "Message deleted" });
+        const toast = await screen.findByRole("dialog", { name: "Message deleted" });
 
-        await userEvent.click(within(notification).getByRole("button", { name: "Undo" }));
+        await userEvent.click(within(toast).getByRole("button", { name: "Undo" }));
 
         await expect(await screen.findByRole("dialog", { name: "Message restored" })).toBeInTheDocument();
     },
 };
 
 function TypesDemo() {
-    const notification = useNotification();
+    const toast = useToast();
 
     return (
         <button
@@ -181,7 +179,7 @@ function TypesDemo() {
                 ] as const;
 
                 types.forEach(([type, title, description]) => {
-                    notification.add({
+                    toast.add({
                         type,
                         title,
                         description,
@@ -199,18 +197,18 @@ export const Types: Story = {
         limit: 4,
     },
     render: (args) => (
-        <NotificationProvider {...args}>
+        <ToastProvider {...args}>
             <TypesDemo />
-        </NotificationProvider>
+        </ToastProvider>
     ),
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
 
         await userEvent.click(canvas.getByRole("button", { name: "Show all types" }));
-        await waitFor(() => expect(document.querySelectorAll("[data-slot='notification']")).toHaveLength(4));
+        await waitFor(() => expect(document.querySelectorAll("[data-slot='toast']")).toHaveLength(4));
 
-        const icons = [...document.querySelectorAll<HTMLElement>("[data-slot='notification-icon']")];
-        const borders = [...document.querySelectorAll<HTMLElement>("[data-slot='notification']")];
+        const icons = [...document.querySelectorAll<HTMLElement>("[data-slot='toast-icon']")];
+        const borders = [...document.querySelectorAll<HTMLElement>("[data-slot='toast']")];
         const theme = document.documentElement.dataset.theme;
         const dark =
             theme === "dark" || (theme !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
@@ -230,18 +228,18 @@ export const Types: Story = {
 
         await expect(icons).toHaveLength(4);
         await expect(new Set(icons.map((icon) => getComputedStyle(icon).color)).size).toBe(4);
-        await expect(new Set(borders.map((notification) => getComputedStyle(notification).borderColor)).size).toBe(1);
+        await expect(new Set(borders.map((toast) => getComputedStyle(toast).borderColor)).size).toBe(1);
 
         for (const icon of icons) {
-            const notification = icon.closest<HTMLElement>("[data-slot='notification']");
-            const close = notification?.querySelector<HTMLElement>("[data-slot='notification-close']");
-            const type = notification?.getAttribute("data-type");
+            const toast = icon.closest<HTMLElement>("[data-slot='toast']");
+            const close = toast?.querySelector<HTMLElement>("[data-slot='toast-close']");
+            const type = toast?.getAttribute("data-type");
 
             if (close === null || close === undefined) {
-                throw new Error("The notification close button is missing");
+                throw new Error("The toast close button is missing");
             }
             if (type === null || type === undefined || !(type in expectedColors)) {
-                throw new Error("The notification did not expose a known semantic type");
+                throw new Error("The toast did not expose a known semantic type");
             }
 
             const iconRect = icon.getBoundingClientRect();
@@ -260,7 +258,7 @@ export const Types: Story = {
 };
 
 function TimeoutProbe() {
-    const notification = useNotification();
+    const toast = useToast();
 
     return (
         <>
@@ -268,15 +266,15 @@ function TimeoutProbe() {
                 type="button"
                 onClick={() => {
                     ["info", "success", "warning", "error"].forEach((type) => {
-                        notification.add({ type, title: type });
+                        toast.add({ type, title: type });
                     });
                 }}
             >
-                Show typed notifications
+                Show typed toasts
             </button>
             <ul>
-                {notification.toasts.map((toast) => (
-                    <li key={toast.id} data-slot="notification-timeout">
+                {toast.toasts.map((toast) => (
+                    <li key={toast.id} data-slot="toast-timeout">
                         {`${toast.type}:${toast.timeout === undefined ? "provider" : toast.timeout}`}
                     </li>
                 ))}
@@ -297,14 +295,14 @@ export const PersistentSeverities: Story = {
         timeout: 5000,
     },
     render: (args) => (
-        <NotificationProvider {...args}>
+        <ToastProvider {...args}>
             <TimeoutProbe />
-        </NotificationProvider>
+        </ToastProvider>
     ),
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
 
-        await userEvent.click(canvas.getByRole("button", { name: "Show typed notifications" }));
+        await userEvent.click(canvas.getByRole("button", { name: "Show typed toasts" }));
         await waitFor(() => expect(canvas.getAllByRole("listitem")).toHaveLength(4));
 
         const timeouts = [...canvas.getAllByRole("listitem")]
@@ -316,43 +314,43 @@ export const PersistentSeverities: Story = {
 };
 
 function BodyOnlyDemo() {
-    const notification = useNotification();
+    const toast = useToast();
 
     return (
         <button
             type="button"
             onClick={() => {
-                notification.add({ description: "This notification has no icon and no title." });
+                toast.add({ description: "This toast has no icon and no title." });
             }}
         >
-            Show body-only notification
+            Show body-only toast
         </button>
     );
 }
 
 export const BodyOnly: Story = {
     render: (args) => (
-        <NotificationProvider {...args}>
+        <ToastProvider {...args}>
             <BodyOnlyDemo />
-        </NotificationProvider>
+        </ToastProvider>
     ),
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
 
-        await userEvent.click(canvas.getByRole("button", { name: "Show body-only notification" }));
+        await userEvent.click(canvas.getByRole("button", { name: "Show body-only toast" }));
 
-        const body = await screen.findByText("This notification has no icon and no title.");
-        const notification = body.closest<HTMLElement>("[data-slot='notification']");
+        const body = await screen.findByText("This toast has no icon and no title.");
+        const toast = body.closest<HTMLElement>("[data-slot='toast']");
 
-        if (notification === null) {
-            throw new Error("The notification root is missing");
+        if (toast === null) {
+            throw new Error("The toast root is missing");
         }
 
-        await expect(notification.querySelector("[data-slot='notification-icon']")).toBeNull();
-        await expect(notification.querySelector("h2")).toBeNull();
-        await expect(notification).toHaveAttribute("aria-label", "Notification");
+        await expect(toast.querySelector("[data-slot='toast-icon']")).toBeNull();
+        await expect(toast.querySelector("h2")).toBeNull();
+        await expect(toast).toHaveAttribute("aria-label", "Toast");
 
-        const close = within(notification).getByRole("button", { name: "Dismiss notification" });
+        const close = within(toast).getByRole("button", { name: "Dismiss toast" });
 
         await expect(getComputedStyle(close).position).toBe("absolute");
         await expect(Math.round(close.getBoundingClientRect().width)).toBe(24);
@@ -366,42 +364,39 @@ export const TopCenter: Story = {
         position: "top-center",
     },
     render: (args) => (
-        <NotificationProvider {...args}>
-            <ShowNotification
-                title="Top center"
-                description="This notification is anchored to the top of the viewport."
-            />
-        </NotificationProvider>
+        <ToastProvider {...args}>
+            <ShowToast title="Top center" description="This toast is anchored to the top of the viewport." />
+        </ToastProvider>
     ),
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
 
-        await userEvent.click(canvas.getByRole("button", { name: "Show notification" }));
+        await userEvent.click(canvas.getByRole("button", { name: "Show toast" }));
 
-        const viewport = screen.getByRole("region", { name: "Notifications" });
-        const notification = await screen.findByRole("dialog", { name: "Top center" });
+        const viewport = screen.getByRole("region", { name: "Toasts" });
+        const toast = await screen.findByRole("dialog", { name: "Top center" });
 
         await expect(viewport).toHaveAttribute("data-position", "top-center");
         const expectedTop = window.matchMedia("(min-width: 500px)").matches ? 24 : 16;
-        await waitFor(() => expect(Math.round(notification.getBoundingClientRect().top)).toBe(expectedTop));
+        await waitFor(() => expect(Math.round(toast.getBoundingClientRect().top)).toBe(expectedTop));
 
-        const rect = notification.getBoundingClientRect();
+        const rect = toast.getBoundingClientRect();
         await expect(
             Math.abs(Math.round(rect.left + rect.width / 2) - Math.round(window.innerWidth / 2)),
         ).toBeLessThanOrEqual(1);
-        await expect(getComputedStyle(notification).transformOrigin.split(" ")[1]).toBe("0px");
+        await expect(getComputedStyle(toast).transformOrigin.split(" ")[1]).toBe("0px");
     },
 };
 
 function SameIdDemo() {
-    const notification = useNotification();
+    const toast = useToast();
 
     return (
         <button
             type="button"
             onClick={() => {
-                notification.add({ id: "same", title: "First message" });
-                notification.add({ id: "same", title: "Second message" });
+                toast.add({ id: "same", title: "First message" });
+                toast.add({ id: "same", title: "Second message" });
             }}
         >
             Show same id
@@ -416,9 +411,9 @@ function SameIdDemo() {
  */
 export const SameId: Story = {
     render: (args) => (
-        <NotificationProvider {...args}>
+        <ToastProvider {...args}>
             <SameIdDemo />
-        </NotificationProvider>
+        </ToastProvider>
     ),
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
@@ -432,66 +427,66 @@ export const SameId: Story = {
 
 /**
  * The app reports from outside the React tree, through the manager it creates
- * once in `src/lib/notification.ts`. This story drives the same shape, so a
+ * once in `src/lib/toast.ts`. This story drives the same shape, so a
  * provider that fails to adopt an external manager shows up here.
  */
-const externalManager = createNotificationManager();
+const externalManager = createToastManager();
 
 export const ExternalManager: Story = {
     render: (args) => (
-        <NotificationProvider {...args} toastManager={externalManager}>
+        <ToastProvider {...args} toastManager={externalManager}>
             <button
                 type="button"
                 onClick={() => {
                     externalManager.add({ id: "external", type: "warning", title: "From outside React" });
                 }}
             >
-                Show external notification
+                Show external toast
             </button>
-        </NotificationProvider>
+        </ToastProvider>
     ),
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
 
-        await userEvent.click(canvas.getByRole("button", { name: "Show external notification" }));
+        await userEvent.click(canvas.getByRole("button", { name: "Show external toast" }));
 
         await expect(await screen.findByRole("dialog", { name: "From outside React" })).toBeInTheDocument();
     },
 };
 
 /** The external manager applies its own warning/error timeout rule, not only the hook. */
-const persistentManager = createNotificationManager();
+const persistentManager = createToastManager();
 
 export const ExternalManagerPersistent: Story = {
     args: {
         timeout: 50,
     },
     render: (args) => (
-        <NotificationProvider {...args} toastManager={persistentManager}>
+        <ToastProvider {...args} toastManager={persistentManager}>
             <button
                 type="button"
                 onClick={() => {
                     persistentManager.add({ id: "external-persistent", type: "warning", title: "External warning" });
                 }}
             >
-                Show persistent external notification
+                Show persistent external toast
             </button>
-        </NotificationProvider>
+        </ToastProvider>
     ),
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
 
-        await userEvent.click(canvas.getByRole("button", { name: "Show persistent external notification" }));
-        const notification = await screen.findByRole("dialog", { name: "External warning" });
+        await userEvent.click(canvas.getByRole("button", { name: "Show persistent external toast" }));
+        const toast = await screen.findByRole("dialog", { name: "External warning" });
 
         // The provider timeout is 50 ms; a warning must override it with timeout 0.
         await new Promise<void>((resolve) => {
             setTimeout(resolve, 100);
         });
-        await expect(notification).toBeInTheDocument();
+        await expect(toast).toBeInTheDocument();
 
-        await userEvent.click(within(notification).getByRole("button", { name: "Dismiss notification" }));
-        await waitFor(() => expect(document.querySelectorAll("[data-slot='notification']")).toHaveLength(0));
+        await userEvent.click(within(toast).getByRole("button", { name: "Dismiss toast" }));
+        await waitFor(() => expect(document.querySelectorAll("[data-slot='toast']")).toHaveLength(0));
     },
 };
 
@@ -517,19 +512,19 @@ export const Dark: Story = {
         ),
     ],
     render: (args) => (
-        <NotificationProvider {...args}>
-            <ShowNotification title="Changes saved" description="Your edits are now available on this device." />
-        </NotificationProvider>
+        <ToastProvider {...args}>
+            <ShowToast title="Changes saved" description="Your edits are now available on this device." />
+        </ToastProvider>
     ),
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
 
         await waitFor(() => expect(getComputedStyle(document.documentElement).colorScheme).toBe("dark"));
-        await userEvent.click(canvas.getByRole("button", { name: "Show notification" }));
+        await userEvent.click(canvas.getByRole("button", { name: "Show toast" }));
 
-        const notification = await screen.findByRole("dialog", { name: "Changes saved" });
+        const toast = await screen.findByRole("dialog", { name: "Changes saved" });
 
         // Surface container high in the dark theme.
-        await expect(getComputedStyle(notification).backgroundColor).toBe("rgb(32, 32, 32)");
+        await expect(getComputedStyle(toast).backgroundColor).toBe("rgb(32, 32, 32)");
     },
 };

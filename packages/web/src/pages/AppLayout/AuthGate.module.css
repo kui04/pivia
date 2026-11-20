@@ -1,0 +1,58 @@
+/*
+ * The single-host password gate.
+ *
+ * The nesting this file styles:
+ *
+ *   .auth
+ *   └─ .panel
+ *       ├─ .title
+ *       └─ .lead
+ *
+ *   .submit  handed to Button; inside .panel
+ *
+ * Form and Field keep their own layout rules.
+ */
+.auth {
+    display: grid;
+    flex: 1;
+    place-items: center;
+    min-block-size: 0;
+    padding: var(--space-24);
+    overflow-y: auto;
+
+    .panel {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-12);
+        inline-size: min(100%, 26rem);
+        padding: var(--space-32);
+        border: var(--border-width) solid var(--color-outline-variant);
+        border-radius: var(--shape-corner-large);
+        background-color: var(--color-surface-container);
+        box-shadow: var(--elevation-1);
+
+        .title {
+            color: var(--color-on-surface);
+            font-family: var(--font-serif);
+            font-size: var(--type-headline-small-size);
+            font-weight: var(--type-headline-small-emphasized-weight);
+            letter-spacing: var(--type-headline-small-tracking);
+            line-height: var(--type-headline-small-line-height);
+            text-wrap: balance;
+        }
+
+        .lead {
+            color: var(--color-on-surface-variant);
+            font-family: var(--font-sans);
+            font-size: var(--type-body-medium-size);
+            font-weight: var(--type-body-medium-weight);
+            letter-spacing: var(--type-body-medium-tracking);
+            line-height: var(--type-body-medium-line-height);
+            text-wrap: pretty;
+        }
+    }
+}
+
+.submit {
+    inline-size: 100%;
+}

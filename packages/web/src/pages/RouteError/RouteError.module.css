@@ -1,0 +1,69 @@
+/*
+ * The root error boundary page.
+ *
+ * The nesting this file styles:
+ *
+ *   .page
+ *   ├─ .title
+ *   └─ .message
+ *
+ *   .link  handed to Link; inside .page
+ *   └─ &:hover
+ */
+.page {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: var(--space-12);
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    min-block-size: 0;
+    padding: var(--space-24);
+    overflow-y: auto;
+    text-align: center;
+
+    .title {
+        font-family: var(--font-sans);
+        font-size: var(--type-headline-small-size);
+        font-weight: var(--type-headline-small-emphasized-weight);
+        letter-spacing: var(--type-headline-small-tracking);
+        line-height: var(--type-headline-small-line-height);
+    }
+
+    .message {
+        max-inline-size: 60ch;
+        color: var(--color-on-surface-variant);
+        font-family: var(--font-sans);
+        font-size: var(--type-body-medium-size);
+        font-weight: var(--type-body-medium-weight);
+        letter-spacing: var(--type-body-medium-tracking);
+        line-height: var(--type-body-medium-line-height);
+        text-wrap: pretty;
+    }
+}
+
+.link {
+    padding: var(--space-4) var(--space-8);
+    border-radius: var(--shape-corner-extra-small);
+    /* Link text cannot use the primary role: its dark value is 3.92:1 on the
+       surface, below the 4.5:1 a 14px label needs. */
+    color: var(--color-on-primary-container);
+    font-family: var(--font-sans);
+    font-size: var(--type-label-large-size);
+    font-weight: var(--type-label-large-weight);
+    letter-spacing: var(--type-label-large-tracking);
+    line-height: var(--type-label-large-line-height);
+    text-decoration: underline;
+    transition: background-color var(--motion-duration-effects-fast) var(--motion-easing-standard);
+
+    &:hover {
+        background-color: var(--color-primary-container);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        & {
+            transition: none;
+        }
+    }
+}

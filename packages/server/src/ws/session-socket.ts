@@ -1,4 +1,4 @@
-import type { WsClientCommand } from "@pivia/protocol";
+import { SESSION_CLOSE_CODE, type WsClientCommand } from "@pivia/protocol";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 
 import { sendRegistryError, sendWsUpgradeError } from "../http/errors.ts";
@@ -20,11 +20,6 @@ const MAX_WS_BUFFERED_BYTES = 4 * 1024 * 1024;
 
 /** `ws` readyState value for an open connection. */
 const WS_READY_STATE_OPEN = 1;
-
-/** Close codes used by the session WebSocket route. */
-const WS_CLOSE_SLOW_CONSUMER = 1013;
-const WS_CLOSE_SESSION_NOT_FOUND = 4404;
-const WS_CLOSE_INTERNAL_ERROR = 1011;
 
 interface WsSessionParams {
     readonly id: string;
@@ -95,13 +90,13 @@ export function registerSessionSocketRoute(app: FastifyInstance, sessionRegistry
                 const handle = openedWsSessions.get(request);
                 openedWsSessions.delete(request);
                 if (handle === undefined) {
-                    socket.close(WS_CLOSE_INTERNAL_ERROR, "Session unavailable");
+                    socket.close(SESSION_CLOSE_CODE.internalError, "Session unavailable");
                     return;
                 }
 
                 const afterSeq = parseAfterSeq(request.query.afterSeq);
                 if (afterSeq === null) {
-                    socket.close(WS_CLOSE_INTERNAL_ERROR, "Invalid afterSeq");
+                    socket.close(SESSION_CLOSE_CODE.internalError, "Invalid afterSeq");
                     return;
                 }
 
@@ -128,7 +123,7 @@ export function registerSessionSocketRoute(app: FastifyInstance, sessionRegistry
                                 { sessionId: handle.sessionId, bufferedAmount: socket.bufferedAmount },
                                 "closing slow websocket consumer",
                             );
-                            closeSocket(WS_CLOSE_SLOW_CONSUMER, "Slow consumer");
+                            closeSocket(SESSION_CLOSE_CODE.slowConsumer, "Slow consumer");
                             return;
                         }
                         try {
@@ -235,12 +230,12 @@ export function registerSessionSocketRoute(app: FastifyInstance, sessionRegistry
                 } catch (error) {
                     if (error instanceof SessionRegistryError && error.code === "not_found") {
                         sendProtocolError("not_found", "Session is not open.");
-                        client.close?.(WS_CLOSE_SESSION_NOT_FOUND, "Session not found");
+                        client.close?.(SESSION_CLOSE_CODE.sessionNotFound, "Session not found");
                         return;
                     }
                     request.log.warn({ err: error, sessionId: handle.sessionId }, "failed to attach websocket client");
                     sendProtocolError("internal_error", "Failed to attach session.");
-                    client.close?.(WS_CLOSE_INTERNAL_ERROR, "Session unavailable");
+                    client.close?.(SESSION_CLOSE_CODE.internalError, "Session unavailable");
                     return;
                 }
 
