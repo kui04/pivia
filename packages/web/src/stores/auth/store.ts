@@ -1,10 +1,9 @@
 import type { AuthLoginResponse, AuthLogoutResponse, AuthStatusResponse } from "@pivia/protocol";
 import { create } from "zustand";
 
-import { sessionCache, type SessionCacheStore } from "@/lib/cache/session-cache";
+import type { SessionCacheStore } from "@/lib/cache/session-cache";
 import { Log } from "@/lib/log";
-import { ApiClientError, apiClient } from "@/lib/transport/http";
-import { useSessionStore } from "@/stores/session/store";
+import { ApiClientError } from "@/lib/transport/http";
 
 /** Authentication states of the single host. */
 export type AuthPhase = "checking" | "unauthenticated" | "authenticated";
@@ -93,7 +92,7 @@ export interface AuthStoreHooks {
     readonly onClearSessionMemory?: (() => void) | undefined;
 }
 
-export function createAuthStore(client: AuthClient = apiClient, hooks: AuthStoreHooks = {}) {
+export function createAuthStore(client: AuthClient, hooks: AuthStoreHooks = {}) {
     let statusRequest: Promise<void> | null = null;
 
     const clearClientCaches = (): void => {
@@ -200,15 +199,3 @@ export function createAuthStore(client: AuthClient = apiClient, hooks: AuthStore
         };
     });
 }
-
-/** The app-wide auth store. */
-export const useAuthStore = createAuthStore(apiClient, {
-    cache: sessionCache,
-    onClearSessionMemory: () => {
-        useSessionStore.getState().clearCache();
-    },
-});
-
-apiClient.setUnauthorizedHandler(() => {
-    useAuthStore.getState().markUnauthorized();
-});

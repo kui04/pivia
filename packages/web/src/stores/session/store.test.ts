@@ -79,6 +79,10 @@ class FakeSocket implements SessionSocketLike {
     }
 }
 
+const stubApiClient: Pick<ApiClient, "getSession"> = {
+    getSession: () => Promise.reject(new Error("unexpected getSession call")),
+};
+
 function summary(overrides: Partial<SessionStateSnapshot> = {}): SessionStateSnapshot {
     return {
         sessionId: SESSION_1,
@@ -177,7 +181,7 @@ afterEach(() => {
 
 describe("createSessionStore", () => {
     it("connects, reports open and replaces the snapshot fields", () => {
-        const store = createSessionStore({ WebSocket: FakeSocket });
+        const store = createSessionStore({ WebSocket: FakeSocket, apiClient: stubApiClient });
 
         store.getState().connect(SESSION_1);
         expect(store.getState().status).toBe("connecting");
@@ -200,7 +204,7 @@ describe("createSessionStore", () => {
     });
 
     it("is idempotent while the same session is open", () => {
-        const store = createSessionStore({ WebSocket: FakeSocket });
+        const store = createSessionStore({ WebSocket: FakeSocket, apiClient: stubApiClient });
         store.getState().connect(SESSION_1);
         lastSocket().open();
 
@@ -210,7 +214,7 @@ describe("createSessionStore", () => {
     });
 
     it("sends commands through the active socket and answers UI requests out of band", async () => {
-        const store = createSessionStore({ WebSocket: FakeSocket });
+        const store = createSessionStore({ WebSocket: FakeSocket, apiClient: stubApiClient });
         store.getState().connect(SESSION_1);
         const socket = lastSocket();
         socket.open();
@@ -233,7 +237,7 @@ describe("createSessionStore", () => {
 
     it("moves to closed without reconnecting after a business close", async () => {
         vi.useFakeTimers();
-        const store = createSessionStore({ WebSocket: FakeSocket, reconnectDelayMs: 10 });
+        const store = createSessionStore({ WebSocket: FakeSocket, apiClient: stubApiClient, reconnectDelayMs: 10 });
         store.getState().connect(SESSION_1);
         const socket = lastSocket();
         socket.open();
@@ -249,7 +253,7 @@ describe("createSessionStore", () => {
 
     it("reconnects after a server going-away close", async () => {
         vi.useFakeTimers();
-        const store = createSessionStore({ WebSocket: FakeSocket, reconnectDelayMs: 10 });
+        const store = createSessionStore({ WebSocket: FakeSocket, apiClient: stubApiClient, reconnectDelayMs: 10 });
         store.getState().connect(SESSION_1);
         const first = lastSocket();
         first.open();
@@ -266,7 +270,7 @@ describe("createSessionStore", () => {
 
     it("reconnects after a slow consumer with the last sequence", async () => {
         vi.useFakeTimers();
-        const store = createSessionStore({ WebSocket: FakeSocket, reconnectDelayMs: 10 });
+        const store = createSessionStore({ WebSocket: FakeSocket, apiClient: stubApiClient, reconnectDelayMs: 10 });
         store.getState().connect(SESSION_1);
         const first = lastSocket();
         first.open();
@@ -303,6 +307,7 @@ describe("createSessionStore", () => {
         vi.useFakeTimers();
         const store = createSessionStore({
             WebSocket: FakeSocket,
+            apiClient: stubApiClient,
             reconnectDelayMs: 10,
             maxReconnectAttempts: 1,
         });
@@ -322,7 +327,7 @@ describe("createSessionStore", () => {
     });
 
     it("rejects pending commands and resets on disconnect", async () => {
-        const store = createSessionStore({ WebSocket: FakeSocket });
+        const store = createSessionStore({ WebSocket: FakeSocket, apiClient: stubApiClient });
         store.getState().connect(SESSION_1);
         lastSocket().open();
 
@@ -340,7 +345,7 @@ describe("createSessionStore", () => {
     });
 
     it("tracks pending dialogs and resolved requests", () => {
-        const store = createSessionStore({ WebSocket: FakeSocket });
+        const store = createSessionStore({ WebSocket: FakeSocket, apiClient: stubApiClient });
         store.getState().connect(SESSION_1);
         const socket = lastSocket();
         socket.open();
@@ -363,7 +368,7 @@ describe("createSessionStore", () => {
     });
 
     it("rejects a UI response when no socket is open", async () => {
-        const store = createSessionStore({ WebSocket: FakeSocket });
+        const store = createSessionStore({ WebSocket: FakeSocket, apiClient: stubApiClient });
 
         await expect(
             store.getState().sendUiResponse({
@@ -392,7 +397,7 @@ describe("createSessionStore", () => {
         };
         await cache.replaceEntries(SESSION_A, V152, [headerEntry, msgEntry]);
 
-        const store = createSessionStore({ WebSocket: FakeSocket, cache });
+        const store = createSessionStore({ WebSocket: FakeSocket, cache, apiClient: stubApiClient });
         store.getState().connect(SESSION_A);
 
         // Wait for async IndexedDB read to complete and open WS with prefix anchors.
@@ -463,7 +468,7 @@ describe("createSessionStore", () => {
                 entries: [headerEntry],
             });
         const onSessionMissing = vi.fn();
-        const apiClient = { getSession } as unknown as ApiClient;
+        const apiClient: Pick<ApiClient, "getSession"> = { getSession };
 
         const store = createSessionStore({
             WebSocket: FakeSocket,
@@ -516,7 +521,7 @@ describe("createSessionStore", () => {
             .mockResolvedValueOnce(detail);
         const store = createSessionStore({
             WebSocket: FakeSocket,
-            apiClient: { getSession } as unknown as ApiClient,
+            apiClient: { getSession },
             retryDelaysMs: [],
             entriesSyncCooldownMs: 60_000,
         });
@@ -569,7 +574,7 @@ describe("createSessionStore", () => {
             .mockResolvedValueOnce(sessionDetail(0, [sessionHeader()]));
         const store = createSessionStore({
             WebSocket: FakeSocket,
-            apiClient: { getSession } as unknown as ApiClient,
+            apiClient: { getSession },
             retryDelaysMs: [],
             entriesSyncCooldownMs: 0,
         });
@@ -610,7 +615,7 @@ describe("createSessionStore", () => {
         const getSession = vi.fn<ApiClient["getSession"]>(() => pending);
         const store = createSessionStore({
             WebSocket: FakeSocket,
-            apiClient: { getSession } as unknown as ApiClient,
+            apiClient: { getSession },
             retryDelaysMs: [],
             reconnectDelayMs: 0,
         });
@@ -671,5 +676,10 @@ describe("createSessionStore", () => {
 
         expect(store.getState().entries.map((entry) => entry.id)).toEqual(["session-1", "e1", "e2", "e3", "e4"]);
         store.getState().disconnect();
+    });
+
+    it("rejects missing apiClient at construction time", () => {
+        // @ts-expect-error -- verify runtime guard for untyped callers
+        expect(() => createSessionStore({})).toThrow("createSessionStore requires an apiClient.");
     });
 });

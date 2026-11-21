@@ -92,8 +92,8 @@ export interface ApiClient {
     createSession(cwd: string): Promise<CreateSessionResponse>;
     getSession(id: SessionId, options?: GetSessionOptions): Promise<SessionDetailResponse>;
     closeSession(id: SessionId): Promise<CloseSessionResponse>;
-    /** Registers or clears the callback for `401` responses from protected endpoints. */
-    setUnauthorizedHandler(handler: (() => void) | null): void;
+    /** Registers or clears the callback for `401` responses from protected endpoints and returns a disposer. */
+    setUnauthorizedHandler(handler: (() => void) | null): () => void;
 }
 
 /** Endpoints that answer `401` as a normal result rather than an expired session. */
@@ -342,7 +342,13 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
                 parseCloseSessionResponse,
             ),
         setUnauthorizedHandler: (handler) => {
-            unauthorizedHandler = handler ?? undefined;
+            const next = handler ?? undefined;
+            unauthorizedHandler = next;
+            return () => {
+                if (next !== undefined && unauthorizedHandler === next) {
+                    unauthorizedHandler = undefined;
+                }
+            };
         },
     };
 }

@@ -8,7 +8,8 @@ import {
 import { create } from "zustand";
 import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
 
-import { sessionCache, type SessionCacheStore } from "@/lib/cache/session-cache";
+import type { SessionCacheStore } from "@/lib/cache/session-cache";
+import { Log } from "@/lib/log";
 
 import { removeSession, upsertSession, type ScanPhase } from "./model";
 
@@ -87,10 +88,18 @@ export interface WorkspaceState {
     readonly collapsed: readonly string[];
 }
 
+/** Subset of {@link SessionCacheStore} required by the workspace catalog store. */
+export type WorkspaceCatalogCache = Pick<SessionCacheStore, "getWorkspaceCatalog" | "putWorkspaceCatalog">;
+
+/** Dependencies injected when creating a workspace store instance. */
+export interface WorkspaceStoreOptions {
+    readonly cache?: WorkspaceCatalogCache | undefined;
+}
+
 /** What a caller may change in the workspace store. */
 export interface WorkspaceActions {
     /** Hydrate stale-while-revalidate catalog rows from IndexedDB before the first scan finishes. */
-    hydrateCatalog: (cache: SessionCacheStore) => Promise<void>;
+    hydrateCatalog: () => Promise<void>;
     beginScan: (manual: boolean) => void;
     applyScan: (result: SessionListResponse) => void;
     failScan: (message: string) => void;
@@ -141,94 +150,115 @@ function persistedPins(persisted: unknown): readonly SessionId[] {
 }
 
 /**
- * The session catalog of the single host.
+ * Creates the session catalog store of the single host.
  *
- * Pins persist in localStorage. The session list is a stale-while-revalidate snapshot: `applyScan`
- * stores it in the IndexedDB cache and a view may call `hydrateCatalog` before this page scans, so
- * every real scan still replaces it.
+ * Pins persist in localStorage. When `options.cache` is provided, `applyScan` writes the catalog to
+ * IndexedDB and `hydrateCatalog` loads it before the first live scan completes. Without `cache`,
+ * catalog persistence is disabled and a warning is logged once.
  */
-export const useWorkspaceStore = create<WorkspaceStore>()(
-    persist(
-        (set, get) => ({
-            ...initialWorkspaceState,
-            hydrateCatalog: async (cache) => {
-                const cached = await cache.getWorkspaceCatalog();
-                if (cached === null) {
-                    return;
-                }
-                const current = get();
-                if (current.scan.kind !== "idle" || current.scannedAtMs !== null) {
-                    return;
-                }
-                set({
-                    sessions: cached.sessions,
-                    scannedAtMs: cached.scannedAtMs,
-                });
+export function createWorkspaceStore(options: WorkspaceStoreOptions = {}) {
+    let warnedMissingCache = false;
+    const resolveCache = (): WorkspaceCatalogCache | undefined => {
+        if (options.cache === undefined && !warnedMissingCache) {
+            warnedMissingCache = true;
+            Log.warn("Workspace store has no catalog cache configured; IndexedDB catalog persistence is disabled");
+        }
+        return options.cache;
+    };
+
+    return create<WorkspaceStore>()(
+        persist(
+            (set, get) => ({
+                ...initialWorkspaceState,
+                hydrateCatalog: async () => {
+                    const cache = resolveCache();
+                    if (cache === undefined) {
+                        return;
+                    }
+                    const cached = await cache.getWorkspaceCatalog();
+                    if (cached === null) {
+                        return;
+                    }
+                    const current = get();
+                    if (current.scan.kind !== "idle" || current.scannedAtMs !== null) {
+                        return;
+                    }
+                    set({
+                        sessions: cached.sessions,
+                        scannedAtMs: cached.scannedAtMs,
+                    });
+                },
+                beginScan: (manual) =>
+                    set((state) =>
+                        state.scan.kind === "scanning"
+                            ? state
+                            : {
+                                  // The rows stay in place: a manual scan draws its skeleton from the phase,
+                                  // and a failed scan leaves the last rows visible.
+                                  scan: { kind: "scanning", manual },
+                              },
+                    ),
+                applyScan: (result) => {
+                    const cache = resolveCache();
+                    if (cache !== undefined) {
+                        void cache.putWorkspaceCatalog(result.sessions, result.scannedAtMs);
+                    }
+                    set((state) => {
+                        const ids = new Set(result.sessions.map((session) => session.id));
+                        return {
+                            sessions: result.sessions,
+                            scannedAtMs: result.scannedAtMs,
+                            scan: { kind: "ready" },
+                            // A pin for a session the complete scan did not see belongs to a deleted session.
+                            pins: state.pins.filter((id) => ids.has(id)),
+                            selectedId:
+                                state.selectedId !== null && ids.has(state.selectedId) ? state.selectedId : null,
+                        };
+                    });
+                },
+                failScan: (message) =>
+                    set({
+                        // The last rows and their timestamp stay, marked with the failure.
+                        scan: { kind: "failed", message },
+                    }),
+                setQuery: (query) => set({ query }),
+                select: (selectedId) => set({ selectedId }),
+                togglePinned: (id) =>
+                    set((state) => ({
+                        pins: state.pins.includes(id)
+                            ? state.pins.filter((pinned) => pinned !== id)
+                            : [id, ...state.pins],
+                    })),
+                toggleFolder: (cwd) =>
+                    set((state) => ({
+                        collapsed: state.collapsed.includes(cwd)
+                            ? state.collapsed.filter((collapsed) => collapsed !== cwd)
+                            : [...state.collapsed, cwd],
+                    })),
+                upsertSession: (session) =>
+                    set((state) => ({
+                        sessions: upsertSession(state.sessions, session),
+                    })),
+                removeSession: (id) =>
+                    set((state) => ({
+                        sessions: removeSession(state.sessions, id),
+                        pins: state.pins.filter((pinned) => pinned !== id),
+                        selectedId: state.selectedId === id ? null : state.selectedId,
+                    })),
+                reset: () =>
+                    set((state) => ({
+                        ...initialWorkspaceState,
+                        // Pins follow the user, not the connection that happened to be open.
+                        pins: state.pins,
+                    })),
+            }),
+            {
+                name: "pivia.workspace.v1",
+                version: 1,
+                storage: createJSONStorage(() => persistedStorage()),
+                partialize: ({ pins }) => ({ pins }),
+                merge: (persisted, current) => ({ ...current, pins: persistedPins(persisted) }),
             },
-            beginScan: (manual) =>
-                set((state) =>
-                    state.scan.kind === "scanning"
-                        ? state
-                        : {
-                              // The rows stay in place: a manual scan draws its skeleton from the phase,
-                              // and a failed scan leaves the last rows visible.
-                              scan: { kind: "scanning", manual },
-                          },
-                ),
-            applyScan: (result) => {
-                void sessionCache.putWorkspaceCatalog(result.sessions, result.scannedAtMs);
-                set((state) => {
-                    const ids = new Set(result.sessions.map((session) => session.id));
-                    return {
-                        sessions: result.sessions,
-                        scannedAtMs: result.scannedAtMs,
-                        scan: { kind: "ready" },
-                        // A pin for a session the complete scan did not see belongs to a deleted session.
-                        pins: state.pins.filter((id) => ids.has(id)),
-                        selectedId: state.selectedId !== null && ids.has(state.selectedId) ? state.selectedId : null,
-                    };
-                });
-            },
-            failScan: (message) =>
-                set({
-                    // The last rows and their timestamp stay, marked with the failure.
-                    scan: { kind: "failed", message },
-                }),
-            setQuery: (query) => set({ query }),
-            select: (selectedId) => set({ selectedId }),
-            togglePinned: (id) =>
-                set((state) => ({
-                    pins: state.pins.includes(id) ? state.pins.filter((pinned) => pinned !== id) : [id, ...state.pins],
-                })),
-            toggleFolder: (cwd) =>
-                set((state) => ({
-                    collapsed: state.collapsed.includes(cwd)
-                        ? state.collapsed.filter((collapsed) => collapsed !== cwd)
-                        : [...state.collapsed, cwd],
-                })),
-            upsertSession: (session) =>
-                set((state) => ({
-                    sessions: upsertSession(state.sessions, session),
-                })),
-            removeSession: (id) =>
-                set((state) => ({
-                    sessions: removeSession(state.sessions, id),
-                    pins: state.pins.filter((pinned) => pinned !== id),
-                    selectedId: state.selectedId === id ? null : state.selectedId,
-                })),
-            reset: () =>
-                set((state) => ({
-                    ...initialWorkspaceState,
-                    // Pins follow the user, not the connection that happened to be open.
-                    pins: state.pins,
-                })),
-        }),
-        {
-            name: "pivia.workspace.v1",
-            version: 1,
-            storage: createJSONStorage(() => persistedStorage()),
-            partialize: ({ pins }) => ({ pins }),
-            merge: (persisted, current) => ({ ...current, pins: persistedPins(persisted) }),
-        },
-    ),
-);
+        ),
+    );
+}

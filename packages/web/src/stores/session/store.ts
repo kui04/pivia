@@ -12,9 +12,9 @@ import {
 } from "@pivia/protocol";
 import { create } from "zustand";
 
-import { sessionCache, type SessionCacheStore } from "@/lib/cache/session-cache";
+import type { SessionCacheStore } from "@/lib/cache/session-cache";
 import { Log } from "@/lib/log";
-import { ApiClientError, apiClient as defaultApiClient, type ApiClient } from "@/lib/transport/http";
+import { ApiClientError, type ApiClient } from "@/lib/transport/http";
 import {
     SessionSocket,
     SessionSocketClosedError,
@@ -23,7 +23,6 @@ import {
     type SessionSocketConstructor,
     type SessionSocketHandshakeParams,
 } from "@/lib/transport/session-socket";
-import { useWorkspaceStore } from "@/stores/workspace/store";
 
 import { initialSessionState, reduceSessionState, type SessionState } from "./reducer";
 
@@ -42,7 +41,7 @@ export interface SessionMemoryCacheEntry {
 export interface SessionStoreOptions {
     readonly WebSocket?: SessionSocketConstructor | undefined;
     readonly cache?: SessionCacheStore | undefined;
-    readonly apiClient?: ApiClient | undefined;
+    readonly apiClient: Pick<ApiClient, "getSession">;
     readonly reconnectDelayMs?: number | undefined;
     readonly maxReconnectAttempts?: number | undefined;
     readonly retryDelaysMs?: readonly number[] | undefined;
@@ -122,13 +121,16 @@ function derivePrefixAnchor(
  * The store owns the single active socket, a 5-session in-memory LRU cache (1 active + 4 off-hand),
  * and the single-flight HTTP synchronization pipeline for `entriesMode: "http"` and gap self-heal.
  */
-export function createSessionStore(options: SessionStoreOptions = {}) {
+export function createSessionStore(options: SessionStoreOptions) {
+    if (options?.apiClient === undefined) {
+        throw new Error("createSessionStore requires an apiClient.");
+    }
     const reconnectDelayMs = options.reconnectDelayMs ?? DEFAULT_RECONNECT_DELAY_MS;
     const maxReconnectAttempts = options.maxReconnectAttempts ?? DEFAULT_MAX_RECONNECT_ATTEMPTS;
     const retryDelaysMs = options.retryDelaysMs ?? DEFAULT_HTTP_RETRY_DELAYS_MS;
     const entriesSyncCooldownMs = options.entriesSyncCooldownMs ?? DEFAULT_ENTRIES_SYNC_COOLDOWN_MS;
     const maxMemoryCacheEntries = options.maxMemoryCacheEntries ?? DEFAULT_MAX_MEMORY_CACHE_ENTRIES;
-    const client = options.apiClient ?? defaultApiClient;
+    const client = options.apiClient;
     const cache = options.cache;
 
     return create<SessionStore>()((set, get) => {
@@ -699,12 +701,3 @@ export function createSessionStore(options: SessionStoreOptions = {}) {
         };
     });
 }
-
-/** The app-wide store for the active session. */
-export const useSessionStore = createSessionStore({
-    cache: sessionCache,
-    apiClient: defaultApiClient,
-    onSessionMissing: (sessionId) => {
-        useWorkspaceStore.getState().removeSession(sessionId);
-    },
-});

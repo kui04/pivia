@@ -40,7 +40,7 @@ export default defineConfig({
         },
     },
     build: {
-        // Keep this in sync with the target in tsconfig.json.
+        // Keep this in sync with the target in tsconfig.app.json.
         target: "es2024",
     },
 });

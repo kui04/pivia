@@ -2,7 +2,7 @@ import { useCallback, useEffect } from "react";
 import { Outlet } from "react-router";
 
 import { Button, LoadingIndicator } from "@components";
-import { useAuthStore } from "@/stores/auth/store";
+import { useAuthStore } from "@/stores";
 
 import { AuthGate } from "./AuthGate";
 import styles from "./AppLayout.module.css";

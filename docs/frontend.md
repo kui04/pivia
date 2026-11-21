@@ -121,8 +121,10 @@ in step with the file: a new nested rule updates the sketch in the same change.
 
 ## State and transport
 
-- Zustand stores and their models live in `packages/web/src/stores/<name>/`; a store owns its persisted shape and the
-  model helpers.
+- Zustand stores and their models live in `packages/web/src/stores/<name>/`; each store module exports a pure factory
+  (`createAuthStore`, `createSessionStore`, `createWorkspaceStore`) and its persisted/model types without cross-store
+  imports or module-load side effects. `packages/web/src/stores/index.ts` is the composition root that creates and
+  wires the app-wide singletons (`useAuthStore`, `useSessionStore`, `useWorkspaceStore`).
 - HTTP and WebSocket client wrappers stay in `packages/web/src/lib/transport/` (using shared wire types from
   `packages/protocol`), because they are transport, not state.
 

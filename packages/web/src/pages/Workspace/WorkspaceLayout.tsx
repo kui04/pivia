@@ -3,8 +3,7 @@ import { Outlet, useParams } from "react-router";
 
 import { Button } from "@components";
 import { showError } from "@/lib/toast";
-import { useAuthStore } from "@/stores/auth/store";
-import { useWorkspaceStore } from "@/stores/workspace/store";
+import { useAuthStore, useWorkspaceStore } from "@/stores";
 
 import styles from "./WorkspaceLayout.module.css";
 

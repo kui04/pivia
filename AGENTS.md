@@ -5,7 +5,8 @@
 - Run project commands inside `devenv shell` or with direnv loaded. The shell provides the pinned Node and pnpm,
   Playwright browsers for NixOS (`PLAYWRIGHT_BROWSERS_PATH` and `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD`), and the git hooks.
 - The repository is a pnpm workspace. Each package lives in `packages/<name>` and owns its `package.json` and
-  `tsconfig.json` extending `tsconfig.base.json`:
+  TypeScript configs extending `tsconfig.base.json` (`tsconfig.json` directly in `protocol` and `server`; solution
+  references in `packages/web/tsconfig.json` pointing to `tsconfig.app.json` and `tsconfig.node.json`):
     - `packages/protocol`: shared HTTP and WebSocket protocol types.
     - `packages/server`: Node server and CLI wrapping `@earendil-works/pi-coding-agent` in-process for a single host.
     - `packages/web`: React PWA frontend and component workshop.
