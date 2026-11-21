@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { AuthService, generateStartupSecret, isLoopbackHost } from "./service.ts";
+import { AuthService, type AuthToken, generateStartupSecret, isLoopbackHost } from "./service.ts";
 
 describe("isLoopbackHost", () => {
     it("accepts bindable loopback addresses and rejects bracketed, wildcard, or external addresses", () => {
@@ -20,8 +20,10 @@ describe("isLoopbackHost", () => {
 
 describe("AuthService", () => {
     it("rejects invalid constructor options", () => {
+        // @ts-expect-error -- verify runtime guard for untyped callers
         expect(() => new AuthService({})).toThrow();
         expect(() => new AuthService({ password: "" })).toThrow();
+        // @ts-expect-error -- verify runtime guard for untyped callers
         expect(() => new AuthService({ disabled: true, password: "secret" })).toThrow();
         expect(() => new AuthService({ password: "secret", sessionTtlMs: 0 })).toThrow();
         expect(() => new AuthService({ password: "secret", sessionTtlMs: 999 })).toThrow();
@@ -46,32 +48,32 @@ describe("AuthService", () => {
             throw new Error("expected login to succeed");
         }
 
-        expect(auth.isSessionValid(login.sessionId)).toBe(true);
+        expect(auth.isSessionValid(login.token)).toBe(true);
         expect(auth.isSessionValid("nonexistent")).toBe(false);
 
         now = 5_999;
-        expect(auth.isSessionValid(login.sessionId)).toBe(true);
+        expect(auth.isSessionValid(login.token)).toBe(true);
 
         now = 6_000;
-        expect(auth.isSessionValid(login.sessionId)).toBe(false);
+        expect(auth.isSessionValid(login.token)).toBe(false);
 
         const second = auth.login("secret-password", "10.0.0.1");
         expect(second.ok).toBe(true);
         if (second.ok) {
-            auth.logout(second.sessionId);
-            expect(auth.isSessionValid(second.sessionId)).toBe(false);
+            auth.logout(second.token);
+            expect(auth.isSessionValid(second.token)).toBe(false);
         }
     });
 
     it("evicts the oldest active session when the session cap is reached", () => {
         const auth = new AuthService({ password: "secret" });
-        const issued: string[] = [];
+        const issued: AuthToken[] = [];
 
         for (let i = 0; i < 257; i += 1) {
             const res = auth.login("secret", "127.0.0.1");
             expect(res.ok).toBe(true);
             if (res.ok) {
-                issued.push(res.sessionId);
+                issued.push(res.token);
             }
         }
 

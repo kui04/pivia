@@ -1,5 +1,6 @@
 import {
     PUBLIC_API_PATHS,
+    assertNever,
     type ApiErrorCode,
     type AuthLoginRequest,
     type AuthLoginResponse,
@@ -57,22 +58,25 @@ export function registerAuthRoutes(app: FastifyInstance, authService: AuthServic
             return;
         }
 
-        if (result.rateLimited) {
-            request.log.warn({ clientIp: request.ip, pathname }, "authentication rate-limited");
-            reply.header("Retry-After", String(result.retryAfterSeconds));
-            return sendAuthError(
-                pathname,
-                reply,
-                429,
-                "rate_limited",
-                "Too many failed authentication attempts. Try again later.",
-            );
+        switch (result.reason) {
+            case "rate_limited":
+                request.log.warn({ clientIp: request.ip, pathname }, "authentication rate-limited");
+                reply.header("Retry-After", String(result.retryAfterSeconds));
+                return sendAuthError(
+                    pathname,
+                    reply,
+                    429,
+                    "rate_limited",
+                    "Too many failed authentication attempts. Try again later.",
+                );
+            case "invalid_bearer":
+                request.log.warn({ clientIp: request.ip, pathname }, "invalid bearer credential");
+                return sendAuthError(pathname, reply, 401, "unauthorized", "Authentication required.");
+            case "unauthenticated":
+                return sendAuthError(pathname, reply, 401, "unauthorized", "Authentication required.");
+            default:
+                return assertNever(result);
         }
-
-        if (result.badBearer) {
-            request.log.warn({ clientIp: request.ip, pathname }, "invalid bearer credential");
-        }
-        return sendAuthError(pathname, reply, 401, "unauthorized", "Authentication required.");
     });
 
     app.get("/api/auth/status", (request, reply): AuthStatusResponse | FastifyReply => {
@@ -80,23 +84,27 @@ export function registerAuthRoutes(app: FastifyInstance, authService: AuthServic
             return { authRequired: false, authenticated: true };
         }
         const result = authService.authenticateRequest(request, request.ip);
-        if (!result.authenticated && result.rateLimited) {
-            request.log.warn({ clientIp: request.ip, pathname: "/api/auth/status" }, "authentication rate-limited");
-            reply.header("Retry-After", String(result.retryAfterSeconds));
-            return sendApiError(
-                reply,
-                429,
-                "rate_limited",
-                "Too many failed authentication attempts. Try again later.",
-            );
+        if (result.authenticated) {
+            return { authRequired: true, authenticated: true };
         }
-        if (!result.authenticated && result.badBearer) {
-            request.log.warn({ clientIp: request.ip, pathname: "/api/auth/status" }, "invalid bearer credential");
+        switch (result.reason) {
+            case "rate_limited":
+                request.log.warn({ clientIp: request.ip, pathname: "/api/auth/status" }, "authentication rate-limited");
+                reply.header("Retry-After", String(result.retryAfterSeconds));
+                return sendApiError(
+                    reply,
+                    429,
+                    "rate_limited",
+                    "Too many failed authentication attempts. Try again later.",
+                );
+            case "invalid_bearer":
+                request.log.warn({ clientIp: request.ip, pathname: "/api/auth/status" }, "invalid bearer credential");
+                return { authRequired: true, authenticated: false };
+            case "unauthenticated":
+                return { authRequired: true, authenticated: false };
+            default:
+                return assertNever(result);
         }
-        return {
-            authRequired: true,
-            authenticated: result.authenticated,
-        };
     });
 
     app.post<{ Body: AuthLoginRequest }>(
@@ -124,7 +132,7 @@ export function registerAuthRoutes(app: FastifyInstance, authService: AuthServic
                 return;
             }
 
-            authService.setSessionCookie(reply, attempt.sessionId);
+            authService.setSessionCookie(reply, attempt.token);
             return { authenticated: true };
         },
     );

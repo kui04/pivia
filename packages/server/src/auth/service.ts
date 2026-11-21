@@ -11,37 +11,64 @@ const DEFAULT_MAX_AUTH_FAILURES = 10;
 const DEFAULT_RATE_WINDOW_MS = 60 * 1000;
 const MAX_FAILURE_BUCKETS = 1024;
 
-/** Options for constructing {@link AuthService}. */
-export interface AuthServiceOptions {
-    /** Plaintext password/token; hashed in memory before storage. */
-    password?: string | undefined;
-    /** Disable authentication (must only be used when caller explicitly opts out). */
-    disabled?: boolean | undefined;
-    /** Session cookie lifetime in milliseconds (at least 1000); defaults to 7 days. */
-    sessionTtlMs?: number | undefined;
-    /** Maximum failed attempts per client key inside `rateWindowMs` (integer >= 1). */
-    maxFailures?: number | undefined;
-    /** Failure rate-limit window in milliseconds (> 0). */
-    rateWindowMs?: number | undefined;
-    /** Clock override for deterministic testing. */
-    nowMs?: (() => number) | undefined;
+declare const AuthTokenBrand: unique symbol;
+
+/** Branded opaque session token issued by {@link AuthService}. */
+export type AuthToken = string & { readonly [AuthTokenBrand]: "AuthToken" };
+
+function parseAuthToken(raw: string | undefined): AuthToken | null {
+    return typeof raw === "string" && raw.length > 0 ? (raw as AuthToken) : null;
 }
+
+/** Shared timing and rate-limit configuration for {@link AuthService}. */
+export interface AuthServiceTimingOptions {
+    /** Session cookie lifetime in milliseconds (at least 1000); defaults to 7 days. */
+    readonly sessionTtlMs?: number | undefined;
+    /** Maximum failed attempts per client key inside `rateWindowMs` (integer >= 1). */
+    readonly maxFailures?: number | undefined;
+    /** Failure rate-limit window in milliseconds (> 0). */
+    readonly rateWindowMs?: number | undefined;
+    /** Clock override for deterministic testing. */
+    readonly nowMs?: (() => number) | undefined;
+}
+
+/** Options for constructing {@link AuthService}: either a plaintext password or explicit opt-out. */
+export type AuthServiceOptions = AuthServiceTimingOptions &
+    (
+        | {
+              /** Plaintext password/token; hashed in memory before storage. */
+              readonly password: string;
+              readonly disabled?: false | undefined;
+          }
+        | {
+              /** Disable authentication (must only be used when caller explicitly opts out). */
+              readonly disabled: true;
+              readonly password?: never;
+          }
+    );
 
 /** Result of a credential check against {@link AuthService}. */
 export type LoginAttemptResult =
-    | { readonly ok: true; readonly sessionId: string }
+    | { readonly ok: true; readonly token: AuthToken }
     | { readonly ok: false; readonly reason: "invalid_credentials" }
     | { readonly ok: false; readonly reason: "rate_limited"; readonly retryAfterSeconds: number };
 
 /** Result of checking an incoming request's session cookie or Bearer header. */
 export type RequestAuthResult =
     | { readonly authenticated: true }
+    | { readonly authenticated: false; readonly reason: "unauthenticated" | "invalid_bearer" }
     | {
           readonly authenticated: false;
-          readonly rateLimited: boolean;
+          readonly reason: "rate_limited";
           readonly retryAfterSeconds: number;
-          readonly badBearer: boolean;
       };
+
+type AttemptReservation = { readonly limited: false } | { readonly limited: true; readonly retryAfterSeconds: number };
+
+type RateLimitedVerifyResult =
+    | { readonly valid: true }
+    | { readonly valid: false; readonly reason: "invalid_credentials" }
+    | { readonly valid: false; readonly reason: "rate_limited"; readonly retryAfterSeconds: number };
 
 function sha256(value: string): Buffer {
     return createHash("sha256").update(value, "utf8").digest();
@@ -117,7 +144,7 @@ export class AuthService {
     private readonly maxFailures: number;
     private readonly rateWindowMs: number;
     private readonly nowMs: () => number;
-    private readonly sessions = new Map<string, number>();
+    private readonly tokens = new Map<AuthToken, number>();
     private readonly failures = new Map<string, FailureBucket>();
 
     constructor(options: AuthServiceOptions) {
@@ -153,7 +180,7 @@ export class AuthService {
      * Atomically check and reserve one failure slot for `clientKey` before running verification.
      * Callers clear `this.failures` on success so concurrent bad attempts cannot race past the limit.
      */
-    private reserveAttempt(clientKey: string): { readonly limited: boolean; readonly retryAfterSeconds: number } {
+    private reserveAttempt(clientKey: string): AttemptReservation {
         const now = this.nowMs();
         const existing = this.failures.get(clientKey);
 
@@ -169,7 +196,7 @@ export class AuthService {
                 };
             } else {
                 existing.count += 1;
-                return { limited: false, retryAfterSeconds: 0 };
+                return { limited: false };
             }
         }
 
@@ -190,19 +217,13 @@ export class AuthService {
         }
 
         this.failures.set(clientKey, { count: 1, windowStartMs: now });
-        return { limited: false, retryAfterSeconds: 0 };
+        return { limited: false };
     }
 
-    private verifyWithRateLimit(
-        digest: Buffer,
-        candidate: string,
-        clientKey: string,
-    ):
-        | { readonly valid: true }
-        | { readonly valid: false; readonly rateLimited: boolean; readonly retryAfterSeconds: number } {
+    private verifyWithRateLimit(digest: Buffer, candidate: string, clientKey: string): RateLimitedVerifyResult {
         const reservation = this.reserveAttempt(clientKey);
         if (reservation.limited) {
-            return { valid: false, rateLimited: true, retryAfterSeconds: reservation.retryAfterSeconds };
+            return { valid: false, reason: "rate_limited", retryAfterSeconds: reservation.retryAfterSeconds };
         }
 
         if (verifySecretDigest(digest, candidate)) {
@@ -210,65 +231,67 @@ export class AuthService {
             return { valid: true };
         }
 
-        return { valid: false, rateLimited: false, retryAfterSeconds: 0 };
+        return { valid: false, reason: "invalid_credentials" };
     }
 
-    private createSession(): string {
+    private createToken(): AuthToken {
         const now = this.nowMs();
-        for (const [id, expiresAt] of this.sessions) {
+        for (const [token, expiresAt] of this.tokens) {
             if (expiresAt <= now) {
-                this.sessions.delete(id);
+                this.tokens.delete(token);
             }
         }
-        // Evict the oldest active session if the cap is reached so unclosed tabs cannot grow RAM without bound.
-        while (this.sessions.size >= MAX_ACTIVE_SESSIONS) {
-            const oldestKey = this.sessions.keys().next().value;
+        // Evict the oldest active token if the cap is reached so unclosed tabs cannot grow RAM without bound.
+        while (this.tokens.size >= MAX_ACTIVE_SESSIONS) {
+            const oldestKey = this.tokens.keys().next().value;
             if (oldestKey === undefined) {
                 break;
             }
-            this.sessions.delete(oldestKey);
+            this.tokens.delete(oldestKey);
         }
-        const sessionId = randomBytes(32).toString("base64url");
-        this.sessions.set(sessionId, now + this.sessionTtlMs);
-        return sessionId;
+        const token = randomBytes(32).toString("base64url") as AuthToken;
+        this.tokens.set(token, now + this.sessionTtlMs);
+        return token;
     }
 
-    /** Verify a password/token for `clientKey`, returning an opaque session id on success. */
+    /** Verify a password/token for `clientKey`, returning an opaque session token on success. */
     login(password: string, clientKey: string): LoginAttemptResult {
         if (this.secretDigest === null) {
-            return { ok: true, sessionId: this.createSession() };
+            return { ok: true, token: this.createToken() };
         }
         const check = this.verifyWithRateLimit(this.secretDigest, password, clientKey);
         if (!check.valid) {
-            if (check.rateLimited) {
+            if (check.reason === "rate_limited") {
                 return { ok: false, reason: "rate_limited", retryAfterSeconds: check.retryAfterSeconds };
             }
             return { ok: false, reason: "invalid_credentials" };
         }
-        return { ok: true, sessionId: this.createSession() };
+        return { ok: true, token: this.createToken() };
     }
 
-    /** Revoke an active session id, if present. */
-    logout(sessionId: string | undefined): void {
-        if (sessionId !== undefined) {
-            this.sessions.delete(sessionId);
+    /** Revoke an active session token, if present. */
+    logout(rawToken: string | undefined): void {
+        const token = parseAuthToken(rawToken);
+        if (token !== null) {
+            this.tokens.delete(token);
         }
     }
 
-    /** Check whether a session cookie id is currently valid. */
-    isSessionValid(sessionId: string | undefined): boolean {
+    /** Check whether a session cookie token is currently valid. */
+    isSessionValid(rawToken: string | undefined): boolean {
         if (this.secretDigest === null) {
             return true;
         }
-        if (sessionId === undefined || sessionId.length === 0) {
+        const token = parseAuthToken(rawToken);
+        if (token === null) {
             return false;
         }
-        const expiresAt = this.sessions.get(sessionId);
+        const expiresAt = this.tokens.get(token);
         if (expiresAt === undefined) {
             return false;
         }
         if (expiresAt <= this.nowMs()) {
-            this.sessions.delete(sessionId);
+            this.tokens.delete(token);
             return false;
         }
         return true;
@@ -280,8 +303,8 @@ export class AuthService {
             return { authenticated: true };
         }
 
-        const cookieId = request.cookies[SESSION_COOKIE_NAME];
-        if (this.isSessionValid(cookieId)) {
+        const cookieToken = request.cookies[SESSION_COOKIE_NAME];
+        if (this.isSessionValid(cookieToken)) {
             return { authenticated: true };
         }
 
@@ -293,29 +316,26 @@ export class AuthService {
                 if (check.valid) {
                     return { authenticated: true };
                 }
-                if (check.rateLimited) {
+                if (check.reason === "rate_limited") {
                     return {
                         authenticated: false,
-                        rateLimited: true,
+                        reason: "rate_limited",
                         retryAfterSeconds: check.retryAfterSeconds,
-                        badBearer: true,
                     };
                 }
                 return {
                     authenticated: false,
-                    rateLimited: false,
-                    retryAfterSeconds: 0,
-                    badBearer: true,
+                    reason: "invalid_bearer",
                 };
             }
         }
 
-        return { authenticated: false, rateLimited: false, retryAfterSeconds: 0, badBearer: false };
+        return { authenticated: false, reason: "unauthenticated" };
     }
 
     /** Attach the opaque session cookie to `reply`. */
-    setSessionCookie(reply: FastifyReply, sessionId: string): void {
-        reply.setCookie(SESSION_COOKIE_NAME, sessionId, {
+    setSessionCookie(reply: FastifyReply, token: AuthToken): void {
+        reply.setCookie(SESSION_COOKIE_NAME, token, {
             path: "/",
             httpOnly: true,
             sameSite: "strict",

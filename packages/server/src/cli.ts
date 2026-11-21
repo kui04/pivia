@@ -4,6 +4,7 @@ import { readFileSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
+import { assertNever } from "@pivia/protocol";
 import type { LevelWithSilent } from "pino";
 
 import { buildApp } from "./app.ts";
@@ -14,6 +15,12 @@ import { SessionCatalog } from "./sessions/catalog.ts";
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 3141;
 
+/** Mutually exclusive CLI authentication input mode. */
+export type CliAuthInput =
+    | { readonly kind: "disabled" }
+    | { readonly kind: "password-file"; readonly path: string }
+    | { readonly kind: "default" };
+
 /** Parsed CLI action. */
 export type CliAction =
     | { readonly kind: "help" }
@@ -22,8 +29,7 @@ export type CliAction =
           readonly host: string;
           readonly port: number;
           readonly logLevel: LevelWithSilent;
-          readonly noAuth: boolean;
-          readonly passwordFile: string | undefined;
+          readonly auth: CliAuthInput;
           readonly sessionDir: string | undefined;
       };
 
@@ -145,13 +151,18 @@ export function parseCliArgs(argv: readonly string[]): CliAction {
         throw new CliArgumentError(`Invalid log level "${rawLevel}". Expected one of: ${LOG_LEVELS.join(", ")}.`);
     }
 
+    const auth: CliAuthInput = noAuth
+        ? { kind: "disabled" }
+        : passwordFile !== undefined
+          ? { kind: "password-file", path: passwordFile }
+          : { kind: "default" };
+
     return {
         kind: "serve",
         host,
         port,
         logLevel: rawLevel,
-        noAuth,
-        passwordFile,
+        auth,
         sessionDir,
     };
 }
@@ -163,37 +174,44 @@ export function resolveAuthConfig(
     action: Extract<CliAction, { kind: "serve" }>,
     env: Readonly<Record<string, string | undefined>>,
 ): ResolvedAuthConfig {
-    if (action.noAuth) {
-        if (env.PIVIA_PASSWORD !== undefined) {
-            throw new CliArgumentError("Cannot combine --no-auth with PIVIA_PASSWORD.");
+    switch (action.auth.kind) {
+        case "disabled": {
+            if (env.PIVIA_PASSWORD !== undefined) {
+                throw new CliArgumentError("Cannot combine --no-auth with PIVIA_PASSWORD.");
+            }
+            return { mode: "disabled" };
         }
-        return { mode: "disabled" };
+        case "password-file": {
+            const filePath = action.auth.path;
+            let content: string;
+            try {
+                content = readFileSync(filePath, "utf8");
+            } catch (error) {
+                const detail = error instanceof Error ? error.message : String(error);
+                throw new CliArgumentError(`Failed to read password file "${filePath}": ${detail}`);
+            }
+            const stripped = content.replace(/[\r\n]+$/, "");
+            if (stripped.includes("\n") || stripped.includes("\r")) {
+                throw new CliArgumentError(`Password file "${filePath}" must contain a single line.`);
+            }
+            if (stripped.length === 0) {
+                throw new CliArgumentError(`Password file "${filePath}" is empty.`);
+            }
+            return { mode: "configured", password: stripped };
+        }
+        case "default": {
+            const envPassword = env.PIVIA_PASSWORD;
+            if (envPassword !== undefined) {
+                if (envPassword.length === 0) {
+                    throw new CliArgumentError("PIVIA_PASSWORD must not be empty when set.");
+                }
+                return { mode: "configured", password: envPassword };
+            }
+            return { mode: "generated", password: generateStartupSecret() };
+        }
+        default:
+            return assertNever(action.auth);
     }
-    if (action.passwordFile !== undefined) {
-        let content: string;
-        try {
-            content = readFileSync(action.passwordFile, "utf8");
-        } catch (error) {
-            const detail = error instanceof Error ? error.message : String(error);
-            throw new CliArgumentError(`Failed to read password file "${action.passwordFile}": ${detail}`);
-        }
-        const stripped = content.replace(/[\r\n]+$/, "");
-        if (stripped.includes("\n") || stripped.includes("\r")) {
-            throw new CliArgumentError(`Password file "${action.passwordFile}" must contain a single line.`);
-        }
-        if (stripped.length === 0) {
-            throw new CliArgumentError(`Password file "${action.passwordFile}" is empty.`);
-        }
-        return { mode: "configured", password: stripped };
-    }
-    const envPassword = env.PIVIA_PASSWORD;
-    if (envPassword !== undefined) {
-        if (envPassword.length === 0) {
-            throw new CliArgumentError("PIVIA_PASSWORD must not be empty when set.");
-        }
-        return { mode: "configured", password: envPassword };
-    }
-    return { mode: "generated", password: generateStartupSecret() };
 }
 
 function readPackageVersion(): string {

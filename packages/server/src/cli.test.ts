@@ -13,8 +13,7 @@ describe("parseCliArgs", () => {
             host: "127.0.0.1",
             port: 3141,
             logLevel: "info",
-            noAuth: false,
-            passwordFile: undefined,
+            auth: { kind: "default" },
             sessionDir: undefined,
         });
     });
@@ -39,8 +38,7 @@ describe("parseCliArgs", () => {
             host: "0.0.0.0",
             port: 8080,
             logLevel: "debug",
-            noAuth: false,
-            passwordFile: "/tmp/pw",
+            auth: { kind: "password-file", path: "/tmp/pw" },
             sessionDir: "/tmp/sessions",
         });
     });
@@ -51,8 +49,7 @@ describe("parseCliArgs", () => {
             host: "127.0.0.1",
             port: 3141,
             logLevel: "info",
-            noAuth: true,
-            passwordFile: undefined,
+            auth: { kind: "disabled" },
             sessionDir: undefined,
         });
         expect(() => parseCliArgs(["--host", "[::1]", "--no-auth"])).toThrow(CliArgumentError);
