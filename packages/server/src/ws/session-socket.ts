@@ -1,8 +1,16 @@
-import { SESSION_CLOSE_CODE, type WsClientCommand } from "@pivia/protocol";
+import {
+    commandIdOf,
+    parseSessionId,
+    parseWsClientCommand,
+    parseWsHandshakeQuery,
+    SESSION_CLOSE_CODE,
+    type ParsedWsHandshakeQuery,
+    type SessionId,
+    type WsClientCommand,
+} from "@pivia/protocol";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 
 import { sendRegistryError, sendWsUpgradeError } from "../http/errors.ts";
-import { isValidSessionId } from "../sessions/catalog.ts";
 import {
     type ActiveSessionHandle,
     type SessionAttachment,
@@ -11,7 +19,6 @@ import {
     SessionRegistryError,
 } from "../sessions/runtime.ts";
 import { createHeartbeat, type HeartbeatSocket } from "./heartbeat.ts";
-import { commandIdOf, parseWsClientCommand, parseWsHandshakeQuery } from "./protocol.ts";
 
 /** Largest WebSocket frame the server accepts. */
 export const MAX_WS_PAYLOAD_BYTES = 4 * 1024 * 1024;
@@ -44,8 +51,13 @@ interface WsSessionQuery {
     readonly afterSeq?: string;
     readonly runtimeId?: string;
     readonly entriesVersion?: string;
-    readonly entryCount?: string;
+    readonly afterCount?: string;
     readonly afterEntryId?: string;
+}
+
+interface OpenedWsSession {
+    readonly handle: ActiveSessionHandle;
+    readonly handshake: ParsedWsHandshakeQuery;
 }
 
 /** Decode one text frame from the `ws` raw data union without `[object Object]` fallbacks. */
@@ -77,7 +89,7 @@ export function registerSessionSocketRoute(
     sessionRegistry: SessionRegistry,
     options: SessionSocketRouteOptions = {},
 ): void {
-    const sessionIds = new WeakMap<HeartbeatSocket, string>();
+    const sessionIds = new WeakMap<HeartbeatSocket, SessionId>();
     const heartbeat = createHeartbeat({
         intervalMs: options.heartbeatIntervalMs ?? DEFAULT_WS_HEARTBEAT_INTERVAL_MS,
         onStale(socket) {
@@ -92,20 +104,20 @@ export function registerSessionSocketRoute(
     });
 
     app.register((instance, _options, done) => {
-        // Handles of sessions opened during `preValidation` for this upgrade. A WeakMap avoids
-        // decorating every request for a value only WebSocket routes read.
-        const openedWsSessions = new WeakMap<FastifyRequest, ActiveSessionHandle>();
+        // Handles and validated handshake anchors from `preValidation` for this upgrade. A WeakMap
+        // avoids decorating every request for values only WebSocket routes read.
+        const openedWsSessions = new WeakMap<FastifyRequest, OpenedWsSession>();
 
         instance.get<{ Params: WsSessionParams; Querystring: WsSessionQuery }>(
             "/ws/sessions/:id",
             {
                 websocket: true,
                 preValidation: async (request, reply) => {
-                    const { id } = request.params;
-                    if (!isValidSessionId(id)) {
+                    const sessionId = parseSessionId(request.params.id);
+                    if (sessionId === null) {
                         return sendWsUpgradeError(reply, 400, "invalid_request", "Invalid session id.");
                     }
-                    const parsedQuery = parseWsHandshakeQuery(request.query as Record<string, unknown>);
+                    const parsedQuery = parseWsHandshakeQuery(request.query);
                     if (!parsedQuery.ok) {
                         return sendWsUpgradeError(reply, 400, "invalid_request", parsedQuery.message);
                     }
@@ -114,30 +126,26 @@ export function registerSessionSocketRoute(
                         return;
                     }
                     try {
-                        openedWsSessions.set(request, await sessionRegistry.open(id));
+                        const handle = await sessionRegistry.open(sessionId);
+                        openedWsSessions.set(request, { handle, handshake: parsedQuery.value });
                     } catch (error) {
                         if (error instanceof SessionRegistryError) {
                             reply.header("Connection", "close");
                             return sendRegistryError(reply, error);
                         }
-                        request.log.error({ err: error, sessionId: id }, "failed to open session for websocket");
+                        request.log.error({ err: error, sessionId }, "failed to open session for websocket");
                         return sendWsUpgradeError(reply, 500, "internal_error", "Internal server error.");
                     }
                 },
             },
             (socket, request) => {
-                const handle = openedWsSessions.get(request);
+                const opened = openedWsSessions.get(request);
                 openedWsSessions.delete(request);
-                if (handle === undefined) {
+                if (opened === undefined) {
                     socket.close(SESSION_CLOSE_CODE.internalError, "Session unavailable");
                     return;
                 }
-
-                const parsedQuery = parseWsHandshakeQuery(request.query as Record<string, unknown>);
-                if (!parsedQuery.ok) {
-                    socket.close(SESSION_CLOSE_CODE.internalError, parsedQuery.message);
-                    return;
-                }
+                const { handle, handshake } = opened;
 
                 let socketClosed = false;
                 const closeSocket = (code: number, reason: string): void => {
@@ -278,7 +286,7 @@ export function registerSessionSocketRoute(
                 heartbeat.track(socket);
 
                 try {
-                    attachment = sessionRegistry.attach(handle.sessionId, client, parsedQuery.value);
+                    attachment = sessionRegistry.attach(handle.sessionId, client, handshake);
                 } catch (error) {
                     if (error instanceof SessionRegistryError && error.code === "not_found") {
                         sendProtocolError("not_found", "Session is not open.");

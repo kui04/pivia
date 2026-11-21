@@ -4,11 +4,9 @@ import type {
     SessionPrefixAnchor,
     ThinkingLevel,
     WsClientCommand,
-} from "@pivia/protocol";
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+} from "../index.ts";
+import { isRecord } from "./primitives.ts";
+import { parseSessionPrefixAnchor } from "./session.ts";
 
 function isImageContent(value: unknown): value is ImageContent {
     return (
@@ -50,7 +48,7 @@ export function commandIdOf(value: unknown): string | undefined {
     return isRecord(value) && typeof value.id === "string" ? value.id : undefined;
 }
 
-/** Parse one `extension_ui_response` payload, or return null when the shape is invalid. */
+/** Parse one `extension_ui_response` payload, or return `null` when the shape is invalid. */
 export function parseExtensionUiResponse(value: unknown): RpcExtensionUIResponse | null {
     if (!isRecord(value) || value.type !== "extension_ui_response" || typeof value.id !== "string") {
         return null;
@@ -70,8 +68,8 @@ export function parseExtensionUiResponse(value: unknown): RpcExtensionUIResponse
 /**
  * Validate and normalize one client command from parsed JSON.
  *
- * Returns null for unknown types, missing fields, and values that do not match the protocol. Extra
- * fields are ignored so older clients keep working after the server adds optional fields.
+ * Returns `null` for unknown types, missing fields, and values that do not match the protocol.
+ * Extra fields are ignored so older clients keep working after the server adds optional fields.
  */
 export function parseWsClientCommand(value: unknown): WsClientCommand | null {
     if (!isRecord(value) || typeof value.type !== "string") {
@@ -160,21 +158,24 @@ export function parseWsClientCommand(value: unknown): WsClientCommand | null {
     }
 }
 
+/** Explicit parse result for the optional `afterSeq` query parameter. */
+export type ParsedAfterSeq = { readonly ok: true; readonly afterSeq: number | undefined } | { readonly ok: false };
+
 /**
  * Parse the optional `afterSeq` query parameter.
  *
- * Returns `undefined` when absent, the non-negative safe integer when valid, and `null` when the
- * value cannot be used for incremental replay.
+ * Returns `{ ok: true, afterSeq: undefined }` when absent, `{ ok: true, afterSeq }` for a
+ * non-negative safe integer, and `{ ok: false }` when malformed.
  */
-export function parseAfterSeq(value: unknown): number | undefined | null {
+export function parseAfterSeq(value: unknown): ParsedAfterSeq {
     if (value === undefined) {
-        return undefined;
+        return { ok: true, afterSeq: undefined };
     }
     if (typeof value !== "string" || !/^\d+$/.test(value)) {
-        return null;
+        return { ok: false };
     }
     const parsed = Number(value);
-    return Number.isSafeInteger(parsed) ? parsed : null;
+    return Number.isSafeInteger(parsed) ? { ok: true, afterSeq: parsed } : { ok: false };
 }
 
 /** Validated WebSocket handshake anchors parsed at the upgrade boundary. */
@@ -188,43 +189,27 @@ export interface ParsedWsHandshakeQuery {
  * Parse `/ws/sessions/:id` handshake query parameters.
  *
  * Rejects malformed `afterSeq` with an explicit error (preserving HTTP 400 upgrade checks),
- * while malformed or partial cache hints (`runtimeId`, `entriesVersion`, `entryCount`,
+ * while malformed or partial cache hints (`runtimeId`, `entriesVersion`, `afterCount`,
  * `afterEntryId`) gracefully degrade to `undefined` so stale clients fall back to Tier 3.
  */
 export function parseWsHandshakeQuery(
-    query: Readonly<Record<string, unknown>>,
+    query: unknown,
 ): { readonly ok: true; readonly value: ParsedWsHandshakeQuery } | { readonly ok: false; readonly message: string } {
-    const afterSeq = parseAfterSeq(query.afterSeq);
-    if (afterSeq === null) {
+    if (!isRecord(query)) {
+        return { ok: true, value: {} };
+    }
+    const parsedAfterSeq = parseAfterSeq(query.afterSeq);
+    if (!parsedAfterSeq.ok) {
         return { ok: false, message: "Invalid afterSeq parameter." };
     }
 
     const runtimeId = typeof query.runtimeId === "string" && query.runtimeId.length > 0 ? query.runtimeId : undefined;
-
-    let prefixAnchor: SessionPrefixAnchor | undefined;
-    const { entriesVersion, entryCount, afterEntryId } = query;
-    if (
-        typeof entriesVersion === "string" &&
-        entriesVersion.length > 0 &&
-        typeof afterEntryId === "string" &&
-        afterEntryId.length > 0 &&
-        typeof entryCount === "string" &&
-        /^[1-9]\d*$/.test(entryCount)
-    ) {
-        const parsedCount = Number(entryCount);
-        if (Number.isSafeInteger(parsedCount) && parsedCount >= 1) {
-            prefixAnchor = {
-                entriesVersion,
-                afterCount: parsedCount,
-                afterEntryId,
-            };
-        }
-    }
+    const prefixAnchor = parseSessionPrefixAnchor(query);
 
     return {
         ok: true,
         value: {
-            ...(afterSeq === undefined ? {} : { afterSeq }),
+            ...(parsedAfterSeq.afterSeq === undefined ? {} : { afterSeq: parsedAfterSeq.afterSeq }),
             ...(runtimeId === undefined ? {} : { runtimeId }),
             ...(prefixAnchor === undefined ? {} : { prefixAnchor }),
         },

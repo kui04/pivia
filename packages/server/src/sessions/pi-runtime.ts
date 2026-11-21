@@ -13,7 +13,13 @@ import {
     type SessionManager,
 } from "@earendil-works/pi-coding-agent";
 
-import type { ImageContent, SessionModelInfo, ThinkingLevel } from "@pivia/protocol";
+import {
+    parseSessionId,
+    type ImageContent,
+    type SessionId,
+    type SessionModelInfo,
+    type ThinkingLevel,
+} from "@pivia/protocol";
 
 import type {
     ManagedExtensionBindings,
@@ -95,14 +101,16 @@ function toModelInfo(model: SessionModelInfo): SessionModelInfo {
  * session, while production keeps the complete SDK behavior.
  */
 class AgentSessionAdapter implements ManagedSession {
+    readonly sessionId: SessionId;
     private readonly session: AgentSession;
 
     constructor(session: AgentSession) {
+        const sessionId = parseSessionId(session.sessionId);
+        if (sessionId === null) {
+            throw new Error(`Invalid SDK session id: ${session.sessionId}`);
+        }
+        this.sessionId = sessionId;
         this.session = session;
-    }
-
-    get sessionId(): string {
-        return this.session.sessionId;
     }
 
     getName(): string | null {

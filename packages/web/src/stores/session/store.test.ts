@@ -1,10 +1,36 @@
 import {
+    parseEntriesVersion,
+    parseSessionId,
     SESSION_CLOSE_CODE,
+    type EntriesVersion,
     type FileEntry,
     type SessionDetailResponse,
+    type SessionId,
     type SessionStateSnapshot,
     type WsServerMessage,
 } from "@pivia/protocol";
+
+function sid(raw: string): SessionId {
+    const parsed = parseSessionId(raw);
+    if (parsed === null) {
+        throw new Error(`Invalid test session id: ${raw}`);
+    }
+    return parsed;
+}
+
+function ev(raw: string): EntriesVersion {
+    const parsed = parseEntriesVersion(raw);
+    if (parsed === null) {
+        throw new Error(`Invalid test entries version: ${raw}`);
+    }
+    return parsed;
+}
+
+const SESSION_1 = sid("session-1");
+const SESSION_A = sid("session-a");
+const SESSION_B = sid("session-b");
+const SESSION_BIG = sid("session-big");
+const V152 = ev("3:1.5.2");
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -55,7 +81,7 @@ class FakeSocket implements SessionSocketLike {
 
 function summary(overrides: Partial<SessionStateSnapshot> = {}): SessionStateSnapshot {
     return {
-        sessionId: "session-1",
+        sessionId: SESSION_1,
         cwd: "/home/u/project",
         name: null,
         model: null,
@@ -76,10 +102,10 @@ function summary(overrides: Partial<SessionStateSnapshot> = {}): SessionStateSna
 function snapshot(seq: number): WsServerMessage {
     return {
         type: "snapshot",
-        sessionId: "session-1",
+        sessionId: SESSION_1,
         runtimeId: "runtime-1",
         seq,
-        entriesVersion: "3:1.5.2",
+        entriesVersion: V152,
         baseEntryCount: 0,
         entriesMode: "inline",
         state: summary(),
@@ -120,7 +146,7 @@ function messageEntry(id: string): FileEntry {
 function sessionDetail(baseEntryCount: number, entries: readonly FileEntry[]): SessionDetailResponse {
     return {
         session: {
-            id: "session-1",
+            id: SESSION_1,
             cwd: "/home/u/project",
             name: null,
             firstMessage: "hi",
@@ -131,7 +157,7 @@ function sessionDetail(baseEntryCount: number, entries: readonly FileEntry[]): S
             runtimeState: "idle",
             attachedClients: 1,
         },
-        entriesVersion: "3:1.5.2",
+        entriesVersion: V152,
         baseEntryCount,
         entries,
     };
@@ -153,7 +179,7 @@ describe("createSessionStore", () => {
     it("connects, reports open and replaces the snapshot fields", () => {
         const store = createSessionStore({ WebSocket: FakeSocket });
 
-        store.getState().connect("session-1");
+        store.getState().connect(SESSION_1);
         expect(store.getState().status).toBe("connecting");
 
         const socket = lastSocket();
@@ -165,7 +191,7 @@ describe("createSessionStore", () => {
 
         expect(store.getState()).toMatchObject({
             status: "open",
-            sessionId: "session-1",
+            sessionId: SESSION_1,
             seq: 4,
             entries: [],
             pendingUiRequests: [],
@@ -175,17 +201,17 @@ describe("createSessionStore", () => {
 
     it("is idempotent while the same session is open", () => {
         const store = createSessionStore({ WebSocket: FakeSocket });
-        store.getState().connect("session-1");
+        store.getState().connect(SESSION_1);
         lastSocket().open();
 
-        store.getState().connect("session-1");
+        store.getState().connect(SESSION_1);
 
         expect(FakeSocket.instances).toHaveLength(1);
     });
 
     it("sends commands through the active socket and answers UI requests out of band", async () => {
         const store = createSessionStore({ WebSocket: FakeSocket });
-        store.getState().connect("session-1");
+        store.getState().connect(SESSION_1);
         const socket = lastSocket();
         socket.open();
 
@@ -208,7 +234,7 @@ describe("createSessionStore", () => {
     it("moves to closed without reconnecting after a business close", async () => {
         vi.useFakeTimers();
         const store = createSessionStore({ WebSocket: FakeSocket, reconnectDelayMs: 10 });
-        store.getState().connect("session-1");
+        store.getState().connect(SESSION_1);
         const socket = lastSocket();
         socket.open();
         socket.receive(snapshot(2));
@@ -224,7 +250,7 @@ describe("createSessionStore", () => {
     it("reconnects after a server going-away close", async () => {
         vi.useFakeTimers();
         const store = createSessionStore({ WebSocket: FakeSocket, reconnectDelayMs: 10 });
-        store.getState().connect("session-1");
+        store.getState().connect(SESSION_1);
         const first = lastSocket();
         first.open();
         first.receive(snapshot(2));
@@ -241,7 +267,7 @@ describe("createSessionStore", () => {
     it("reconnects after a slow consumer with the last sequence", async () => {
         vi.useFakeTimers();
         const store = createSessionStore({ WebSocket: FakeSocket, reconnectDelayMs: 10 });
-        store.getState().connect("session-1");
+        store.getState().connect(SESSION_1);
         const first = lastSocket();
         first.open();
         first.receive(snapshot(4));
@@ -258,10 +284,10 @@ describe("createSessionStore", () => {
         second.open();
         second.receive({
             type: "replay",
-            sessionId: "session-1",
+            sessionId: SESSION_1,
             runtimeId: "runtime-1",
             seq: 5,
-            entriesVersion: "3:1.5.2",
+            entriesVersion: V152,
             state: summary({ messageCount: 1 }),
             events: [{ seq: 5, event: { type: "agent_start" } }],
             liveMessage: null,
@@ -280,7 +306,7 @@ describe("createSessionStore", () => {
             reconnectDelayMs: 10,
             maxReconnectAttempts: 1,
         });
-        store.getState().connect("session-1");
+        store.getState().connect(SESSION_1);
         lastSocket().open();
         lastSocket().serverClose(1006, "Abnormal closure");
 
@@ -297,7 +323,7 @@ describe("createSessionStore", () => {
 
     it("rejects pending commands and resets on disconnect", async () => {
         const store = createSessionStore({ WebSocket: FakeSocket });
-        store.getState().connect("session-1");
+        store.getState().connect(SESSION_1);
         lastSocket().open();
 
         const pending = store.getState().sendCommand({ type: "abort" });
@@ -315,13 +341,13 @@ describe("createSessionStore", () => {
 
     it("tracks pending dialogs and resolved requests", () => {
         const store = createSessionStore({ WebSocket: FakeSocket });
-        store.getState().connect("session-1");
+        store.getState().connect(SESSION_1);
         const socket = lastSocket();
         socket.open();
 
         socket.receive({
             type: "extension_ui_request",
-            sessionId: "session-1",
+            sessionId: SESSION_1,
             request: {
                 type: "extension_ui_request",
                 id: "dialog",
@@ -332,7 +358,7 @@ describe("createSessionStore", () => {
         });
         expect(store.getState().pendingUiRequests.map((request) => request.id)).toEqual(["dialog"]);
 
-        socket.receive({ type: "extension_ui_resolved", sessionId: "session-1", requestId: "dialog" });
+        socket.receive({ type: "extension_ui_resolved", sessionId: SESSION_1, requestId: "dialog" });
         expect(store.getState().pendingUiRequests).toEqual([]);
     });
 
@@ -364,10 +390,10 @@ describe("createSessionStore", () => {
             timestamp: "2026-04-01T00:00:01.000Z",
             message: { role: "user", content: "from idb", timestamp: 1 },
         };
-        await cache.replaceEntries("session-a", "3:1.5.2", [headerEntry, msgEntry]);
+        await cache.replaceEntries(SESSION_A, V152, [headerEntry, msgEntry]);
 
         const store = createSessionStore({ WebSocket: FakeSocket, cache });
-        store.getState().connect("session-a");
+        store.getState().connect(SESSION_A);
 
         // Wait for async IndexedDB read to complete and open WS with prefix anchors.
         await vi.waitFor(() => {
@@ -375,36 +401,36 @@ describe("createSessionStore", () => {
         });
         expect(store.getState().entries.map((entry) => entry.id)).toEqual(["session-a", "e1"]);
         expect(lastSocket().url).toContain("entriesVersion=3%3A1.5.2");
-        expect(lastSocket().url).toContain("entryCount=2");
+        expect(lastSocket().url).toContain("afterCount=2");
         expect(lastSocket().url).toContain("afterEntryId=e1");
 
         const sockA = lastSocket();
         sockA.open();
         sockA.receive({
             type: "snapshot",
-            sessionId: "session-a",
+            sessionId: SESSION_A,
             runtimeId: "rt-a",
             seq: 7,
-            entriesVersion: "3:1.5.2",
+            entriesVersion: V152,
             baseEntryCount: 2,
             entriesMode: "inline",
             entries: [],
-            state: summary({ sessionId: "session-a" }),
+            state: summary({ sessionId: SESSION_A }),
             liveMessage: null,
             pendingUiRequests: [],
         });
 
         // Switch to B then immediately back to A -> A hydrates synchronously from memory LRU with runtimeId & seq.
-        store.getState().connect("session-b");
+        store.getState().connect(SESSION_B);
         await vi.waitFor(() => {
             expect(FakeSocket.instances).toHaveLength(2);
         });
-        store.getState().connect("session-a");
+        store.getState().connect(SESSION_A);
         expect(store.getState().entries.map((entry) => entry.id)).toEqual(["session-a", "e1"]);
         const sockA2 = lastSocket();
         expect(sockA2.url).toContain("afterSeq=7");
         expect(sockA2.url).toContain("runtimeId=rt-a");
-        expect(sockA2.url).toContain("entryCount=2");
+        expect(sockA2.url).toContain("afterCount=2");
     });
 
     it("loads oversized sessions via HTTP, retries transient errors, and evicts on 404/4404", async () => {
@@ -421,7 +447,7 @@ describe("createSessionStore", () => {
             .mockRejectedValueOnce(new ApiClientError({ status: 503, code: "internal_error", message: "Busy" }))
             .mockResolvedValueOnce({
                 session: {
-                    id: "session-big",
+                    id: SESSION_BIG,
                     cwd: "/tmp",
                     name: null,
                     firstMessage: "hi",
@@ -432,7 +458,7 @@ describe("createSessionStore", () => {
                     runtimeState: "idle",
                     attachedClients: 1,
                 },
-                entriesVersion: "3:1.5.2",
+                entriesVersion: V152,
                 baseEntryCount: 0,
                 entries: [headerEntry],
             });
@@ -446,7 +472,7 @@ describe("createSessionStore", () => {
             retryDelaysMs: [0],
             onSessionMissing,
         });
-        store.getState().connect("session-big");
+        store.getState().connect(SESSION_BIG);
         await vi.waitFor(() => {
             expect(FakeSocket.instances).toHaveLength(1);
         });
@@ -455,14 +481,14 @@ describe("createSessionStore", () => {
         sock.open();
         sock.receive({
             type: "snapshot",
-            sessionId: "session-big",
+            sessionId: SESSION_BIG,
             runtimeId: "rt-big",
             seq: 1,
-            entriesVersion: "3:1.5.2",
+            entriesVersion: V152,
             baseEntryCount: 0,
             entriesMode: "http",
             entryCount: 1,
-            state: summary({ sessionId: "session-big" }),
+            state: summary({ sessionId: SESSION_BIG }),
             liveMessage: null,
             pendingUiRequests: [],
         });
@@ -472,14 +498,14 @@ describe("createSessionStore", () => {
         });
         expect(getSession).toHaveBeenCalledTimes(2);
         expect(store.getState().entries.map((entry) => entry.id)).toEqual(["session-big"]);
-        expect((await cache.getSession("session-big"))?.entries).toHaveLength(1);
+        expect((await cache.getSession(SESSION_BIG))?.entries).toHaveLength(1);
 
         // Server closing with 4404 evicts IndexedDB cache and notifies workspace store.
         sock.serverClose(SESSION_CLOSE_CODE.sessionNotFound, "Session not found");
         await vi.waitFor(async () => {
-            expect(await cache.getSession("session-big")).toBeNull();
+            expect(await cache.getSession(SESSION_BIG)).toBeNull();
         });
-        expect(onSessionMissing).toHaveBeenCalledWith("session-big");
+        expect(onSessionMissing).toHaveBeenCalledWith(SESSION_BIG);
     });
 
     it("keeps a failed entry sync visible until the cooldown or a manual retry", async () => {
@@ -495,7 +521,7 @@ describe("createSessionStore", () => {
             entriesSyncCooldownMs: 60_000,
         });
 
-        store.getState().connect("session-1");
+        store.getState().connect(SESSION_1);
         await vi.waitFor(() => {
             expect(FakeSocket.instances).toHaveLength(1);
         });
@@ -503,10 +529,10 @@ describe("createSessionStore", () => {
         sock.open();
         sock.receive({
             type: "snapshot",
-            sessionId: "session-1",
+            sessionId: SESSION_1,
             runtimeId: "runtime-1",
             seq: 1,
-            entriesVersion: "3:1.5.2",
+            entriesVersion: V152,
             baseEntryCount: 0,
             entriesMode: "http",
             entryCount: 1,
@@ -548,7 +574,7 @@ describe("createSessionStore", () => {
             entriesSyncCooldownMs: 0,
         });
 
-        store.getState().connect("session-1");
+        store.getState().connect(SESSION_1);
         await vi.waitFor(() => {
             expect(FakeSocket.instances).toHaveLength(1);
         });
@@ -556,10 +582,10 @@ describe("createSessionStore", () => {
         sock.open();
         sock.receive({
             type: "snapshot",
-            sessionId: "session-1",
+            sessionId: SESSION_1,
             runtimeId: "runtime-1",
             seq: 1,
-            entriesVersion: "3:1.5.2",
+            entriesVersion: V152,
             baseEntryCount: 0,
             entriesMode: "http",
             entryCount: 1,
@@ -589,7 +615,7 @@ describe("createSessionStore", () => {
             reconnectDelayMs: 0,
         });
 
-        store.getState().connect("session-1");
+        store.getState().connect(SESSION_1);
         await vi.waitFor(() => {
             expect(FakeSocket.instances).toHaveLength(1);
         });
@@ -597,10 +623,10 @@ describe("createSessionStore", () => {
         first.open();
         first.receive({
             type: "snapshot",
-            sessionId: "session-1",
+            sessionId: SESSION_1,
             runtimeId: "runtime-1",
             seq: 1,
-            entriesVersion: "3:1.5.2",
+            entriesVersion: V152,
             baseEntryCount: 0,
             entriesMode: "inline",
             entries: [sessionHeader(), messageEntry("e1")],
@@ -610,8 +636,8 @@ describe("createSessionStore", () => {
         });
         first.receive({
             type: "entries_appended",
-            sessionId: "session-1",
-            entriesVersion: "3:1.5.2",
+            sessionId: SESSION_1,
+            entriesVersion: V152,
             entriesMode: "http",
             baseEntryCount: 2,
             entryCount: 5,
@@ -627,10 +653,10 @@ describe("createSessionStore", () => {
         second.open();
         second.receive({
             type: "snapshot",
-            sessionId: "session-1",
+            sessionId: SESSION_1,
             runtimeId: "runtime-2",
             seq: 0,
-            entriesVersion: "3:1.5.2",
+            entriesVersion: V152,
             baseEntryCount: 2,
             entriesMode: "inline",
             entries: [messageEntry("e2"), messageEntry("e3"), messageEntry("e4")],

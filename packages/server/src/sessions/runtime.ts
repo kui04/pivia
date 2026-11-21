@@ -14,13 +14,14 @@ import {
     SessionManager,
 } from "@earendil-works/pi-coding-agent";
 
-import { SESSION_CLOSE_CODE } from "@pivia/protocol";
+import { parseSessionId, SESSION_CLOSE_CODE } from "@pivia/protocol";
 import type {
     AssistantMessage,
     ImageContent,
     QueueMode,
     SessionCloseCode,
     SessionDetailResponse,
+    SessionId,
     SessionListResponse,
     SessionModelInfo,
     SessionPrefixAnchor,
@@ -113,7 +114,7 @@ export interface ManagedExtensionBindings {
  * can be built from memory, including new sessions that have not flushed a file yet.
  */
 export interface ManagedSession {
-    readonly sessionId: string;
+    readonly sessionId: SessionId;
     getName(): string | null;
     getCwd(): string;
     getEntries(): readonly FileEntry[];
@@ -195,7 +196,7 @@ export interface SessionRegistryOptions {
 
 /** Open runtime handle returned by {@link SessionRegistry.open} and `createSession`. */
 export interface ActiveSessionHandle {
-    readonly sessionId: string;
+    readonly sessionId: SessionId;
     readonly cwd: string;
     /** Managed session for host extensions and tests. */
     readonly session: ManagedSession;
@@ -225,7 +226,7 @@ export interface SessionAttachOptions {
 
 /** One attached client's command channel. */
 export interface SessionAttachment {
-    readonly sessionId: string;
+    readonly sessionId: SessionId;
     handleCommand(command: WsClientCommand): Promise<void>;
     detach(): void;
 }
@@ -233,7 +234,7 @@ export interface SessionAttachment {
 type SessionPhase = "starting" | "open" | "closing";
 
 interface ActiveSession {
-    readonly sessionId: string;
+    readonly sessionId: SessionId;
     readonly runtimeId: string;
     readonly cwd: string;
     readonly runtime: ManagedRuntime;
@@ -343,8 +344,8 @@ export class SessionRegistry {
     private readonly shutdownUiTimeoutMs: number;
     private readonly pendingUiTimeoutMs: number | null;
     private readonly nowMs: () => number;
-    private readonly active = new Map<string, ActiveSession>();
-    private readonly opening = new Map<string, Promise<ActiveSessionHandle>>();
+    private readonly active = new Map<SessionId, ActiveSession>();
+    private readonly opening = new Map<SessionId, Promise<ActiveSessionHandle>>();
     private readonly pendingRegistrations = new Set<Promise<unknown>>();
     private disposed = false;
 
@@ -395,7 +396,7 @@ export class SessionRegistry {
      * @throws SessionRegistryError with code `"not_found"` when the session is unknown or its file
      * fails the catalog containment checks.
      */
-    async open(id: string): Promise<ActiveSessionHandle> {
+    async open(id: SessionId): Promise<ActiveSessionHandle> {
         this.assertUsable();
         const registration = this.openHandle(id);
         this.pendingRegistrations.add(registration);
@@ -406,7 +407,7 @@ export class SessionRegistry {
         }
     }
 
-    private async openHandle(id: string): Promise<ActiveSessionHandle> {
+    private async openHandle(id: SessionId): Promise<ActiveSessionHandle> {
         for (;;) {
             this.assertUsable();
             const active = this.active.get(id);
@@ -471,7 +472,15 @@ export class SessionRegistry {
             sessionManager,
             sessionDir,
         });
-        return this.registerRuntime(sessionManager.getSessionId(), runtime);
+        const rawSessionId = sessionManager.getSessionId();
+        const sessionId = parseSessionId(rawSessionId);
+        if (sessionId === null) {
+            await runtime.dispose().catch((error: unknown) => {
+                this.logger.warn({ err: error, sessionId: rawSessionId }, "failed to dispose runtime with invalid id");
+            });
+            throw new Error(`Invalid SDK session id: ${rawSessionId}`);
+        }
+        return this.registerRuntime(sessionId, runtime);
     }
 
     /**
@@ -481,7 +490,7 @@ export class SessionRegistry {
      * answered. Forced closes and sessions without clients dispose the bridge immediately.
      * Concurrent calls share one close operation. Returns false when the session is not open.
      */
-    async closeSession(id: string, options: CloseSessionOptions = {}): Promise<boolean> {
+    async closeSession(id: SessionId, options: CloseSessionOptions = {}): Promise<boolean> {
         const entry = this.active.get(id);
         if (entry === undefined) {
             return false;
@@ -612,7 +621,7 @@ export class SessionRegistry {
     }
 
     /** Prefer live runtime entries over the disk copy so an unflushed new session is readable. */
-    async getById(id: string, sliceAnchor?: SessionPrefixAnchor): Promise<SessionDetailResponse | null> {
+    async getById(id: SessionId, sliceAnchor?: SessionPrefixAnchor): Promise<SessionDetailResponse | null> {
         const entry = this.active.get(id);
         if (entry !== undefined) {
             const entries = entry.runtime.session.getEntries();
@@ -637,7 +646,7 @@ export class SessionRegistry {
      *
      * @throws SessionRegistryError with code `"not_found"` when the runtime is not open.
      */
-    attach(sessionId: string, client: SessionClient, options: SessionAttachOptions = {}): SessionAttachment {
+    attach(sessionId: SessionId, client: SessionClient, options: SessionAttachOptions = {}): SessionAttachment {
         const entry = this.active.get(sessionId);
         if (entry === undefined) {
             throw new SessionRegistryError("not_found", "Session is not open.");
@@ -691,7 +700,7 @@ export class SessionRegistry {
         return entry.phase === "closing";
     }
 
-    private async openInternal(id: string): Promise<ActiveSessionHandle> {
+    private async openInternal(id: SessionId): Promise<ActiveSessionHandle> {
         const resolved = await this.catalog.resolveById(id);
         if (resolved === null) {
             throw new SessionRegistryError("not_found", "Session not found.");
@@ -708,7 +717,7 @@ export class SessionRegistry {
     }
 
     private async registerRuntime(
-        sessionId: string,
+        sessionId: SessionId,
         runtime: ManagedRuntime,
         diskSizeBytes?: number,
     ): Promise<ActiveSessionHandle> {
@@ -1363,14 +1372,14 @@ export class SessionRegistry {
     }
 
     /** Restart the idle countdown when the last dialog resolves and no client is attached. */
-    private handlePendingChange(sessionId: string): void {
+    private handlePendingChange(sessionId: SessionId): void {
         const entry = this.active.get(sessionId);
         if (entry !== undefined && entry.phase === "open" && entry.clients.size === 0) {
             this.touch(entry);
         }
     }
 
-    private broadcastById(sessionId: string, message: WsServerMessage): void {
+    private broadcastById(sessionId: SessionId, message: WsServerMessage): void {
         const entry = this.active.get(sessionId);
         if (entry !== undefined) {
             this.broadcastSession(entry, message);

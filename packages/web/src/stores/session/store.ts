@@ -1,8 +1,11 @@
 import {
     SESSION_CLOSE_CODE,
+    type EntriesVersion,
     type FileEntry,
     type RpcExtensionUIResponse,
     type SequencedSessionEvent,
+    type SessionId,
+    type SessionPrefixAnchor,
     type SessionStateSnapshot,
     type WsResponseMessage,
     type WsServerMessage,
@@ -26,8 +29,8 @@ import { initialSessionState, reduceSessionState, type SessionState } from "./re
 
 /** Snapshot kept in the in-memory LRU cache (1 active + up to 4 off-hand sessions). */
 export interface SessionMemoryCacheEntry {
-    readonly sessionId: string;
-    readonly entriesVersion: string | null;
+    readonly sessionId: SessionId;
+    readonly entriesVersion: EntriesVersion | null;
     readonly entries: readonly FileEntry[];
     readonly runtimeId: string | null;
     readonly seq: number;
@@ -49,13 +52,13 @@ export interface SessionStoreOptions {
      */
     readonly entriesSyncCooldownMs?: number | undefined;
     readonly maxMemoryCacheEntries?: number | undefined;
-    readonly onSessionMissing?: ((sessionId: string) => void) | undefined;
+    readonly onSessionMissing?: ((sessionId: SessionId) => void) | undefined;
 }
 
 /** What a caller may do with the active session. */
 export interface SessionStoreActions {
     /** Opens one session, hydrating cached entries immediately and replacing any previous socket. */
-    connect: (sessionId: string, options?: { readonly afterSeq?: number | undefined }) => void;
+    connect: (sessionId: SessionId, options?: { readonly afterSeq?: number | undefined }) => void;
     /** Closes the socket and returns the store to its initial state. */
     disconnect: () => void;
     /** Clears in-memory LRU cache and aborts any in-flight HTTP entry fetch (used on logout / 401). */
@@ -94,6 +97,25 @@ function sleepWithSignal(ms: number, signal: AbortSignal): Promise<boolean> {
     });
 }
 
+function derivePrefixAnchor(
+    entriesVersion: EntriesVersion | null,
+    entries: readonly FileEntry[],
+    count = entries.length,
+): SessionPrefixAnchor | undefined {
+    if (entriesVersion === null || count < 1) {
+        return undefined;
+    }
+    const anchorEntry = entries[count - 1];
+    if (anchorEntry === undefined) {
+        return undefined;
+    }
+    return {
+        entriesVersion,
+        afterCount: count,
+        afterEntryId: anchorEntry.id,
+    };
+}
+
 /**
  * Creates the store of the active session runtime.
  *
@@ -114,7 +136,7 @@ export function createSessionStore(options: SessionStoreOptions = {}) {
         let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
         let reconnectAttempts = 0;
         let generation = 0;
-        const memoryLru = new Map<string, SessionMemoryCacheEntry>();
+        const memoryLru = new Map<SessionId, SessionMemoryCacheEntry>();
         let httpSyncAbort: AbortController | null = null;
         let httpSyncInFlightGeneration: number | null = null;
         let entriesSyncRetryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -164,7 +186,7 @@ export function createSessionStore(options: SessionStoreOptions = {}) {
             }
         };
 
-        const evictMissingSession = (sessionId: string): void => {
+        const evictMissingSession = (sessionId: SessionId): void => {
             memoryLru.delete(sessionId);
             void cache?.deleteSession(sessionId);
             options.onSessionMissing?.(sessionId);
@@ -172,22 +194,15 @@ export function createSessionStore(options: SessionStoreOptions = {}) {
 
         const buildHandshakeParams = (state: SessionState, explicitAfterSeq?: number): SessionSocketHandshakeParams => {
             const afterSeq = explicitAfterSeq ?? (state.seq > 0 ? state.seq : undefined);
-            const lastEntry = state.entries.at(-1);
-            const hasPrefix = state.entriesVersion !== null && state.entries.length >= 1 && lastEntry !== undefined;
+            const prefixAnchor = derivePrefixAnchor(state.entriesVersion, state.entries);
             return {
                 ...(afterSeq === undefined ? {} : { afterSeq }),
                 ...(state.runtimeId === null ? {} : { runtimeId: state.runtimeId }),
-                ...(hasPrefix && state.entriesVersion !== null
-                    ? {
-                          entriesVersion: state.entriesVersion,
-                          entryCount: state.entries.length,
-                          afterEntryId: lastEntry.id,
-                      }
-                    : {}),
+                ...(prefixAnchor === undefined ? {} : { prefixAnchor }),
             };
         };
 
-        const syncEntriesFromHttp = (sessionId: string, baseEntryCount: number): void => {
+        const syncEntriesFromHttp = (sessionId: SessionId, baseEntryCount: number): void => {
             if (httpSyncInFlightGeneration === generation && httpSyncAbort !== null) {
                 return;
             }
@@ -203,20 +218,16 @@ export function createSessionStore(options: SessionStoreOptions = {}) {
                         return;
                     }
                     const snapshotBefore = get();
-                    const anchorEntry = baseEntryCount > 0 ? snapshotBefore.entries[baseEntryCount - 1] : undefined;
-                    const canSlice =
-                        baseEntryCount >= 1 && snapshotBefore.entriesVersion !== null && anchorEntry !== undefined;
+                    const anchor = derivePrefixAnchor(
+                        snapshotBefore.entriesVersion,
+                        snapshotBefore.entries,
+                        baseEntryCount,
+                    );
 
                     try {
                         const detail = await client.getSession(sessionId, {
                             signal: abortController.signal,
-                            ...(canSlice && snapshotBefore.entriesVersion !== null
-                                ? {
-                                      entriesVersion: snapshotBefore.entriesVersion,
-                                      afterCount: baseEntryCount,
-                                      afterEntryId: anchorEntry.id,
-                                  }
-                                : {}),
+                            ...(anchor === undefined ? {} : { anchor }),
                         });
                         if (abortController.signal.aborted || generation !== syncGeneration) {
                             return;
@@ -327,7 +338,7 @@ export function createSessionStore(options: SessionStoreOptions = {}) {
          * `entries_appended` frame would restart the whole ladder, so a persistent server failure
          * would be retried at append frequency.
          */
-        const scheduleEntriesSyncRetry = (sessionId: string): void => {
+        const scheduleEntriesSyncRetry = (sessionId: SessionId): void => {
             if (entriesSyncRetryTimer !== null) {
                 return;
             }
@@ -457,7 +468,7 @@ export function createSessionStore(options: SessionStoreOptions = {}) {
             }
         };
 
-        const open = (sessionId: string, handshake: SessionSocketHandshakeParams): void => {
+        const open = (sessionId: SessionId, handshake: SessionSocketHandshakeParams): void => {
             const currentGeneration = generation;
             const nextSocket = new SessionSocket({
                 sessionId,
@@ -525,7 +536,7 @@ export function createSessionStore(options: SessionStoreOptions = {}) {
             }, reconnectDelayMs);
         };
 
-        const handleClose = (sessionId: string, close: SessionSocketClose): void => {
+        const handleClose = (sessionId: SessionId, close: SessionSocketClose): void => {
             socket = null;
             clearReconnectTimer();
             if (close.code === SESSION_CLOSE_CODE.sessionNotFound) {
@@ -550,7 +561,7 @@ export function createSessionStore(options: SessionStoreOptions = {}) {
             scheduleReconnect();
         };
 
-        const hydrateAndConnect = (sessionId: string, explicitAfterSeq: number | undefined): void => {
+        const hydrateAndConnect = (sessionId: SessionId, explicitAfterSeq: number | undefined): void => {
             const memEntry = memoryLru.get(sessionId);
             if (memEntry !== undefined) {
                 // Touch LRU order.

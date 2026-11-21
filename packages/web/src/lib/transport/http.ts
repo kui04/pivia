@@ -1,4 +1,4 @@
-import { PUBLIC_API_PATHS } from "@pivia/protocol";
+import { isRecord, PUBLIC_API_PATHS } from "@pivia/protocol";
 import type {
     ApiErrorCode,
     ApiErrorResponse,
@@ -9,7 +9,9 @@ import type {
     CreateSessionResponse,
     HealthResponse,
     SessionDetailResponse,
+    SessionId,
     SessionListResponse,
+    SessionPrefixAnchor,
 } from "@pivia/protocol";
 
 import { Log } from "@/lib/log";
@@ -62,11 +64,9 @@ export class ApiClientError extends Error {
     }
 }
 
-/** Optional incremental slice anchors and cancellation signal for {@link ApiClient.getSession}. */
+/** Optional incremental slice anchor and cancellation signal for {@link ApiClient.getSession}. */
 export interface GetSessionOptions {
-    readonly entriesVersion?: string | undefined;
-    readonly afterCount?: number | undefined;
-    readonly afterEntryId?: string | undefined;
+    readonly anchor?: SessionPrefixAnchor | undefined;
     readonly signal?: AbortSignal | undefined;
 }
 
@@ -78,8 +78,8 @@ export interface ApiClient {
     logout(): Promise<AuthLogoutResponse>;
     listSessions(): Promise<SessionListResponse>;
     createSession(cwd: string): Promise<CreateSessionResponse>;
-    getSession(id: string, options?: GetSessionOptions): Promise<SessionDetailResponse>;
-    closeSession(id: string): Promise<CloseSessionResponse>;
+    getSession(id: SessionId, options?: GetSessionOptions): Promise<SessionDetailResponse>;
+    closeSession(id: SessionId): Promise<CloseSessionResponse>;
     /** Registers or clears the callback for `401` responses from protected endpoints. */
     setUnauthorizedHandler(handler: (() => void) | null): void;
 }
@@ -95,10 +95,6 @@ const API_ERROR_CODES: ReadonlySet<string> = new Set<ApiErrorCode>([
     "not_found",
     "internal_error",
 ]);
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function isApiErrorResponse(value: unknown): value is ApiErrorResponse {
     return (
@@ -276,16 +272,11 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
             }),
         getSession: (id, sessionOptions) => {
             const params = new URLSearchParams();
-            if (
-                sessionOptions?.entriesVersion !== undefined &&
-                sessionOptions.afterCount !== undefined &&
-                Number.isSafeInteger(sessionOptions.afterCount) &&
-                sessionOptions.afterCount >= 1 &&
-                sessionOptions.afterEntryId !== undefined
-            ) {
-                params.set("entriesVersion", sessionOptions.entriesVersion);
-                params.set("afterCount", String(sessionOptions.afterCount));
-                params.set("afterEntryId", sessionOptions.afterEntryId);
+            const anchor = sessionOptions?.anchor;
+            if (anchor !== undefined) {
+                params.set("entriesVersion", anchor.entriesVersion);
+                params.set("afterCount", String(anchor.afterCount));
+                params.set("afterEntryId", anchor.afterEntryId);
             }
             const query = params.toString();
             const path =

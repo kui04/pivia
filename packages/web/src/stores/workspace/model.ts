@@ -1,4 +1,4 @@
-import type { SessionRuntimeState, SessionSummary } from "@pivia/protocol";
+import type { SessionId, SessionRuntimeState, SessionSummary } from "@pivia/protocol";
 
 /** Where the last session scan stands. */
 export type ScanPhase =
@@ -14,7 +14,7 @@ export type ScanPhase =
 /** One session as the workspace list shows it. */
 export interface SessionRow {
     /** Opaque server id; the only identity the browser ever uses for a session. */
-    readonly id: string;
+    readonly id: SessionId;
     /** The name, else the first message, else a placeholder. */
     readonly title: string;
     /** True when `title` came from a session name rather than the first message. */
@@ -52,9 +52,9 @@ export interface WorkspaceModel {
 /** What {@link buildWorkspaceModel} needs. */
 export interface WorkspaceModelInput {
     readonly sessions: readonly SessionSummary[];
-    readonly pins: readonly string[];
+    readonly pins: readonly SessionId[];
     readonly query: string;
-    readonly selectedId: string | null;
+    readonly selectedId: SessionId | null;
     readonly collapsed: readonly string[];
 }
 
@@ -130,11 +130,11 @@ export function upsertSession(sessions: readonly SessionSummary[], session: Sess
 }
 
 /** Returns a new list without the session of `id`. */
-export function removeSession(sessions: readonly SessionSummary[], id: string): readonly SessionSummary[] {
+export function removeSession(sessions: readonly SessionSummary[], id: SessionId): readonly SessionSummary[] {
     return sessions.filter((session) => session.id !== id);
 }
 
-function toRow(summary: SessionSummary, pins: ReadonlySet<string>, selectedId: string | null): SessionRow {
+function toRow(summary: SessionSummary, pins: ReadonlySet<SessionId>, selectedId: SessionId | null): SessionRow {
     const { title, named } = sessionTitle(summary);
     return {
         id: summary.id,

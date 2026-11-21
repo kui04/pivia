@@ -10,9 +10,12 @@ import type {
     RpcResponse,
 } from "@earendil-works/pi-coding-agent";
 
+import type { EntriesVersion, SessionId } from "./parse/index.ts";
+
 export type { QueueMode, ThinkingLevel } from "@earendil-works/pi-agent-core";
 export type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
 export type { FileEntry, RpcExtensionUIRequest, RpcExtensionUIResponse } from "@earendil-works/pi-coding-agent";
+export * from "./parse/index.ts";
 export {
     projectSessionTranscript,
     type ProjectTranscriptOptions,
@@ -107,7 +110,7 @@ export interface AuthLogoutResponse {
  * been written yet.
  */
 export interface SessionSummary {
-    readonly id: string;
+    readonly id: SessionId;
     /** Working directory recorded in the session header; empty for sessions from old versions. */
     readonly cwd: string;
     /** Latest display name set by the user, or `null` when the session has no name. */
@@ -147,7 +150,7 @@ export interface SessionListResponse {
  * handshakes. `afterCount` includes the session header (`entries[0]`).
  */
 export interface SessionPrefixAnchor {
-    readonly entriesVersion: string;
+    readonly entriesVersion: EntriesVersion;
     readonly afterCount: number;
     readonly afterEntryId: string;
 }
@@ -156,7 +159,7 @@ export interface SessionPrefixAnchor {
 export interface SessionDetailResponse {
     readonly session: SessionSummary;
     /** Composite `${sessionVersion}:${sdkVersion}`, or `null` for unmigrated v1/v2 disk files. */
-    readonly entriesVersion: string | null;
+    readonly entriesVersion: EntriesVersion | null;
     /** Starting index in the session's `[header, ...entries]` array; `0` for a full response. */
     readonly baseEntryCount: number;
     /** Session entries (or slice from `baseEntryCount`) with header first on full responses. */
@@ -196,7 +199,7 @@ export type SessionQueuedInputDisposition = Awaited<ReturnType<AgentSession["ste
  * locations. `name` is `null` when the session has no display name.
  */
 export interface SessionStateSnapshot {
-    readonly sessionId: string;
+    readonly sessionId: SessionId;
     readonly cwd: string;
     readonly name: string | null;
     readonly model: SessionModelInfo | null;
@@ -253,10 +256,10 @@ export interface SequencedSessionEvent {
 export type WsSnapshotMessage =
     | {
           readonly type: "snapshot";
-          readonly sessionId: string;
+          readonly sessionId: SessionId;
           readonly runtimeId: string;
           readonly seq: number;
-          readonly entriesVersion: string;
+          readonly entriesVersion: EntriesVersion;
           /** Starting index of `entries` (`0` for full snapshot, `> 0` for Tier 2 slice). */
           readonly baseEntryCount: number;
           readonly entriesMode: "inline";
@@ -268,10 +271,10 @@ export type WsSnapshotMessage =
       }
     | {
           readonly type: "snapshot";
-          readonly sessionId: string;
+          readonly sessionId: SessionId;
           readonly runtimeId: string;
           readonly seq: number;
-          readonly entriesVersion: string;
+          readonly entriesVersion: EntriesVersion;
           /** Anchor count for HTTP slice (`0` for full download, `> 0` for incremental slice). */
           readonly baseEntryCount: number;
           readonly entriesMode: "http";
@@ -292,10 +295,10 @@ export interface WsReplayAppendedSlice {
 /** Tier 1 hot replay after a reconnect that asks for events after `afterSeq`. */
 export interface WsReplayMessage {
     readonly type: "replay";
-    readonly sessionId: string;
+    readonly sessionId: SessionId;
     readonly runtimeId: string;
     readonly seq: number;
-    readonly entriesVersion: string;
+    readonly entriesVersion: EntriesVersion;
     readonly state: SessionStateSnapshot;
     readonly events: readonly SequencedSessionEvent[];
     /** Authoritative streaming assistant message at `seq`, or `null` when none is streaming. */
@@ -308,16 +311,16 @@ export interface WsReplayMessage {
 export type WsEntriesAppendedMessage =
     | {
           readonly type: "entries_appended";
-          readonly sessionId: string;
-          readonly entriesVersion: string;
+          readonly sessionId: SessionId;
+          readonly entriesVersion: EntriesVersion;
           readonly entriesMode: "inline";
           readonly baseEntryCount: number;
           readonly entries: readonly FileEntry[];
       }
     | {
           readonly type: "entries_appended";
-          readonly sessionId: string;
-          readonly entriesVersion: string;
+          readonly sessionId: SessionId;
+          readonly entriesVersion: EntriesVersion;
           readonly entriesMode: "http";
           readonly baseEntryCount: number;
           readonly entryCount: number;
@@ -326,7 +329,7 @@ export type WsEntriesAppendedMessage =
 /** One live session event. */
 export interface WsEventMessage {
     readonly type: "event";
-    readonly sessionId: string;
+    readonly sessionId: SessionId;
     readonly seq: number;
     readonly event: JsonAgentSessionEvent;
 }
@@ -334,21 +337,21 @@ export interface WsEventMessage {
 /** A dialog or fire-and-forget notification from an extension. */
 export interface WsExtensionUiRequestMessage {
     readonly type: "extension_ui_request";
-    readonly sessionId: string;
+    readonly sessionId: SessionId;
     readonly request: RpcExtensionUIRequest;
 }
 
 /** Tells every client to dismiss a dialog that another client already answered. */
 export interface WsExtensionUiResolvedMessage {
     readonly type: "extension_ui_resolved";
-    readonly sessionId: string;
+    readonly sessionId: SessionId;
     readonly requestId: string;
 }
 
 /** An extension handler failed; the session continues running. */
 export interface WsExtensionErrorMessage {
     readonly type: "extension_error";
-    readonly sessionId: string;
+    readonly sessionId: SessionId;
     readonly extensionPath: string;
     readonly event: string;
     readonly error: string;

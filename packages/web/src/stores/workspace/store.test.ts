@@ -1,5 +1,19 @@
-import type { SessionListResponse, SessionSummary } from "@pivia/protocol";
+import { parseSessionId, type SessionId, type SessionListResponse, type SessionSummary } from "@pivia/protocol";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+function sid(raw: string): SessionId {
+    const parsed = parseSessionId(raw);
+    if (parsed === null) {
+        throw new Error(`Invalid test session id: ${raw}`);
+    }
+    return parsed;
+}
+
+const A = sid("a");
+const B = sid("b");
+const DELETED = sid("deleted");
+const LIVE = sid("live");
+const CACHED = sid("cached");
 
 const storageBacking = vi.hoisted(() => {
     const entries = new Map<string, string>();
@@ -37,7 +51,7 @@ import { initialWorkspaceState, useWorkspaceStore } from "./store";
 
 const PERSIST_KEY = "pivia.workspace.v1";
 
-function summary(id: string, overrides: Partial<SessionSummary> = {}): SessionSummary {
+function summary(id: SessionId, overrides: Partial<SessionSummary> = {}): SessionSummary {
     return {
         id,
         cwd: "/home/u/pivia",
@@ -69,7 +83,7 @@ describe("useWorkspaceStore", () => {
 
     it("keeps one scan phase while a scan is in flight", () => {
         const store = useWorkspaceStore.getState();
-        store.applyScan(listResponse([summary("a")]));
+        store.applyScan(listResponse([summary(A)]));
         expect(useWorkspaceStore.getState().scan).toEqual({ kind: "ready" });
 
         store.beginScan(true);
@@ -80,33 +94,33 @@ describe("useWorkspaceStore", () => {
 
     it("applies a complete scan and reconciles the selection and pins", () => {
         const store = useWorkspaceStore.getState();
-        store.togglePinned("deleted");
-        store.togglePinned("live");
-        store.select("deleted");
+        store.togglePinned(DELETED);
+        store.togglePinned(LIVE);
+        store.select(DELETED);
         store.beginScan(true);
 
-        store.applyScan(listResponse([summary("live")], 42_000));
+        store.applyScan(listResponse([summary(LIVE)], 42_000));
 
         const state = useWorkspaceStore.getState();
-        expect(state.sessions.map((session) => session.id)).toEqual(["live"]);
+        expect(state.sessions.map((session) => session.id)).toEqual([LIVE]);
         expect(state.scannedAtMs).toBe(42_000);
         expect(state.scan).toEqual({ kind: "ready" });
-        expect(state.pins).toEqual(["live"]);
+        expect(state.pins).toEqual([LIVE]);
         expect(state.selectedId).toBeNull();
     });
 
     it("keeps the last rows and selection when a scan fails", () => {
         const store = useWorkspaceStore.getState();
-        store.applyScan(listResponse([summary("a")], 7_000));
-        store.select("a");
+        store.applyScan(listResponse([summary(A)], 7_000));
+        store.select(A);
         store.beginScan(false);
 
         store.failScan("The session directory is unreadable.");
 
         const state = useWorkspaceStore.getState();
-        expect(state.sessions.map((session) => session.id)).toEqual(["a"]);
+        expect(state.sessions.map((session) => session.id)).toEqual([A]);
         expect(state.scannedAtMs).toBe(7_000);
-        expect(state.selectedId).toBe("a");
+        expect(state.selectedId).toBe(A);
         expect(state.scan).toEqual({ kind: "failed", message: "The session directory is unreadable." });
     });
 
@@ -114,52 +128,52 @@ describe("useWorkspaceStore", () => {
         const store = useWorkspaceStore.getState();
 
         store.setQuery("parser");
-        store.select("a");
-        store.togglePinned("a");
-        store.togglePinned("b");
+        store.select(A);
+        store.togglePinned(A);
+        store.togglePinned(B);
         store.toggleFolder("/home/u/pivia");
         store.toggleFolder("/home/u/notes");
 
         let state = useWorkspaceStore.getState();
         expect(state.query).toBe("parser");
-        expect(state.selectedId).toBe("a");
-        expect(state.pins).toEqual(["b", "a"]);
+        expect(state.selectedId).toBe(A);
+        expect(state.pins).toEqual([B, A]);
         expect(state.collapsed).toEqual(["/home/u/pivia", "/home/u/notes"]);
 
-        store.togglePinned("a");
+        store.togglePinned(A);
         store.toggleFolder("/home/u/pivia");
 
         state = useWorkspaceStore.getState();
-        expect(state.pins).toEqual(["b"]);
+        expect(state.pins).toEqual([B]);
         expect(state.collapsed).toEqual(["/home/u/notes"]);
     });
 
     it("upserts a live session and removes it with its pin and selection", () => {
         const store = useWorkspaceStore.getState();
-        store.applyScan(listResponse([summary("a", { name: "A" })]));
-        store.togglePinned("a");
-        store.select("a");
+        store.applyScan(listResponse([summary(A, { name: "A" })]));
+        store.togglePinned(A);
+        store.select(A);
 
-        store.upsertSession(summary("b", { name: "B" }));
-        store.upsertSession(summary("a", { name: "Renamed", modifiedAtMs: 5_000 }));
+        store.upsertSession(summary(B, { name: "B" }));
+        store.upsertSession(summary(A, { name: "Renamed", modifiedAtMs: 5_000 }));
 
         let state = useWorkspaceStore.getState();
-        expect(state.sessions.map((session) => session.id)).toEqual(["a", "b"]);
+        expect(state.sessions.map((session) => session.id)).toEqual([A, B]);
         expect(state.sessions[0]?.name).toBe("Renamed");
 
-        store.removeSession("a");
+        store.removeSession(A);
 
         state = useWorkspaceStore.getState();
-        expect(state.sessions.map((session) => session.id)).toEqual(["b"]);
+        expect(state.sessions.map((session) => session.id)).toEqual([B]);
         expect(state.pins).toEqual([]);
         expect(state.selectedId).toBeNull();
     });
 
     it("drops connection state on reset but keeps pins", () => {
         const store = useWorkspaceStore.getState();
-        store.applyScan(listResponse([summary("a")]));
-        store.togglePinned("a");
-        store.select("a");
+        store.applyScan(listResponse([summary(A)]));
+        store.togglePinned(A);
+        store.select(A);
         store.setQuery("a");
         store.toggleFolder("/home/u/pivia");
         store.beginScan(true);
@@ -173,7 +187,7 @@ describe("useWorkspaceStore", () => {
         expect(state.query).toBe("");
         expect(state.selectedId).toBeNull();
         expect(state.collapsed).toEqual([]);
-        expect(state.pins).toEqual(["a"]);
+        expect(state.pins).toEqual([A]);
     });
 
     it("skips a storage write when the persisted pins are unchanged", () => {
@@ -181,11 +195,11 @@ describe("useWorkspaceStore", () => {
         const store = useWorkspaceStore.getState();
 
         store.setQuery("parser");
-        store.select("a");
+        store.select(A);
         store.toggleFolder("/home/u/pivia");
         expect(setItem).not.toHaveBeenCalled();
 
-        store.togglePinned("a");
+        store.togglePinned(A);
         expect(setItem).toHaveBeenCalledTimes(1);
 
         setItem.mockRestore();
@@ -207,7 +221,7 @@ describe("useWorkspaceStore", () => {
         await useWorkspaceStore.persist.rehydrate();
 
         let state = useWorkspaceStore.getState();
-        expect(state.pins).toEqual(["a", "b"]);
+        expect(state.pins).toEqual([A, B]);
         expect(state.sessions).toEqual([]);
         expect(state.selectedId).toBeNull();
 
@@ -222,16 +236,16 @@ describe("useWorkspaceStore", () => {
     it("hydrates stale-while-revalidate catalog rows from cache only before the first live scan", async () => {
         const fakeCache = {
             getWorkspaceCatalog: vi.fn(() =>
-                Promise.resolve({ key: "default" as const, sessions: [summary("cached")], scannedAtMs: 5_000 }),
+                Promise.resolve({ key: "default" as const, sessions: [summary(CACHED)], scannedAtMs: 5_000 }),
             ),
         };
         await useWorkspaceStore.getState().hydrateCatalog(fakeCache as never);
-        expect(useWorkspaceStore.getState().sessions.map((session) => session.id)).toEqual(["cached"]);
+        expect(useWorkspaceStore.getState().sessions.map((session) => session.id)).toEqual([CACHED]);
         expect(useWorkspaceStore.getState().scannedAtMs).toBe(5_000);
 
-        useWorkspaceStore.getState().applyScan(listResponse([summary("live")], 9_000));
+        useWorkspaceStore.getState().applyScan(listResponse([summary(LIVE)], 9_000));
         // A late cache hydration after a live scan must not overwrite live sessions.
         await useWorkspaceStore.getState().hydrateCatalog(fakeCache as never);
-        expect(useWorkspaceStore.getState().sessions.map((session) => session.id)).toEqual(["live"]);
+        expect(useWorkspaceStore.getState().sessions.map((session) => session.id)).toEqual([LIVE]);
     });
 });

@@ -14,29 +14,25 @@ import {
     type FileEntry,
 } from "@earendil-works/pi-coding-agent";
 
-import type { SessionDetailResponse, SessionListResponse, SessionPrefixAnchor, SessionSummary } from "@pivia/protocol";
+import {
+    isRecord,
+    parseEntriesVersion,
+    parseSessionId,
+    type EntriesVersion,
+    type SessionDetailResponse,
+    type SessionId,
+    type SessionListResponse,
+    type SessionPrefixAnchor,
+    type SessionSummary,
+} from "@pivia/protocol";
 
 import { createLogger } from "../logger.ts";
-
-/**
- * Session ids mirror the rule of the SDK session manager: non-empty, only alphanumeric
- * characters, `-`, `_`, and `.`, and the first and last character must be alphanumeric.
- * The SDK keeps its `assertValidSessionId` helper internal to the package, so this module owns
- * the same rule. The pattern rejects path separators and `..`; the server never builds a file
- * path from an id and only compares ids against session headers.
- */
-const SESSION_ID_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
 
 /** Largest session file the detail endpoint reads into memory. */
 const MAX_SESSION_FILE_BYTES = 64 * 1024 * 1024;
 
 /** Maximum project subdirectories scanned concurrently so large session roots stay within file-descriptor limits. */
 const PROJECT_DISCOVERY_CONCURRENCY = 4;
-
-/** Returns true when `id` is a session identifier the server accepts. */
-export function isValidSessionId(id: string): boolean {
-    return SESSION_ID_PATTERN.test(id);
-}
 
 /** Options for {@link resolveSessionRoot}. */
 export interface SessionRootOptions {
@@ -114,10 +110,10 @@ export interface SlicedEntries {
     readonly prefixMatched: boolean;
 }
 
-let cachedEntriesVersion: string | undefined;
+let cachedEntriesVersion: EntriesVersion | undefined;
 
 /** Resolve the composite `${CURRENT_SESSION_VERSION}:${piSdkVersion}` cache version once at startup. */
-export function resolveEntriesVersion(): string {
+export function resolveEntriesVersion(): EntriesVersion {
     if (cachedEntriesVersion !== undefined) {
         return cachedEntriesVersion;
     }
@@ -127,10 +123,17 @@ export function resolveEntriesVersion(): string {
         const candidate = join(currentDir, "package.json");
         try {
             const raw = readFileSync(candidate, "utf8");
-            const parsed = JSON.parse(raw) as { readonly name?: unknown; readonly version?: unknown };
-            if (parsed.name === "@earendil-works/pi-coding-agent" && typeof parsed.version === "string") {
-                cachedEntriesVersion = `${CURRENT_SESSION_VERSION}:${parsed.version}`;
-                return cachedEntriesVersion;
+            const parsed: unknown = JSON.parse(raw);
+            if (
+                isRecord(parsed) &&
+                parsed.name === "@earendil-works/pi-coding-agent" &&
+                typeof parsed.version === "string"
+            ) {
+                const version = parseEntriesVersion(`${CURRENT_SESSION_VERSION}:${parsed.version}`);
+                if (version !== null) {
+                    cachedEntriesVersion = version;
+                    return cachedEntriesVersion;
+                }
             }
         } catch {
             // Walk up until the package root is found.
@@ -141,7 +144,11 @@ export function resolveEntriesVersion(): string {
         }
         currentDir = parent;
     }
-    cachedEntriesVersion = `${CURRENT_SESSION_VERSION}:unknown`;
+    const fallback = parseEntriesVersion(`${CURRENT_SESSION_VERSION}:unknown`);
+    if (fallback === null) {
+        throw new Error("Invalid fallback entries version.");
+    }
+    cachedEntriesVersion = fallback;
     return cachedEntriesVersion;
 }
 
@@ -149,9 +156,9 @@ export function resolveEntriesVersion(): string {
  * Verify a client's prefix anchor against `[header, ...entries]` in O(1) and return the trailing slice.
  */
 export function sliceEntriesForAnchor(
-    sessionId: string,
+    sessionId: SessionId,
     entries: readonly FileEntry[],
-    serverEntriesVersion: string | null,
+    serverEntriesVersion: EntriesVersion | null,
     anchor: SessionPrefixAnchor | undefined,
 ): SlicedEntries {
     if (
@@ -177,10 +184,6 @@ export function sliceEntriesForAnchor(
         entries: entries.slice(anchor.afterCount),
         prefixMatched: true,
     };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function extractMessageText(content: unknown): string {
@@ -217,6 +220,12 @@ function messageActivityTimestampMs(
     return undefined;
 }
 
+/** Outcome of summarizing a single session `.jsonl` file from its header and messages. */
+export type SessionFileSummaryResult =
+    | { readonly kind: "ok"; readonly summary: SessionSummary }
+    | { readonly kind: "invalid-id" }
+    | { readonly kind: "unreadable" };
+
 /**
  * Streamingly parse a `.jsonl` session file into a {@link SessionSummary} without retaining the
  * whole file or parsed entry objects in memory.
@@ -224,7 +233,7 @@ function messageActivityTimestampMs(
 export async function summarizeSessionFile(
     realPath: string,
     stats: { readonly mtimeMs: number; readonly size: number },
-): Promise<SessionSummary | null> {
+): Promise<SessionFileSummaryResult> {
     let header: Record<string, unknown> | null = null;
     let messageCount = 0;
     let firstMessage = "";
@@ -249,7 +258,7 @@ export async function summarizeSessionFile(
             }
             if (header === null) {
                 if (parsed.type !== "session" || typeof parsed.id !== "string" || parsed.id.length === 0) {
-                    return null;
+                    return { kind: "unreadable" };
                 }
                 header = parsed;
                 continue;
@@ -276,14 +285,18 @@ export async function summarizeSessionFile(
             }
         }
     } catch {
-        return null;
+        return { kind: "unreadable" };
     } finally {
         rl.close();
         stream.destroy();
     }
 
     if (header === null || typeof header.id !== "string") {
-        return null;
+        return { kind: "unreadable" };
+    }
+    const sessionId = parseSessionId(header.id);
+    if (sessionId === null) {
+        return { kind: "invalid-id" };
     }
     const headerTime = typeof header.timestamp === "string" ? Date.parse(header.timestamp) : Number.NaN;
     const modifiedAtMs =
@@ -297,16 +310,19 @@ export async function summarizeSessionFile(
     const createdAtMs = Number.isFinite(headerTime) ? headerTime : modifiedAtMs;
 
     return {
-        id: header.id,
-        cwd: typeof header.cwd === "string" ? header.cwd : "",
-        name,
-        firstMessage: firstMessage !== "" ? firstMessage : "(no messages)",
-        messageCount,
-        createdAtMs,
-        modifiedAtMs,
-        hasParent: typeof header.parentSession === "string" && header.parentSession.length > 0,
-        runtimeState: "idle",
-        attachedClients: 0,
+        kind: "ok",
+        summary: {
+            id: sessionId,
+            cwd: typeof header.cwd === "string" ? header.cwd : "",
+            name,
+            firstMessage: firstMessage !== "" ? firstMessage : "(no messages)",
+            messageCount,
+            createdAtMs,
+            modifiedAtMs,
+            hasParent: typeof header.parentSession === "string" && header.parentSession.length > 0,
+            runtimeState: "idle",
+            attachedClients: 0,
+        },
     };
 }
 
@@ -418,12 +434,12 @@ function countNonEmptyLines(content: string): number {
  * on disk (append a missing trailing newline, rewrite the header, or create directories).
  */
 export class SessionCatalog {
-    readonly entriesVersion: string;
+    readonly entriesVersion: EntriesVersion;
     private readonly options: SessionCatalogOptions;
     private readonly logger: SessionCatalogLogger;
     private readonly nowMs: () => number;
     private readonly pathCache = new Map<string, CachedFileSummary>();
-    private readonly idToPath = new Map<string, string>();
+    private readonly idToPath = new Map<SessionId, string>();
 
     constructor(options: SessionCatalogOptions = {}) {
         this.options = options;
@@ -450,13 +466,10 @@ export class SessionCatalog {
     }
 
     /**
-     * Resolve one session file for opening. Applies the same id, containment, and file checks as
+     * Resolve one session file for opening. Applies the same containment and file checks as
      * {@link getById} without reading the transcript body.
      */
-    async resolveById(id: string): Promise<ResolvedSession | null> {
-        if (!isValidSessionId(id)) {
-            return null;
-        }
+    async resolveById(id: SessionId): Promise<ResolvedSession | null> {
         const root = await this.resolveDiscoveryRoot();
         const indexedPath = this.idToPath.get(id);
         if (indexedPath !== undefined) {
@@ -477,7 +490,7 @@ export class SessionCatalog {
 
     private async verifyIndexedPath(
         root: ResolvedDiscoveryRoot,
-        id: string,
+        id: SessionId,
         candidatePath: string,
     ): Promise<ResolvedSession | null | undefined> {
         try {
@@ -505,11 +518,11 @@ export class SessionCatalog {
                 return undefined;
             }
             const refreshed = await summarizeSessionFile(realPath, stats);
-            if (refreshed === null || refreshed.id !== id) {
+            if (refreshed.kind !== "ok" || refreshed.summary.id !== id) {
                 return undefined;
             }
-            this.pathCache.set(realPath, { mtimeMs: stats.mtimeMs, size: stats.size, summary: refreshed });
-            return { summary: refreshed, realPath, sizeBytes: stats.size, root };
+            this.pathCache.set(realPath, { mtimeMs: stats.mtimeMs, size: stats.size, summary: refreshed.summary });
+            return { summary: refreshed.summary, realPath, sizeBytes: stats.size, root };
         } catch {
             return undefined;
         }
@@ -517,7 +530,7 @@ export class SessionCatalog {
 
     private async verifyDiscoveredPath(
         root: ResolvedDiscoveryRoot,
-        id: string,
+        id: SessionId,
         match: DiscoveredSession,
     ): Promise<ResolvedSession | null> {
         try {
@@ -549,10 +562,10 @@ export class SessionCatalog {
     /**
      * Read one session by id, migrating entries to the current format in memory only.
      * Supports optional prefix slicing when `sliceAnchor` matches; otherwise returns full entries.
-     * Returns `null` for an invalid or unknown id and for files that are unreadable, too large,
+     * Returns `null` for an unknown id and for files that are unreadable, too large,
      * or outside the session root.
      */
-    async getById(id: string, sliceAnchor?: SessionPrefixAnchor): Promise<SessionDetailResponse | null> {
+    async getById(id: SessionId, sliceAnchor?: SessionPrefixAnchor): Promise<SessionDetailResponse | null> {
         const resolved = await this.resolveById(id);
         if (resolved === null) {
             return null;
@@ -587,26 +600,25 @@ export class SessionCatalog {
             }
             seenRealPaths.add(realPath);
 
-            let summary: SessionSummary | null;
+            let summary: SessionSummary;
             const cached = this.pathCache.get(realPath);
             if (cached !== undefined && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) {
                 summary = cached.summary;
             } else {
-                summary = await summarizeSessionFile(realPath, stats);
-                if (summary !== null) {
-                    this.pathCache.set(realPath, { mtimeMs: stats.mtimeMs, size: stats.size, summary });
-                } else {
+                const summarized = await summarizeSessionFile(realPath, stats);
+                if (summarized.kind === "invalid-id") {
                     this.pathCache.delete(realPath);
+                    this.logger.warn({ path: filePath }, "skipped session with an unusable id");
+                    continue;
                 }
+                if (summarized.kind === "unreadable") {
+                    this.pathCache.delete(realPath);
+                    continue;
+                }
+                summary = summarized.summary;
+                this.pathCache.set(realPath, { mtimeMs: stats.mtimeMs, size: stats.size, summary });
             }
 
-            if (summary === null) {
-                continue;
-            }
-            if (!isValidSessionId(summary.id)) {
-                this.logger.warn({ path: filePath }, "skipped session with an unusable id");
-                continue;
-            }
             candidates.push({ summary, path: realPath });
         }
 
@@ -624,7 +636,7 @@ export class SessionCatalog {
                 right.summary.modifiedAtMs - left.summary.modifiedAtMs || left.path.localeCompare(right.path),
         );
 
-        const byId = new Map<string, DiscoveredSession>();
+        const byId = new Map<SessionId, DiscoveredSession>();
         for (const candidate of candidates) {
             const existing = byId.get(candidate.summary.id);
             if (existing !== undefined) {
@@ -707,7 +719,7 @@ export class SessionCatalog {
 
     private async readSession(
         root: ResolvedDiscoveryRoot,
-        sessionId: string,
+        sessionId: SessionId,
         session: DiscoveredSession,
         sliceAnchor?: SessionPrefixAnchor,
     ): Promise<SessionDetailResponse | null> {

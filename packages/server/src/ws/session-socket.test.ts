@@ -3,7 +3,7 @@ import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { CreateSessionResponse, WsClientCommand, WsServerMessage } from "@pivia/protocol";
+import type { CreateSessionResponse, SessionId, WsClientCommand, WsServerMessage } from "@pivia/protocol";
 
 import { afterEach, describe, expect, it } from "vitest";
 import WebSocket from "ws";
@@ -99,7 +99,7 @@ interface UpgradeProbe {
 
 async function waitForRuntimeState(
     registry: SessionRegistry,
-    sessionId: string,
+    sessionId: SessionId,
     expected: string,
     timeoutMs = 2000,
 ): Promise<void> {
@@ -226,7 +226,9 @@ describe("session websocket route", () => {
         };
     }
 
-    async function createSession(fixture: WsAppFixture): Promise<{ readonly id: string; readonly fake: FakeSession }> {
+    async function createSession(
+        fixture: WsAppFixture,
+    ): Promise<{ readonly id: SessionId; readonly fake: FakeSession }> {
         const response = await fixture.app.inject({
             method: "POST",
             url: "/api/sessions",

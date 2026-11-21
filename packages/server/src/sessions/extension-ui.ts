@@ -8,7 +8,7 @@ import {
     type Theme,
 } from "@earendil-works/pi-coding-agent";
 
-import type { WsServerMessage } from "@pivia/protocol";
+import type { SessionId, WsServerMessage } from "@pivia/protocol";
 
 /**
  * Text-preserving theme for the headless bridge.
@@ -102,7 +102,7 @@ function isWidgetLines(content: unknown): content is string[] | undefined {
  */
 export class SessionUiBridge {
     readonly context: ExtensionUIContext;
-    private readonly sessionId: string;
+    private readonly sessionId: SessionId;
     private readonly broadcast: (message: WsServerMessage) => void;
     private readonly onPendingChange: (() => void) | undefined;
     private readonly nowMs: () => number;
@@ -110,7 +110,7 @@ export class SessionUiBridge {
     private disposed = false;
 
     constructor(
-        sessionId: string,
+        sessionId: SessionId,
         broadcast: (message: WsServerMessage) => void,
         options: SessionUiBridgeOptions = {},
     ) {

@@ -1,9 +1,11 @@
 import type {
     AssistantMessage,
+    EntriesVersion,
     FileEntry,
     RpcExtensionUIRequest,
     SequencedSessionEvent,
     SessionCloseReason,
+    SessionId,
     SessionStateSnapshot,
     WsEntriesAppendedMessage,
     WsErrorMessage,
@@ -54,13 +56,13 @@ export type EntriesSyncState =
 /** Everything the session view needs from the active runtime. */
 export interface SessionState {
     readonly status: SessionConnectionStatus;
-    readonly sessionId: string | null;
+    readonly sessionId: SessionId | null;
     /** Active server runtime id for Tier 1 replay matching. */
     readonly runtimeId: string | null;
     /** Sequence number of the newest applied event. */
     readonly seq: number;
     /** Composite `${sessionVersion}:${sdkVersion}`, or `null` when uncached/unmigrated. */
-    readonly entriesVersion: string | null;
+    readonly entriesVersion: EntriesVersion | null;
     readonly state: SessionStateSnapshot | null;
     readonly entries: readonly FileEntry[];
     readonly entriesSync: EntriesSyncState;
@@ -74,11 +76,11 @@ export interface SessionState {
 
 /** Inputs the reducer accepts from the transport, cache, store and route changes. */
 export type SessionAction =
-    | { readonly type: "connect"; readonly sessionId: string }
+    | { readonly type: "connect"; readonly sessionId: SessionId }
     | {
           readonly type: "hydrate_cache";
-          readonly sessionId: string;
-          readonly entriesVersion: string | null;
+          readonly sessionId: SessionId;
+          readonly entriesVersion: EntriesVersion | null;
           readonly entries: readonly FileEntry[];
           readonly runtimeId?: string | null | undefined;
           readonly seq?: number | undefined;
@@ -95,12 +97,12 @@ export type SessionAction =
     | { readonly type: "entries_sync_started"; readonly baseEntryCount: number; readonly targetEntryCount: number }
     | {
           readonly type: "entries_sync_succeeded";
-          readonly sessionId: string;
-          readonly entriesVersion: string | null;
+          readonly sessionId: SessionId;
+          readonly entriesVersion: EntriesVersion | null;
           readonly baseEntryCount: number;
           readonly entries: readonly FileEntry[];
       }
-    | { readonly type: "entries_sync_failed"; readonly sessionId: string; readonly message: string }
+    | { readonly type: "entries_sync_failed"; readonly sessionId: SessionId; readonly message: string }
     | { readonly type: "event"; readonly message: WsEventMessage }
     | { readonly type: "extension_ui_request"; readonly message: WsExtensionUiRequestMessage }
     | { readonly type: "extension_ui_resolved"; readonly message: WsExtensionUiResolvedMessage }

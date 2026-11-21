@@ -3,7 +3,13 @@ import { dirname } from "node:path";
 
 import type { AgentSessionEvent, FileEntry, SessionManager } from "@earendil-works/pi-coding-agent";
 
-import type { ImageContent, SessionModelInfo, ThinkingLevel } from "@pivia/protocol";
+import {
+    parseSessionId,
+    type ImageContent,
+    type SessionId,
+    type SessionModelInfo,
+    type ThinkingLevel,
+} from "@pivia/protocol";
 
 import type {
     ManagedExtensionBindings,
@@ -38,7 +44,7 @@ function defaultState(): ManagedSessionState {
 
 /** In-memory session used by registry and route tests instead of a real SDK session. */
 export class FakeSession implements ManagedSession {
-    readonly sessionId: string;
+    readonly sessionId: SessionId;
     bindings: ManagedExtensionBindings | undefined;
     bindExtensionsHandler: (bindings: ManagedExtensionBindings) => Promise<void> = (bindings) => {
         this.bindings = bindings;
@@ -69,7 +75,11 @@ export class FakeSession implements ManagedSession {
     private readonly listeners = new Set<(event: AgentSessionEvent) => void>();
 
     constructor(options: { sessionId: string; cwd: string; sessionManager: SessionManager }) {
-        this.sessionId = options.sessionId;
+        const parsedId = parseSessionId(options.sessionId);
+        if (parsedId === null) {
+            throw new Error(`Invalid fake session id: ${options.sessionId}`);
+        }
+        this.sessionId = parsedId;
         this.cwd = options.cwd;
         this.sessionManager = options.sessionManager;
     }

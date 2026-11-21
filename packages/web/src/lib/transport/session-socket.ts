@@ -1,8 +1,11 @@
 import {
+    isRecord,
     SESSION_CLOSE_CODE,
     classifySessionClose,
     type RpcExtensionUIResponse,
     type SessionCloseReason,
+    type SessionId,
+    type SessionPrefixAnchor,
     type WsClientCommand,
     type WsErrorMessage,
     type WsResponseMessage,
@@ -43,17 +46,15 @@ export type SessionSocketConstructor = new (url: string) => SessionSocketLike;
 export interface SessionSocketHandshakeParams {
     readonly afterSeq?: number | undefined;
     readonly runtimeId?: string | undefined;
-    readonly entriesVersion?: string | undefined;
-    readonly entryCount?: number | undefined;
-    readonly afterEntryId?: string | undefined;
+    readonly prefixAnchor?: SessionPrefixAnchor | undefined;
 }
 
 /** Options for {@link SessionSocket}. */
 export interface SessionSocketOptions {
-    readonly sessionId: string;
+    readonly sessionId: SessionId;
     /** Last sequence number the client applied; the server replays only newer events. */
     readonly afterSeq?: number | undefined;
-    /** Optional Tier 1/2 handshake anchors (`runtimeId`, `entriesVersion`, `entryCount`, `afterEntryId`). */
+    /** Optional Tier 1/2 handshake anchors (`runtimeId`, `prefixAnchor`). */
     readonly handshake?: SessionSocketHandshakeParams | undefined;
     /** Absolute `ws://` or `wss://` URL. Defaults to the current origin and `/ws/sessions/:id`. */
     readonly url?: string | undefined;
@@ -101,8 +102,8 @@ const WS_READY_STATE_OPEN = 1;
 
 /** Builds the default endpoint from a page URL and optional Tier 1/2 handshake anchors. */
 export function buildSessionSocketUrl(
-    sessionId: string,
-    handshakeOrAfterSeq?: number | SessionSocketHandshakeParams,
+    sessionId: SessionId,
+    handshake?: SessionSocketHandshakeParams,
     pageUrl?: string,
 ): string {
     const source = pageUrl ?? globalThis.location?.href;
@@ -114,22 +115,17 @@ export function buildSessionSocketUrl(
     url.pathname = `/ws/sessions/${encodeURIComponent(sessionId)}`;
     url.search = "";
     url.hash = "";
-    const params: SessionSocketHandshakeParams =
-        typeof handshakeOrAfterSeq === "number" ? { afterSeq: handshakeOrAfterSeq } : (handshakeOrAfterSeq ?? {});
+    const params = handshake ?? {};
     if (params.afterSeq !== undefined) {
         url.searchParams.set("afterSeq", String(params.afterSeq));
     }
     if (params.runtimeId !== undefined && params.runtimeId !== "") {
         url.searchParams.set("runtimeId", params.runtimeId);
     }
-    if (params.entriesVersion !== undefined && params.entriesVersion !== "") {
-        url.searchParams.set("entriesVersion", params.entriesVersion);
-    }
-    if (params.entryCount !== undefined) {
-        url.searchParams.set("entryCount", String(params.entryCount));
-    }
-    if (params.afterEntryId !== undefined && params.afterEntryId !== "") {
-        url.searchParams.set("afterEntryId", params.afterEntryId);
+    if (params.prefixAnchor !== undefined) {
+        url.searchParams.set("entriesVersion", params.prefixAnchor.entriesVersion);
+        url.searchParams.set("afterCount", String(params.prefixAnchor.afterCount));
+        url.searchParams.set("afterEntryId", params.prefixAnchor.afterEntryId);
     }
     return url.toString();
 }
@@ -153,10 +149,6 @@ function defaultSocketConstructor(): SessionSocketConstructor {
     return constructor as unknown as SessionSocketConstructor;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 /**
  * WebSocket client for one session runtime.
  *
@@ -166,7 +158,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * cannot leave a caller waiting forever.
  */
 export class SessionSocket {
-    private readonly sessionId: string;
+    private readonly sessionId: SessionId;
     private readonly handshake: SessionSocketHandshakeParams;
     private readonly url: string | undefined;
     private readonly socketConstructor: SessionSocketConstructor | undefined;

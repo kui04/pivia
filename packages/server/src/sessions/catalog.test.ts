@@ -12,16 +12,24 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 import type { SessionMessageEntry } from "@earendil-works/pi-coding-agent";
+import { parseSessionId, type SessionId } from "@pivia/protocol";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
-    isValidSessionId,
     resolveSessionRoot,
     SessionCatalog,
     type SessionCatalogLogger,
     type SessionCatalogOptions,
 } from "./catalog.ts";
+
+function sid(raw: string): SessionId {
+    const parsed = parseSessionId(raw);
+    if (parsed === null) {
+        throw new Error(`Invalid test session id: ${raw}`);
+    }
+    return parsed;
+}
 
 interface MessageFixture {
     readonly role: string;
@@ -206,25 +214,6 @@ describe("resolveSessionRoot", () => {
     });
 });
 
-describe("isValidSessionId", () => {
-    it("accepts identifiers with alphanumeric characters, dots, dashes, and underscores", () => {
-        expect(isValidSessionId("session-1")).toBe(true);
-        expect(isValidSessionId("0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b")).toBe(true);
-        expect(isValidSessionId("a.b_c-d")).toBe(true);
-    });
-
-    it("rejects empty, traversal, and path-separator identifiers", () => {
-        expect(isValidSessionId("")).toBe(false);
-        expect(isValidSessionId("..")).toBe(false);
-        expect(isValidSessionId("../escape")).toBe(false);
-        expect(isValidSessionId("a/b")).toBe(false);
-        expect(isValidSessionId("a\\b")).toBe(false);
-        expect(isValidSessionId("-leading")).toBe(false);
-        expect(isValidSessionId("trailing-")).toBe(false);
-        expect(isValidSessionId("%2e%2e")).toBe(false);
-    });
-});
-
 describe("SessionCatalog", () => {
     it("lists sessions from the default per-project layout only", async () => {
         const agentDir = createTempDir("pivia-agent-");
@@ -306,7 +295,7 @@ describe("SessionCatalog", () => {
         const result = await catalog.list();
         expect(result.sessions.map((session) => session.id)).toEqual(["session-kept"]);
 
-        const detail = await catalog.getById("session-kept");
+        const detail = await catalog.getById(sid("session-kept"));
         expect(detail?.entries).toHaveLength(2);
         expect(logs.some((log) => log.message === "skipped malformed session lines")).toBe(true);
         const malformedLog = logs.find((log) => log.message === "skipped malformed session lines");
@@ -352,7 +341,7 @@ describe("SessionCatalog", () => {
         expect(result.sessions[0]?.firstMessage).toBe("newer copy");
         expect(logs.some((log) => log.message === "duplicate session id")).toBe(true);
 
-        const detail = await catalog.getById("session-duplicate");
+        const detail = await catalog.getById(sid("session-duplicate"));
         expect(detail?.session.firstMessage).toBe("newer copy");
     });
 
@@ -378,7 +367,7 @@ describe("SessionCatalog", () => {
 
         const { logger } = createRecordingLogger();
         const detail = await createCatalog({ sessionDir, agentDir: createTempDir("pivia-agent-"), logger }).getById(
-            "session-legacy",
+            sid("session-legacy"),
         );
 
         expect(detail).not.toBeNull();
@@ -410,7 +399,7 @@ describe("SessionCatalog", () => {
 
         const { logger } = createRecordingLogger();
         const detail = await createCatalog({ sessionDir, agentDir: createTempDir("pivia-agent-"), logger }).getById(
-            "session-v2",
+            sid("session-v2"),
         );
 
         const entries = detail?.entries ?? [];
@@ -418,18 +407,26 @@ describe("SessionCatalog", () => {
         expect(JSON.stringify(entries)).not.toContain("hookMessage");
     });
 
-    it("returns null for invalid, traversing, and unknown ids", async () => {
+    it("returns null for unknown ids", async () => {
         const sessionDir = createTempDir("pivia-sessions-");
         writeSessionFile(join(sessionDir, "alpha.jsonl"), { id: "session-alpha", messages: [] });
 
         const { logger } = createRecordingLogger();
         const catalog = createCatalog({ sessionDir, agentDir: createTempDir("pivia-agent-"), logger });
 
-        expect(await catalog.getById("..")).toBeNull();
-        expect(await catalog.getById("../escape")).toBeNull();
-        expect(await catalog.getById("%2e%2e")).toBeNull();
-        expect(await catalog.getById("session-unknown")).toBeNull();
-        expect(await catalog.getById("session-alpha")).not.toBeNull();
+        expect(await catalog.getById(sid("session-unknown"))).toBeNull();
+        expect(await catalog.getById(sid("session-alpha"))).not.toBeNull();
+    });
+
+    it("skips and warns on session files whose header has an unusable id", async () => {
+        const sessionDir = createTempDir("pivia-sessions-");
+        writeSessionFile(join(sessionDir, "bad-id.jsonl"), { id: "../bad", messages: [] });
+
+        const { logger, logs } = createRecordingLogger();
+        const catalog = createCatalog({ sessionDir, agentDir: createTempDir("pivia-agent-"), logger });
+
+        expect((await catalog.list()).sessions).toEqual([]);
+        expect(logs.some((log) => log.message === "skipped session with an unusable id")).toBe(true);
     });
 
     it("refuses symbolic links that point outside the session root", async () => {
@@ -443,7 +440,7 @@ describe("SessionCatalog", () => {
         const catalog = createCatalog({ sessionDir, agentDir: createTempDir("pivia-agent-"), logger });
 
         expect((await catalog.list()).sessions).toEqual([]);
-        expect(await catalog.getById("session-outside")).toBeNull();
+        expect(await catalog.getById(sid("session-outside"))).toBeNull();
         expect(logs.some((log) => log.message === "skipped session outside the session root")).toBe(true);
     });
 
@@ -546,14 +543,14 @@ describe("SessionCatalog", () => {
                 { role: "assistant", text: "updated reply", timestamp: "2026-03-01T00:00:05.000Z" },
             ],
         });
-        const resolved = await catalog.resolveById("session-cached");
+        const resolved = await catalog.resolveById(sid("session-cached"));
         expect(resolved?.summary.messageCount).toBe(2);
         expect(resolved?.summary.name).toBe("Updated Title");
         expect(resolved?.sizeBytes).toBe(statSync(filePath).size);
 
         // Deleting the file removes it on the next list() and makes resolveById return null.
         rmSync(filePath);
-        expect(await catalog.resolveById("session-cached")).toBeNull();
+        expect(await catalog.resolveById(sid("session-cached"))).toBeNull();
         expect((await catalog.list()).sessions).toEqual([]);
     });
 
@@ -576,17 +573,17 @@ describe("SessionCatalog", () => {
         const { logger } = createRecordingLogger();
         const catalog = createCatalog({ sessionDir, agentDir: createTempDir("pivia-agent-"), logger });
 
-        const v1Detail = await catalog.getById("session-v1");
+        const v1Detail = await catalog.getById(sid("session-v1"));
         expect(v1Detail?.entriesVersion).toBeNull();
         expect(v1Detail?.baseEntryCount).toBe(0);
 
-        const v3Full = await catalog.getById("session-v3");
+        const v3Full = await catalog.getById(sid("session-v3"));
         expect(v3Full?.entriesVersion).toBe(catalog.entriesVersion);
         expect(v3Full?.baseEntryCount).toBe(0);
         expect(v3Full?.entries).toHaveLength(3);
 
         // Header-only anchor (afterCount = 1, afterEntryId = sessionId) slices messages after header.
-        const fromHeader = await catalog.getById("session-v3", {
+        const fromHeader = await catalog.getById(sid("session-v3"), {
             entriesVersion: catalog.entriesVersion,
             afterCount: 1,
             afterEntryId: "session-v3",
@@ -595,7 +592,7 @@ describe("SessionCatalog", () => {
         expect(fromHeader?.entries).toHaveLength(2);
 
         // Entry-level anchor slices trailing entry only.
-        const fromEntry0 = await catalog.getById("session-v3", {
+        const fromEntry0 = await catalog.getById(sid("session-v3"), {
             entriesVersion: catalog.entriesVersion,
             afterCount: 2,
             afterEntryId: "entry-0",
@@ -604,7 +601,7 @@ describe("SessionCatalog", () => {
         expect(fromEntry0?.entries).toHaveLength(1);
 
         // Mismatched anchor falls back to full entries gracefully.
-        const mismatched = await catalog.getById("session-v3", {
+        const mismatched = await catalog.getById(sid("session-v3"), {
             entriesVersion: catalog.entriesVersion,
             afterCount: 2,
             afterEntryId: "wrong-id",

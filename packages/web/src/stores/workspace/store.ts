@@ -1,4 +1,10 @@
-import type { SessionListResponse, SessionSummary } from "@pivia/protocol";
+import {
+    isRecord,
+    parseSessionId,
+    type SessionId,
+    type SessionListResponse,
+    type SessionSummary,
+} from "@pivia/protocol";
 import { create } from "zustand";
 import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
 
@@ -74,9 +80,9 @@ export interface WorkspaceState {
     readonly scannedAtMs: number | null;
     readonly scan: ScanPhase;
     readonly query: string;
-    readonly selectedId: string | null;
+    readonly selectedId: SessionId | null;
     /** Pinned session ids; only this field persists across reloads. */
-    readonly pins: readonly string[];
+    readonly pins: readonly SessionId[];
     /** Working directories whose rows are hidden. */
     readonly collapsed: readonly string[];
 }
@@ -89,11 +95,11 @@ export interface WorkspaceActions {
     applyScan: (result: SessionListResponse) => void;
     failScan: (message: string) => void;
     setQuery: (query: string) => void;
-    select: (id: string | null) => void;
-    togglePinned: (id: string) => void;
+    select: (id: SessionId | null) => void;
+    togglePinned: (id: SessionId) => void;
     toggleFolder: (cwd: string) => void;
     upsertSession: (session: SessionSummary) => void;
-    removeSession: (id: string) => void;
+    removeSession: (id: SessionId) => void;
     /** Drops connection-scoped state but keeps the pins the user set. */
     reset: () => void;
 }
@@ -110,17 +116,13 @@ export const initialWorkspaceState: WorkspaceState = {
     collapsed: [],
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 /**
  * Reads the persisted pins and drops every value a previous version could not have written.
  *
  * localStorage is outside the type system, so a hand edit or an interrupted write can leave
  * anything there. A malformed entry reads as no pins instead of throwing while the list hydrates.
  */
-function persistedPins(persisted: unknown): readonly string[] {
+function persistedPins(persisted: unknown): readonly SessionId[] {
     if (!isRecord(persisted)) {
         return [];
     }
@@ -128,10 +130,11 @@ function persistedPins(persisted: unknown): readonly string[] {
     if (!Array.isArray(stored)) {
         return [];
     }
-    const pins: string[] = [];
+    const pins: SessionId[] = [];
     for (const entry of stored) {
-        if (typeof entry === "string" && !pins.includes(entry)) {
-            pins.push(entry);
+        const parsed = parseSessionId(entry);
+        if (parsed !== null && !pins.includes(parsed)) {
+            pins.push(parsed);
         }
     }
     return pins;

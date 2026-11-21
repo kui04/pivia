@@ -1,15 +1,15 @@
-import type {
-    CloseSessionResponse,
-    CreateSessionRequest,
-    CreateSessionResponse,
-    SessionDetailResponse,
-    SessionListResponse,
-    SessionPrefixAnchor,
+import {
+    parseSessionId,
+    parseSessionPrefixAnchor,
+    type CloseSessionResponse,
+    type CreateSessionRequest,
+    type CreateSessionResponse,
+    type SessionDetailResponse,
+    type SessionListResponse,
 } from "@pivia/protocol";
 import type { FastifyInstance, FastifyReply } from "fastify";
 
 import { sendApiError, sendRegistryError } from "../http/errors.ts";
-import { isValidSessionId } from "./catalog.ts";
 import { type SessionRegistry, SessionRegistryError } from "./runtime.ts";
 
 const CREATE_SESSION_BODY_SCHEMA = {
@@ -20,35 +20,6 @@ const CREATE_SESSION_BODY_SCHEMA = {
         cwd: { type: "string", minLength: 1 },
     },
 } as const;
-
-interface SessionDetailQuerystring {
-    readonly entriesVersion?: string;
-    readonly afterCount?: string;
-    readonly afterEntryId?: string;
-}
-
-function parseSessionDetailSliceAnchor(query: SessionDetailQuerystring): SessionPrefixAnchor | undefined {
-    const { entriesVersion, afterCount, afterEntryId } = query;
-    if (
-        typeof entriesVersion !== "string" ||
-        entriesVersion.length === 0 ||
-        typeof afterEntryId !== "string" ||
-        afterEntryId.length === 0 ||
-        typeof afterCount !== "string" ||
-        !/^[1-9]\d*$/.test(afterCount)
-    ) {
-        return undefined;
-    }
-    const parsedCount = Number(afterCount);
-    if (!Number.isSafeInteger(parsedCount) || parsedCount < 1) {
-        return undefined;
-    }
-    return {
-        entriesVersion,
-        afterCount: parsedCount,
-        afterEntryId,
-    };
-}
 
 /**
  * Register `/api/sessions*` HTTP endpoints backed by {@link SessionRegistry}.
@@ -83,16 +54,16 @@ export function registerSessionRoutes(app: FastifyInstance, sessionRegistry: Ses
             },
         );
 
-        instance.get<{ Params: { id: string }; Querystring: SessionDetailQuerystring }>(
+        instance.get<{ Params: { id: string } }>(
             "/api/sessions/:id",
             { compress: {} },
             async (request, reply): Promise<SessionDetailResponse | FastifyReply> => {
-                const { id } = request.params;
-                if (!isValidSessionId(id)) {
+                const sessionId = parseSessionId(request.params.id);
+                if (sessionId === null) {
                     return sendApiError(reply, 400, "invalid_request", "Invalid session id.");
                 }
-                const sliceAnchor = parseSessionDetailSliceAnchor(request.query);
-                const detail = await sessionRegistry.getById(id, sliceAnchor);
+                const sliceAnchor = parseSessionPrefixAnchor(request.query);
+                const detail = await sessionRegistry.getById(sessionId, sliceAnchor);
                 if (detail === null) {
                     return sendApiError(reply, 404, "not_found", "Session not found.");
                 }
@@ -103,11 +74,11 @@ export function registerSessionRoutes(app: FastifyInstance, sessionRegistry: Ses
         instance.post<{ Params: { id: string } }>(
             "/api/sessions/:id/close",
             async (request, reply): Promise<CloseSessionResponse | FastifyReply> => {
-                const { id } = request.params;
-                if (!isValidSessionId(id)) {
+                const sessionId = parseSessionId(request.params.id);
+                if (sessionId === null) {
                     return sendApiError(reply, 400, "invalid_request", "Invalid session id.");
                 }
-                const closed = await sessionRegistry.closeSession(id);
+                const closed = await sessionRegistry.closeSession(sessionId);
                 return { closed };
             },
         );

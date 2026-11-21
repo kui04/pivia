@@ -1,4 +1,4 @@
-import type { SessionSummary } from "@pivia/protocol";
+import { parseSessionId, type SessionId, type SessionSummary } from "@pivia/protocol";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -11,9 +11,17 @@ import {
     upsertSession,
 } from "./model";
 
+function sid(raw: string): SessionId {
+    const parsed = parseSessionId(raw);
+    if (parsed === null) {
+        throw new Error(`Invalid test session id: ${raw}`);
+    }
+    return parsed;
+}
+
 function summary(id: string, overrides: Partial<SessionSummary> = {}): SessionSummary {
     return {
-        id,
+        id: sid(id),
         cwd: "/home/u/pivia",
         name: null,
         firstMessage: "First prompt",
@@ -98,8 +106,8 @@ describe("session list helpers", () => {
     });
 
     it("removes a session by id", () => {
-        expect(removeSession([summary("a"), summary("b")], "a").map((session) => session.id)).toEqual(["b"]);
-        expect(removeSession([summary("a")], "missing")).toHaveLength(1);
+        expect(removeSession([summary("a"), summary("b")], sid("a")).map((session) => session.id)).toEqual(["b"]);
+        expect(removeSession([summary("a")], sid("missing"))).toHaveLength(1);
     });
 });
 
@@ -108,9 +116,9 @@ describe("buildWorkspaceModel", () => {
         expect(
             buildWorkspaceModel({
                 sessions: [],
-                pins: ["a"],
+                pins: [sid("a")],
                 query: "a",
-                selectedId: "a",
+                selectedId: sid("a"),
                 collapsed: ["/home/u/pivia"],
             }),
         ).toEqual({ pinned: [], folders: [], total: 0, matched: 0 });
@@ -127,9 +135,9 @@ describe("buildWorkspaceModel", () => {
 
         const model = buildWorkspaceModel({
             sessions,
-            pins: ["pin-old", "pin-new", "pin-tie-a", "pin-tie-b"],
+            pins: [sid("pin-old"), sid("pin-new"), sid("pin-tie-a"), sid("pin-tie-b")],
             query: "",
-            selectedId: "pin-new",
+            selectedId: sid("pin-new"),
             collapsed: [],
         });
 
@@ -154,7 +162,7 @@ describe("buildWorkspaceModel", () => {
             sessions,
             pins: [],
             query: "   ",
-            selectedId: "a",
+            selectedId: sid("a"),
             collapsed: ["/home/u/alpha"],
         });
 
@@ -200,7 +208,7 @@ describe("buildWorkspaceModel", () => {
 
         const model = buildWorkspaceModel({
             sessions,
-            pins: ["one"],
+            pins: [sid("one")],
             query: "  parser ",
             selectedId: null,
             collapsed: ["/home/u/docs", "/home/u/Parser-Lab"],
@@ -216,7 +224,7 @@ describe("buildWorkspaceModel", () => {
     it("shows only sessions that match the search", () => {
         const model = buildWorkspaceModel({
             sessions: [summary("one", { name: "Alpha" }), summary("two", { name: "Beta" })],
-            pins: ["two"],
+            pins: [sid("two")],
             query: "alpha",
             selectedId: null,
             collapsed: [],

@@ -1,11 +1,11 @@
-import type { FileEntry, SessionSummary } from "@pivia/protocol";
+import type { EntriesVersion, FileEntry, SessionId, SessionSummary } from "@pivia/protocol";
 
 import { Log } from "@/lib/log";
 
 /** Metadata stored per cached session in `session_meta`. */
 export interface SessionCacheMeta {
-    readonly sessionId: string;
-    readonly entriesVersion: string;
+    readonly sessionId: SessionId;
+    readonly entriesVersion: EntriesVersion;
     /** Total cached entry count including the session header (`entries[0]`). */
     readonly entryCount: number;
     /** Id of `entries[entryCount - 1]`; equals `sessionId` when `entryCount === 1`. */
@@ -16,7 +16,7 @@ export interface SessionCacheMeta {
 
 /** One row stored in `session_entries` under composite primary key `[sessionId, index]`. */
 export interface SessionCacheEntryRow {
-    readonly sessionId: string;
+    readonly sessionId: SessionId;
     readonly index: number;
     readonly entry: FileEntry;
 }
@@ -52,19 +52,19 @@ export interface SessionCacheOptions {
 
 /** Persistence contract consumed by the session, workspace, and auth stores. */
 export interface SessionCacheStore {
-    getSession(sessionId: string): Promise<CachedSessionSnapshot | null>;
+    getSession(sessionId: SessionId): Promise<CachedSessionSnapshot | null>;
     appendEntries(
-        sessionId: string,
-        entriesVersion: string,
+        sessionId: SessionId,
+        entriesVersion: EntriesVersion,
         baseEntryCount: number,
         entries: readonly FileEntry[],
     ): Promise<CacheWriteOutcome>;
     replaceEntries(
-        sessionId: string,
-        entriesVersion: string,
+        sessionId: SessionId,
+        entriesVersion: EntriesVersion,
         entries: readonly FileEntry[],
     ): Promise<CacheWriteOutcome>;
-    deleteSession(sessionId: string): Promise<void>;
+    deleteSession(sessionId: SessionId): Promise<void>;
     getWorkspaceCatalog(): Promise<WorkspaceCatalogCacheRecord | null>;
     putWorkspaceCatalog(sessions: readonly SessionSummary[], scannedAtMs: number): Promise<void>;
     clearAll(): Promise<void>;
@@ -135,8 +135,8 @@ export class IndexedDbSessionCache implements SessionCacheStore {
     private dbPromise: Promise<IDBDatabase | null> | null = null;
     private degradedToMemory = false;
 
-    private readonly memMeta = new Map<string, SessionCacheMeta>();
-    private readonly memEntries = new Map<string, FileEntry[]>();
+    private readonly memMeta = new Map<SessionId, SessionCacheMeta>();
+    private readonly memEntries = new Map<SessionId, FileEntry[]>();
     private memCatalog: WorkspaceCatalogCacheRecord | null = null;
 
     constructor(options: SessionCacheOptions = {}) {
@@ -150,14 +150,14 @@ export class IndexedDbSessionCache implements SessionCacheStore {
         }
     }
 
-    private sessionEntryRange(sessionId: string): IDBKeyRange {
+    private sessionEntryRange(sessionId: SessionId): IDBKeyRange {
         if (this.keyRange === undefined) {
             throw new Error("IDBKeyRange is unavailable.");
         }
         return this.keyRange.bound([sessionId, 0], [sessionId, Infinity]);
     }
 
-    async getSession(sessionId: string): Promise<CachedSessionSnapshot | null> {
+    async getSession(sessionId: SessionId): Promise<CachedSessionSnapshot | null> {
         const db = await this.openDb();
         if (db === null) {
             return this.getMemorySession(sessionId);
@@ -196,8 +196,8 @@ export class IndexedDbSessionCache implements SessionCacheStore {
     }
 
     async appendEntries(
-        sessionId: string,
-        entriesVersion: string,
+        sessionId: SessionId,
+        entriesVersion: EntriesVersion,
         baseEntryCount: number,
         entries: readonly FileEntry[],
     ): Promise<CacheWriteOutcome> {
@@ -267,8 +267,8 @@ export class IndexedDbSessionCache implements SessionCacheStore {
     }
 
     async replaceEntries(
-        sessionId: string,
-        entriesVersion: string,
+        sessionId: SessionId,
+        entriesVersion: EntriesVersion,
         entries: readonly FileEntry[],
     ): Promise<CacheWriteOutcome> {
         if (entries.length === 0) {
@@ -333,7 +333,7 @@ export class IndexedDbSessionCache implements SessionCacheStore {
         );
     }
 
-    async deleteSession(sessionId: string): Promise<void> {
+    async deleteSession(sessionId: SessionId): Promise<void> {
         this.memMeta.delete(sessionId);
         this.memEntries.delete(sessionId);
 
@@ -483,7 +483,7 @@ export class IndexedDbSessionCache implements SessionCacheStore {
 
     private async executeWithQuotaRetry(
         db: IDBDatabase,
-        keepSessionId: string,
+        keepSessionId: SessionId,
         attempt: () => Promise<CacheWriteOutcome>,
         memoryFallback: () => CacheWriteOutcome,
     ): Promise<CacheWriteOutcome> {
@@ -505,7 +505,7 @@ export class IndexedDbSessionCache implements SessionCacheStore {
         }
     }
 
-    private async evictAllExcept(db: IDBDatabase, keepSessionId: string): Promise<void> {
+    private async evictAllExcept(db: IDBDatabase, keepSessionId: SessionId): Promise<void> {
         const tx = db.transaction([STORE_META, STORE_ENTRIES], "readwrite");
         const metaStore = tx.objectStore(STORE_META);
         const entriesStore = tx.objectStore(STORE_ENTRIES);
@@ -520,7 +520,7 @@ export class IndexedDbSessionCache implements SessionCacheStore {
         await transactionDone(tx);
     }
 
-    private async enforceLimits(db: IDBDatabase, keepSessionId: string): Promise<void> {
+    private async enforceLimits(db: IDBDatabase, keepSessionId: SessionId): Promise<void> {
         try {
             const tx = db.transaction([STORE_META, STORE_ENTRIES], "readwrite");
             const metaStore = tx.objectStore(STORE_META);
@@ -556,7 +556,7 @@ export class IndexedDbSessionCache implements SessionCacheStore {
         }
     }
 
-    private getMemorySession(sessionId: string): CachedSessionSnapshot | null {
+    private getMemorySession(sessionId: SessionId): CachedSessionSnapshot | null {
         const meta = this.memMeta.get(sessionId);
         const entries = this.memEntries.get(sessionId);
         if (meta === undefined || entries === undefined || entries.length !== meta.entryCount) {
@@ -568,8 +568,8 @@ export class IndexedDbSessionCache implements SessionCacheStore {
     }
 
     private appendMemoryEntries(
-        sessionId: string,
-        entriesVersion: string,
+        sessionId: SessionId,
+        entriesVersion: EntriesVersion,
         baseEntryCount: number,
         entries: readonly FileEntry[],
     ): CacheWriteOutcome {
@@ -604,8 +604,8 @@ export class IndexedDbSessionCache implements SessionCacheStore {
     }
 
     private replaceMemoryEntries(
-        sessionId: string,
-        entriesVersion: string,
+        sessionId: SessionId,
+        entriesVersion: EntriesVersion,
         entries: readonly FileEntry[],
     ): CacheWriteOutcome {
         if (entries.length === 0) {
@@ -638,7 +638,7 @@ export class IndexedDbSessionCache implements SessionCacheStore {
         return this.degradedToMemory ? "degraded-memory" : "written";
     }
 
-    private enforceMemoryLimits(keepSessionId: string): void {
+    private enforceMemoryLimits(keepSessionId: SessionId): void {
         let totalBytes = 0;
         for (const meta of this.memMeta.values()) {
             totalBytes += meta.estimatedBytes;

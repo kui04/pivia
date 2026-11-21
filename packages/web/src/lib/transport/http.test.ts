@@ -1,6 +1,23 @@
+import { parseEntriesVersion, parseSessionId, type EntriesVersion, type SessionId } from "@pivia/protocol";
 import { describe, expect, it, vi } from "vitest";
 
 import { ApiClientError, createApiClient, type FetchLike } from "./http";
+
+function sid(raw: string): SessionId {
+    const parsed = parseSessionId(raw);
+    if (parsed === null) {
+        throw new Error(`Invalid test session id: ${raw}`);
+    }
+    return parsed;
+}
+
+function ev(raw: string): EntriesVersion {
+    const parsed = parseEntriesVersion(raw);
+    if (parsed === null) {
+        throw new Error(`Invalid test entries version: ${raw}`);
+    }
+    return parsed;
+}
 
 function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
     return new Response(JSON.stringify(body), {
@@ -69,11 +86,11 @@ describe("createApiClient", () => {
             return Promise.resolve(jsonResponse({ session: {}, entries: [] }));
         };
         const detailClient = createApiClient({ fetch: detailFetch });
-        await detailClient.getSession("a/b ?c");
-        await detailClient.closeSession("a/b ?c");
+        await detailClient.getSession(sid("session.1_a-b"));
+        await detailClient.closeSession(sid("session.1_a-b"));
 
-        expect(urls[1]).toBe("/api/sessions/a%2Fb%20%3Fc");
-        expect(urls[2]).toBe("/api/sessions/a%2Fb%20%3Fc/close");
+        expect(urls[1]).toBe("/api/sessions/session.1_a-b");
+        expect(urls[2]).toBe("/api/sessions/session.1_a-b/close");
     });
 
     it("posts the login body as JSON and resolves the login response", async () => {
@@ -109,7 +126,7 @@ describe("createApiClient", () => {
 
         await client.getAuthStatus();
         await client.logout();
-        await client.closeSession("s1");
+        await client.closeSession(sid("s1"));
 
         expect(requests).toHaveLength(3);
         for (const init of requests) {
@@ -127,7 +144,7 @@ describe("createApiClient", () => {
         const client = createApiClient({ fetch: fetchImpl });
 
         const created = await client.createSession("/home/u/project");
-        const closed = await client.closeSession("s1");
+        const closed = await client.closeSession(sid("s1"));
 
         expect(created).toEqual({ session: { id: "s1" }, closed: true });
         expect(closed).toEqual({ session: { id: "s1" }, closed: true });
@@ -265,10 +282,12 @@ describe("createApiClient", () => {
         const client = createApiClient({ fetch: fetchImpl });
         const controller = new AbortController();
 
-        await client.getSession("s1", {
-            entriesVersion: "3:1.5.2",
-            afterCount: 2,
-            afterEntryId: "e1",
+        await client.getSession(sid("s1"), {
+            anchor: {
+                entriesVersion: ev("3:1.5.2"),
+                afterCount: 2,
+                afterEntryId: "e1",
+            },
             signal: controller.signal,
         });
 

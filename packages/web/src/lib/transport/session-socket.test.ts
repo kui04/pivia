@@ -1,5 +1,31 @@
-import { SESSION_CLOSE_CODE, type WsServerMessage } from "@pivia/protocol";
+import {
+    parseEntriesVersion,
+    parseSessionId,
+    SESSION_CLOSE_CODE,
+    type EntriesVersion,
+    type SessionId,
+    type WsServerMessage,
+} from "@pivia/protocol";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+function sid(raw: string): SessionId {
+    const parsed = parseSessionId(raw);
+    if (parsed === null) {
+        throw new Error(`Invalid test session id: ${raw}`);
+    }
+    return parsed;
+}
+
+function ev(raw: string): EntriesVersion {
+    const parsed = parseEntriesVersion(raw);
+    if (parsed === null) {
+        throw new Error(`Invalid test entries version: ${raw}`);
+    }
+    return parsed;
+}
+
+const SESSION_1 = sid("session-1");
+const V152 = ev("3:1.5.2");
 
 import {
     buildSessionSocketUrl,
@@ -58,7 +84,7 @@ function openSocket(options: Partial<ConstructorParameters<typeof SessionSocket>
     instance: FakeSocket;
 } {
     const socket = new SessionSocket({
-        sessionId: "session-1",
+        sessionId: SESSION_1,
         url: "ws://example.test/ws/sessions/session-1",
         WebSocket: FakeSocket,
         ...options,
@@ -85,17 +111,26 @@ beforeEach(() => {
 
 describe("buildSessionSocketUrl", () => {
     it("maps the page origin to ws or wss", () => {
-        expect(buildSessionSocketUrl("s1", undefined, "https://example.test/workspace")).toBe(
+        expect(buildSessionSocketUrl(sid("s1"), undefined, "https://example.test/workspace")).toBe(
             "wss://example.test/ws/sessions/s1",
         );
-        expect(buildSessionSocketUrl("s1", undefined, "http://example.test/workspace")).toBe(
+        expect(buildSessionSocketUrl(sid("s1"), undefined, "http://example.test/workspace")).toBe(
             "ws://example.test/ws/sessions/s1",
         );
     });
 
-    it("encodes the session id and appends afterSeq", () => {
-        expect(buildSessionSocketUrl("a/b ?c", 12, "http://127.0.0.1:3141/workspace?x=1#top")).toBe(
-            "ws://127.0.0.1:3141/ws/sessions/a%2Fb%20%3Fc?afterSeq=12",
+    it("encodes the session id and appends afterSeq and prefixAnchor", () => {
+        expect(
+            buildSessionSocketUrl(
+                sid("session.1_a-b"),
+                {
+                    afterSeq: 12,
+                    prefixAnchor: { entriesVersion: V152, afterCount: 3, afterEntryId: "e3" },
+                },
+                "http://127.0.0.1:3141/workspace?x=1#top",
+            ),
+        ).toBe(
+            "ws://127.0.0.1:3141/ws/sessions/session.1_a-b?afterSeq=12&entriesVersion=3%3A1.5.2&afterCount=3&afterEntryId=e3",
         );
     });
 });
@@ -255,14 +290,14 @@ describe("SessionSocket", () => {
         const messages: WsServerMessage[] = [
             {
                 type: "snapshot",
-                sessionId: "session-1",
+                sessionId: SESSION_1,
                 runtimeId: "runtime-1",
                 seq: 0,
-                entriesVersion: "3:1.5.2",
+                entriesVersion: V152,
                 baseEntryCount: 0,
                 entriesMode: "inline",
                 state: {
-                    sessionId: "session-1",
+                    sessionId: SESSION_1,
                     cwd: "/tmp",
                     name: null,
                     model: null,
@@ -283,12 +318,12 @@ describe("SessionSocket", () => {
             },
             {
                 type: "replay",
-                sessionId: "session-1",
+                sessionId: SESSION_1,
                 runtimeId: "runtime-1",
                 seq: 0,
-                entriesVersion: "3:1.5.2",
+                entriesVersion: V152,
                 state: {
-                    sessionId: "session-1",
+                    sessionId: SESSION_1,
                     cwd: "/tmp",
                     name: null,
                     model: null,
@@ -307,10 +342,10 @@ describe("SessionSocket", () => {
                 liveMessage: null,
                 pendingUiRequests: [],
             },
-            { type: "event", sessionId: "session-1", seq: 1, event: { type: "agent_start" } },
+            { type: "event", sessionId: SESSION_1, seq: 1, event: { type: "agent_start" } },
             {
                 type: "extension_ui_request",
-                sessionId: "session-1",
+                sessionId: SESSION_1,
                 request: {
                     type: "extension_ui_request",
                     id: "dialog",
@@ -319,10 +354,10 @@ describe("SessionSocket", () => {
                     message: "Confirm",
                 },
             },
-            { type: "extension_ui_resolved", sessionId: "session-1", requestId: "dialog" },
+            { type: "extension_ui_resolved", sessionId: SESSION_1, requestId: "dialog" },
             {
                 type: "extension_error",
-                sessionId: "session-1",
+                sessionId: SESSION_1,
                 extensionPath: "/ext.js",
                 event: "tool_call",
                 error: "boom",

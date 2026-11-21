@@ -1,19 +1,43 @@
-import type {
-    AssistantMessage,
-    FileEntry,
-    RpcExtensionUIRequest,
-    SessionStateSnapshot,
-    WsEventMessage,
-    WsReplayMessage,
-    WsSnapshotMessage,
+import {
+    parseEntriesVersion,
+    parseSessionId,
+    type AssistantMessage,
+    type EntriesVersion,
+    type FileEntry,
+    type RpcExtensionUIRequest,
+    type SessionId,
+    type SessionStateSnapshot,
+    type WsEventMessage,
+    type WsReplayMessage,
+    type WsSnapshotMessage,
 } from "@pivia/protocol";
 import { describe, expect, it } from "vitest";
 
 import { initialSessionState, liveAssistantMessage, reduceSessionState, type SessionState } from "./reducer";
 
+function sid(raw: string): SessionId {
+    const parsed = parseSessionId(raw);
+    if (parsed === null) {
+        throw new Error(`Invalid test session id: ${raw}`);
+    }
+    return parsed;
+}
+
+function ev(raw: string): EntriesVersion {
+    const parsed = parseEntriesVersion(raw);
+    if (parsed === null) {
+        throw new Error(`Invalid test entries version: ${raw}`);
+    }
+    return parsed;
+}
+
+const SESSION_1 = sid("session-1");
+const OTHER_SESSION = sid("other");
+const V152 = ev("3:1.5.2");
+
 function summary(overrides: Partial<SessionStateSnapshot> = {}): SessionStateSnapshot {
     return {
-        sessionId: "session-1",
+        sessionId: SESSION_1,
         cwd: "/home/u/project",
         name: null,
         model: null,
@@ -49,7 +73,7 @@ function notifyRequest(id: string): RpcExtensionUIRequest {
 }
 
 function connected(): SessionState {
-    return reduceSessionState(initialSessionState, { type: "connect", sessionId: "session-1" });
+    return reduceSessionState(initialSessionState, { type: "connect", sessionId: SESSION_1 });
 }
 
 type InlineSnapshotMessage = Extract<WsSnapshotMessage, { readonly entriesMode: "inline" }>;
@@ -57,10 +81,10 @@ type InlineSnapshotMessage = Extract<WsSnapshotMessage, { readonly entriesMode: 
 function snapshot(seq: number, overrides: Partial<InlineSnapshotMessage> = {}): InlineSnapshotMessage {
     return {
         type: "snapshot",
-        sessionId: "session-1",
+        sessionId: SESSION_1,
         runtimeId: "runtime-1",
         seq,
-        entriesVersion: "3:1.5.2",
+        entriesVersion: V152,
         baseEntryCount: 0,
         entriesMode: "inline",
         state: summary(),
@@ -74,10 +98,10 @@ function snapshot(seq: number, overrides: Partial<InlineSnapshotMessage> = {}): 
 function replay(seq: number, overrides: Partial<WsReplayMessage> = {}): WsReplayMessage {
     return {
         type: "replay",
-        sessionId: "session-1",
+        sessionId: SESSION_1,
         runtimeId: "runtime-1",
         seq,
-        entriesVersion: "3:1.5.2",
+        entriesVersion: V152,
         state: summary(),
         events: [],
         liveMessage: null,
@@ -87,7 +111,7 @@ function replay(seq: number, overrides: Partial<WsReplayMessage> = {}): WsReplay
 }
 
 function event(seq: number, eventMessage: WsEventMessage["event"]): WsEventMessage {
-    return { type: "event", sessionId: "session-1", seq, event: eventMessage };
+    return { type: "event", sessionId: SESSION_1, seq, event: eventMessage };
 }
 
 type AssistantDelta = Extract<WsEventMessage["event"], { type: "message_update" }>["assistantMessageEvent"];
@@ -173,14 +197,14 @@ describe("session reducer", () => {
         const state = connected();
         const next = reduceSessionState(state, {
             type: "snapshot",
-            message: snapshot(1, { sessionId: "other" }),
+            message: snapshot(1, { sessionId: OTHER_SESSION }),
         });
 
         expect(next).toBe(state);
         expect(
             reduceSessionState(state, {
                 type: "event",
-                message: { ...event(1, { type: "agent_start" }), sessionId: "other" },
+                message: { ...event(1, { type: "agent_start" }), sessionId: OTHER_SESSION },
             }),
         ).toBe(state);
     });
@@ -284,38 +308,38 @@ describe("session reducer", () => {
 
         state = reduceSessionState(state, {
             type: "extension_ui_request",
-            message: { type: "extension_ui_request", sessionId: "session-1", request: dialog("confirm") },
+            message: { type: "extension_ui_request", sessionId: SESSION_1, request: dialog("confirm") },
         });
         state = reduceSessionState(state, {
             type: "extension_ui_request",
-            message: { type: "extension_ui_request", sessionId: "session-1", request: dialog("select", "select") },
+            message: { type: "extension_ui_request", sessionId: SESSION_1, request: dialog("select", "select") },
         });
         state = reduceSessionState(state, {
             type: "extension_ui_request",
-            message: { type: "extension_ui_request", sessionId: "session-1", request: notifyRequest("notify") },
+            message: { type: "extension_ui_request", sessionId: SESSION_1, request: notifyRequest("notify") },
         });
         state = reduceSessionState(state, {
             type: "extension_ui_request",
-            message: { type: "extension_ui_request", sessionId: "session-1", request: dialog("confirm") },
+            message: { type: "extension_ui_request", sessionId: SESSION_1, request: dialog("confirm") },
         });
 
         expect(state.pendingUiRequests.map((request) => request.id)).toEqual(["confirm", "select"]);
 
         state = reduceSessionState(state, {
             type: "extension_ui_resolved",
-            message: { type: "extension_ui_resolved", sessionId: "session-1", requestId: "confirm" },
+            message: { type: "extension_ui_resolved", sessionId: SESSION_1, requestId: "confirm" },
         });
         expect(state.pendingUiRequests.map((request) => request.id)).toEqual(["select"]);
 
         const unchanged = reduceSessionState(state, {
             type: "extension_ui_resolved",
-            message: { type: "extension_ui_resolved", sessionId: "session-1", requestId: "missing" },
+            message: { type: "extension_ui_resolved", sessionId: SESSION_1, requestId: "missing" },
         });
         expect(unchanged).toBe(state);
 
         const otherSession = reduceSessionState(state, {
             type: "extension_ui_request",
-            message: { type: "extension_ui_request", sessionId: "other", request: dialog("other") },
+            message: { type: "extension_ui_request", sessionId: OTHER_SESSION, request: dialog("other") },
         });
         expect(otherSession).toBe(state);
     });
@@ -418,7 +442,7 @@ describe("session reducer", () => {
 
         const lateDialog = reduceSessionState(sessionClose, {
             type: "extension_ui_request",
-            message: { type: "extension_ui_request", sessionId: "session-1", request: dialog("late") },
+            message: { type: "extension_ui_request", sessionId: SESSION_1, request: dialog("late") },
         });
         expect(lateDialog).toBe(sessionClose);
 
@@ -471,8 +495,8 @@ describe("session reducer", () => {
             type: "entries_appended",
             message: {
                 type: "entries_appended",
-                sessionId: "session-1",
-                entriesVersion: "3:1.5.2",
+                sessionId: SESSION_1,
+                entriesVersion: V152,
                 entriesMode: "inline",
                 baseEntryCount: 1,
                 entries: [
@@ -493,8 +517,8 @@ describe("session reducer", () => {
             type: "entries_appended",
             message: {
                 type: "entries_appended",
-                sessionId: "session-1",
-                entriesVersion: "3:1.5.2",
+                sessionId: SESSION_1,
+                entriesVersion: V152,
                 entriesMode: "inline",
                 baseEntryCount: 2,
                 entries: [
@@ -539,10 +563,10 @@ describe("session reducer", () => {
             type: "snapshot",
             message: {
                 type: "snapshot",
-                sessionId: "session-1",
+                sessionId: SESSION_1,
                 runtimeId: "runtime-1",
                 seq: 1,
-                entriesVersion: "3:1.5.2",
+                entriesVersion: V152,
                 baseEntryCount: 0,
                 entriesMode: "http",
                 entryCount: 2,
@@ -562,8 +586,8 @@ describe("session reducer", () => {
             type: "entries_appended",
             message: {
                 type: "entries_appended",
-                sessionId: "session-1",
-                entriesVersion: "3:1.5.2",
+                sessionId: SESSION_1,
+                entriesVersion: V152,
                 entriesMode: "inline",
                 baseEntryCount: 2,
                 entries: [msg2],
@@ -574,8 +598,8 @@ describe("session reducer", () => {
         // HTTP returns [header, msg1] (without msg2); reducer merges msg2 cleanly without duplication.
         state = reduceSessionState(state, {
             type: "entries_sync_succeeded",
-            sessionId: "session-1",
-            entriesVersion: "3:1.5.2",
+            sessionId: SESSION_1,
+            entriesVersion: V152,
             baseEntryCount: 0,
             entries: [headerEntry, msg1],
         });
@@ -598,10 +622,10 @@ describe("session reducer", () => {
             type: "snapshot",
             message: {
                 type: "snapshot",
-                sessionId: "session-1",
+                sessionId: SESSION_1,
                 runtimeId: "runtime-1",
                 seq: 1,
-                entriesVersion: "3:1.5.2",
+                entriesVersion: V152,
                 baseEntryCount: 0,
                 entriesMode: "http",
                 entryCount: 2,
@@ -614,8 +638,8 @@ describe("session reducer", () => {
             type: "entries_appended",
             message: {
                 type: "entries_appended",
-                sessionId: "session-1",
-                entriesVersion: "3:1.5.2",
+                sessionId: SESSION_1,
+                entriesVersion: V152,
                 entriesMode: "inline",
                 baseEntryCount: 2,
                 entries: staged,

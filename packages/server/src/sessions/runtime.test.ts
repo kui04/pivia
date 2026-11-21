@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import type { SessionManager } from "@earendil-works/pi-coding-agent";
 
-import type { WsResponseMessage, WsServerMessage } from "@pivia/protocol";
+import { parseSessionId, type SessionId, type WsResponseMessage, type WsServerMessage } from "@pivia/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createLogger } from "../logger.ts";
@@ -124,9 +124,17 @@ async function waitUntil(predicate: () => boolean, timeoutMs = 2000): Promise<vo
     throw new Error("Timed out waiting for condition");
 }
 
+function sid(raw: string): SessionId {
+    const parsed = parseSessionId(raw);
+    if (parsed === null) {
+        throw new Error(`Invalid test session id: ${raw}`);
+    }
+    return parsed;
+}
+
 async function waitForRuntimeState(
     registry: SessionRegistry,
-    sessionId: string,
+    sessionId: SessionId,
     expected: string,
     timeoutMs = 2000,
 ): Promise<void> {
@@ -190,7 +198,7 @@ function findSessionFiles(dir: string): string[] {
 
 function attach(
     registry: SessionRegistry,
-    sessionId: string,
+    sessionId: SessionId,
     options?: SessionAttachOptions,
 ): { collector: Collector; attachment: SessionAttachment } {
     const collector = createCollector();
@@ -214,8 +222,8 @@ describe("SessionRegistry", () => {
         });
 
         const [first, second] = await Promise.all([
-            fixture.registry.open("session-alpha"),
-            fixture.registry.open("session-alpha"),
+            fixture.registry.open(sid("session-alpha")),
+            fixture.registry.open(sid("session-alpha")),
         ]);
 
         expect(fixture.harness.runtimes).toHaveLength(1);
@@ -227,7 +235,7 @@ describe("SessionRegistry", () => {
     it("returns a not-found error for unknown session ids", async () => {
         const fixture = createFixture();
 
-        await expect(fixture.registry.open("session-missing")).rejects.toMatchObject({
+        await expect(fixture.registry.open(sid("session-missing"))).rejects.toMatchObject({
             name: "SessionRegistryError",
             code: "not_found",
         });
@@ -459,8 +467,8 @@ describe("SessionRegistry", () => {
     it("waits for a closing runtime before reopening the same session", async () => {
         const fixture = createFixture();
         writeSessionFixture(join(fixture.sessionDir, "alpha.jsonl"), "session-alpha");
-        const first = await fixture.registry.open("session-alpha");
-        await waitForRuntimeState(fixture.registry, "session-alpha", "idle");
+        const first = await fixture.registry.open(sid("session-alpha"));
+        await waitForRuntimeState(fixture.registry, sid("session-alpha"), "idle");
         expect(first.sessionId).toBe("session-alpha");
 
         const runtime = fixture.harness.find("session-alpha");
@@ -473,8 +481,8 @@ describe("SessionRegistry", () => {
         });
         runtime.disposeHandler = () => gate;
 
-        const closePromise = fixture.registry.closeSession("session-alpha");
-        const openPromise = fixture.registry.open("session-alpha");
+        const closePromise = fixture.registry.closeSession(sid("session-alpha"));
+        const openPromise = fixture.registry.open(sid("session-alpha"));
         await new Promise((resolve) => setTimeout(resolve, 20));
         expect(fixture.harness.runtimes).toHaveLength(1);
 
@@ -731,7 +739,7 @@ describe("SessionRegistry", () => {
             timestamp: "2026-06-01T00:00:00.000Z",
         });
 
-        await fixture.registry.open("session-old");
+        await fixture.registry.open(sid("session-old"));
         expect((await fixture.registry.list()).sessions.map((session) => session.id)).toEqual([
             "session-old",
             "session-new",
@@ -1116,18 +1124,18 @@ describe("SessionRegistry", () => {
         const fixture = createFixture();
         writeSessionFixture(join(fixture.sessionDir, "alpha.jsonl"), "session-alpha");
         writeSessionFixture(join(fixture.sessionDir, "beta.jsonl"), "session-beta");
-        const alpha = await fixture.registry.open("session-alpha");
-        const beta = await fixture.registry.open("session-beta");
+        const alpha = await fixture.registry.open(sid("session-alpha"));
+        const beta = await fixture.registry.open(sid("session-beta"));
 
         fakeSession(fixture, alpha).bindings?.shutdownHandler();
         await waitUntil(() => fixture.registry.activeSessionCount === 1);
 
         expect(fixture.harness.find("session-alpha")?.disposeCalls).toBe(1);
         expect(fixture.harness.find("session-beta")?.disposeCalls).toBe(0);
-        expect(await fixture.registry.getById("session-alpha")).not.toBeNull();
+        expect(await fixture.registry.getById(sid("session-alpha"))).not.toBeNull();
         expect(fakeSession(fixture, beta).bindings).toBeDefined();
 
-        const { collector } = attach(fixture.registry, "session-beta");
+        const { collector } = attach(fixture.registry, sid("session-beta"));
         expect(collector.messages[0]).toMatchObject({ type: "snapshot", sessionId: "session-beta" });
     });
 
