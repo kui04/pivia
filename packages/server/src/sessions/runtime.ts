@@ -17,8 +17,8 @@ import {
 import { parseSessionId, SESSION_CLOSE_CODE } from "@pivia/protocol";
 import type {
     AssistantMessage,
+    EntriesVersion,
     ImageContent,
-    QueueMode,
     SessionCloseCode,
     SessionDetailResponse,
     SessionId,
@@ -77,19 +77,7 @@ export class SessionRegistryError extends Error {
 }
 
 /** State exposed by a managed session runtime. */
-export interface ManagedSessionState {
-    readonly model: SessionModelInfo | null;
-    readonly thinkingLevel: ThinkingLevel;
-    readonly isStreaming: boolean;
-    readonly isCompacting: boolean;
-    readonly steeringMode: QueueMode;
-    readonly followUpMode: QueueMode;
-    readonly autoCompactionEnabled: boolean;
-    readonly messageCount: number;
-    readonly pendingMessageCount: number;
-    readonly steeringMessages: readonly string[];
-    readonly followUpMessages: readonly string[];
-}
+export type ManagedSessionState = Omit<SessionStateSnapshot, "sessionId" | "cwd" | "name">;
 
 /** Options for one managed prompt. */
 export interface ManagedPromptOptions {
@@ -231,7 +219,10 @@ export interface SessionAttachment {
     detach(): void;
 }
 
-type SessionPhase = "starting" | "open" | "closing";
+type ActiveSessionLifecycle =
+    | { readonly phase: "starting" }
+    | { readonly phase: "open" }
+    | { readonly phase: "closing"; readonly closePromise: Promise<void> };
 
 interface ActiveSession {
     readonly sessionId: SessionId;
@@ -244,8 +235,7 @@ interface ActiveSession {
     readonly readyPromise: Promise<void>;
     unsubscribe: () => void;
     unsubscribeEntries: () => void;
-    phase: SessionPhase;
-    closePromise: Promise<void> | undefined;
+    lifecycle: ActiveSessionLifecycle;
     lastActivityMs: number;
     lastClientDetachMs: number | undefined;
     idleTimer: NodeJS.Timeout | undefined;
@@ -255,20 +245,12 @@ interface ActiveSession {
     diskSizeBytes: number | undefined;
 }
 
-interface Deferred {
-    readonly promise: Promise<void>;
-    resolve(): void;
-    reject(error: unknown): void;
-}
-
-function createDeferred(): Deferred {
-    let resolve!: () => void;
-    let reject!: (error: unknown) => void;
-    const promise = new Promise<void>((res, rej) => {
-        resolve = res;
-        reject = rej;
-    });
-    return { promise, resolve, reject };
+interface HandshakeFallbackContext {
+    readonly seq: number;
+    readonly entriesVersion: EntriesVersion;
+    readonly entryCount: number;
+    readonly state: SessionStateSnapshot;
+    readonly pendingUiRequests: readonly WsSnapshotMessage["pendingUiRequests"][number][];
 }
 
 function toRuntimeState(state: ManagedSessionState): SessionRuntimeState {
@@ -412,13 +394,10 @@ export class SessionRegistry {
             this.assertUsable();
             const active = this.active.get(id);
             if (active !== undefined) {
-                if (active.phase !== "closing") {
+                if (active.lifecycle.phase !== "closing") {
                     return this.createHandle(active);
                 }
-                if (active.closePromise === undefined) {
-                    throw new Error("Session is closing without a close operation.");
-                }
-                await active.closePromise;
+                await active.lifecycle.closePromise;
                 continue;
             }
 
@@ -498,26 +477,23 @@ export class SessionRegistry {
         const closeCode = options.closeCode ?? SESSION_CLOSE_CODE.sessionClosed;
         const closeReason = options.closeReason ?? "Session closed";
 
-        if (entry.closePromise !== undefined) {
+        if (entry.lifecycle.phase === "closing") {
             if (options.force === true) {
                 entry.uiBridge.dispose();
                 this.closeClients(entry, closeCode, closeReason);
             }
-            await entry.closePromise;
+            await entry.lifecycle.closePromise;
             return true;
         }
 
-        const wasStarting = entry.phase === "starting";
-        entry.phase = "closing";
-        const closePromise = this.closeSessionInternal(
-            entry,
-            wasStarting,
-            options.force === true,
-            closeCode,
-            closeReason,
+        const wasStarting = entry.lifecycle.phase === "starting";
+        const closing = Promise.withResolvers<void>();
+        entry.lifecycle = { phase: "closing", closePromise: closing.promise };
+        void this.closeSessionInternal(entry, wasStarting, options.force === true, closeCode, closeReason).then(
+            closing.resolve,
+            closing.reject,
         );
-        entry.closePromise = closePromise;
-        await closePromise;
+        await closing.promise;
         return true;
     }
 
@@ -651,7 +627,7 @@ export class SessionRegistry {
         if (entry === undefined) {
             throw new SessionRegistryError("not_found", "Session is not open.");
         }
-        if (entry.phase === "closing") {
+        if (entry.lifecycle.phase === "closing") {
             throw new SessionRegistryError("not_found", "Session is closing.");
         }
 
@@ -680,10 +656,10 @@ export class SessionRegistry {
                     return;
                 }
                 entry.lastClientDetachMs = this.nowMs();
-                if (entry.phase === "closing") {
+                if (entry.lifecycle.phase === "closing") {
                     // A closing session no longer has anyone who can answer a shutdown dialog.
                     entry.uiBridge.dispose();
-                } else if (entry.phase === "open") {
+                } else if (entry.lifecycle.phase === "open") {
                     this.touch(entry);
                 }
             },
@@ -697,7 +673,7 @@ export class SessionRegistry {
     }
 
     private isClosing(entry: ActiveSession): boolean {
-        return entry.phase === "closing";
+        return entry.lifecycle.phase === "closing";
     }
 
     private async openInternal(id: SessionId): Promise<ActiveSessionHandle> {
@@ -736,7 +712,7 @@ export class SessionRegistry {
             throw new Error(`Session id mismatch: expected ${sessionId}, runtime reported ${session.sessionId}.`);
         }
 
-        const ready = createDeferred();
+        const ready = Promise.withResolvers<void>();
         const uiBridge = new SessionUiBridge(sessionId, (message) => this.broadcastById(sessionId, message), {
             onPendingChange: () => {
                 this.handlePendingChange(sessionId);
@@ -754,8 +730,7 @@ export class SessionRegistry {
             readyPromise: ready.promise,
             unsubscribe: () => {},
             unsubscribeEntries: () => {},
-            phase: "starting",
-            closePromise: undefined,
+            lifecycle: { phase: "starting" },
             lastActivityMs: this.nowMs(),
             lastClientDetachMs: undefined,
             idleTimer: undefined,
@@ -783,7 +758,7 @@ export class SessionRegistry {
         return this.createHandle(entry);
     }
 
-    private async bindRuntime(entry: ActiveSession, ready: Deferred): Promise<void> {
+    private async bindRuntime(entry: ActiveSession, ready: PromiseWithResolvers<void>): Promise<void> {
         let shutdownRequested = false;
         try {
             await entry.runtime.session.bindExtensions({
@@ -792,7 +767,7 @@ export class SessionRegistry {
                 shutdownHandler: () => {
                     // An extension shutdown request closes this session only; the server keeps serving.
                     shutdownRequested = true;
-                    if (this.active.get(entry.sessionId) === entry && entry.phase === "open") {
+                    if (this.active.get(entry.sessionId) === entry && entry.lifecycle.phase === "open") {
                         void this.closeSession(entry.sessionId).catch((error: unknown) => {
                             this.logger.warn(
                                 { err: error, sessionId: entry.sessionId },
@@ -826,8 +801,8 @@ export class SessionRegistry {
             return;
         }
 
-        if (entry.phase === "starting") {
-            entry.phase = "open";
+        if (entry.lifecycle.phase === "starting") {
+            entry.lifecycle = { phase: "open" };
             ready.resolve();
             this.touch(entry);
             if (shutdownRequested) {
@@ -847,7 +822,8 @@ export class SessionRegistry {
 
     private async failRuntime(entry: ActiveSession, error: unknown): Promise<void> {
         this.logger.warn({ err: error, sessionId: entry.sessionId }, "failed to bind session extensions");
-        entry.phase = "closing";
+        const closing = Promise.withResolvers<void>();
+        entry.lifecycle = { phase: "closing", closePromise: closing.promise };
         this.clearIdleTimer(entry);
         entry.unsubscribe();
         entry.unsubscribeEntries();
@@ -861,6 +837,8 @@ export class SessionRegistry {
                 { err: disposeError, sessionId: entry.sessionId },
                 "failed to dispose runtime after bind failure",
             );
+        } finally {
+            closing.resolve();
         }
     }
 
@@ -893,7 +871,11 @@ export class SessionRegistry {
         const createdAtMs = header === null ? Number.NaN : Date.parse(header.timestamp);
         const hasParent = header?.parentSession !== undefined && header.parentSession.length > 0;
         const runtimeState: SessionRuntimeState =
-            entry.phase === "starting" ? "starting" : entry.phase === "closing" ? "closing" : toRuntimeState(state);
+            entry.lifecycle.phase === "starting"
+                ? "starting"
+                : entry.lifecycle.phase === "closing"
+                  ? "closing"
+                  : toRuntimeState(state);
 
         return {
             id: entry.sessionId,
@@ -910,22 +892,11 @@ export class SessionRegistry {
     }
 
     private buildState(entry: ActiveSession): SessionStateSnapshot {
-        const state = entry.runtime.session.getState();
         return {
             sessionId: entry.sessionId,
             cwd: entry.cwd,
             name: entry.runtime.session.getName(),
-            model: state.model,
-            thinkingLevel: state.thinkingLevel,
-            isStreaming: state.isStreaming,
-            isCompacting: state.isCompacting,
-            steeringMode: state.steeringMode,
-            followUpMode: state.followUpMode,
-            autoCompactionEnabled: state.autoCompactionEnabled,
-            messageCount: state.messageCount,
-            pendingMessageCount: state.pendingMessageCount,
-            steeringMessages: state.steeringMessages,
-            followUpMessages: state.followUpMessages,
+            ...entry.runtime.session.getState(),
         };
     }
 
@@ -938,12 +909,12 @@ export class SessionRegistry {
             return;
         }
 
-        if (entry.phase === "closing") {
+        if (entry.lifecycle.phase === "closing") {
             this.sendFailure(client, command.id, command.type, "Session is closing.");
             return;
         }
 
-        if (entry.phase === "starting") {
+        if (entry.lifecycle.phase === "starting") {
             try {
                 await entry.readyPromise;
             } catch {
@@ -1096,6 +1067,42 @@ export class SessionRegistry {
         }
     }
 
+    private sendHttpSnapshot(
+        entry: ActiveSession,
+        client: SessionClient,
+        baseEntryCount: number,
+        context: HandshakeFallbackContext,
+    ): void {
+        this.sendClient(client, {
+            type: "snapshot",
+            sessionId: entry.sessionId,
+            runtimeId: entry.runtimeId,
+            seq: context.seq,
+            entriesVersion: context.entriesVersion,
+            baseEntryCount,
+            entriesMode: "http",
+            entryCount: context.entryCount,
+            state: context.state,
+            liveMessage: entry.liveMessage,
+            pendingUiRequests: context.pendingUiRequests,
+        });
+    }
+
+    private sendHandshakeOrHttpFallback(
+        entry: ActiveSession,
+        client: SessionClient,
+        message: WsReplayMessage | WsSnapshotMessage,
+        baseEntryCount: number,
+        context: HandshakeFallbackContext,
+    ): void {
+        const raw = JSON.stringify(message);
+        if (Buffer.byteLength(raw, "utf8") <= MAX_WS_INLINE_ENTRIES_BYTES) {
+            this.sendClientRaw(client, raw, message);
+            return;
+        }
+        this.sendHttpSnapshot(entry, client, baseEntryCount, context);
+    }
+
     private sendHandshakeWithSizeGuard(
         entry: ActiveSession,
         client: SessionClient,
@@ -1107,6 +1114,13 @@ export class SessionRegistry {
         const entries = entry.runtime.session.getEntries();
         const totalCount = entries.length;
         const replay = entry.buffer.since(options.afterSeq);
+        const fallback: HandshakeFallbackContext = {
+            seq: replay.seq,
+            entriesVersion,
+            entryCount: totalCount,
+            state,
+            pendingUiRequests,
+        };
 
         if (options.runtimeId === entry.runtimeId && replay.kind === "replay") {
             if (options.prefixAnchor === undefined) {
@@ -1121,43 +1135,14 @@ export class SessionRegistry {
                     liveMessage: entry.liveMessage,
                     pendingUiRequests,
                 };
-                const raw = JSON.stringify(replayMsg);
-                if (Buffer.byteLength(raw, "utf8") <= MAX_WS_INLINE_ENTRIES_BYTES) {
-                    this.sendClientRaw(client, raw, replayMsg);
-                    return;
-                }
-                this.sendClient(client, {
-                    type: "snapshot",
-                    sessionId: entry.sessionId,
-                    runtimeId: entry.runtimeId,
-                    seq: replay.seq,
-                    entriesVersion,
-                    baseEntryCount: 0,
-                    entriesMode: "http",
-                    entryCount: totalCount,
-                    state,
-                    liveMessage: entry.liveMessage,
-                    pendingUiRequests,
-                });
+                this.sendHandshakeOrHttpFallback(entry, client, replayMsg, 0, fallback);
                 return;
             }
 
             const sliced = sliceEntriesForAnchor(entry.sessionId, entries, entriesVersion, options.prefixAnchor);
             if (sliced.prefixMatched) {
                 if (sliced.entries.length > MAX_WS_INLINE_ENTRY_COUNT) {
-                    this.sendClient(client, {
-                        type: "snapshot",
-                        sessionId: entry.sessionId,
-                        runtimeId: entry.runtimeId,
-                        seq: replay.seq,
-                        entriesVersion,
-                        baseEntryCount: sliced.baseEntryCount,
-                        entriesMode: "http",
-                        entryCount: totalCount,
-                        state,
-                        liveMessage: entry.liveMessage,
-                        pendingUiRequests,
-                    });
+                    this.sendHttpSnapshot(entry, client, sliced.baseEntryCount, fallback);
                     return;
                 }
                 const replayMsg: WsReplayMessage = {
@@ -1174,24 +1159,7 @@ export class SessionRegistry {
                         : {}),
                     pendingUiRequests,
                 };
-                const raw = JSON.stringify(replayMsg);
-                if (Buffer.byteLength(raw, "utf8") <= MAX_WS_INLINE_ENTRIES_BYTES) {
-                    this.sendClientRaw(client, raw, replayMsg);
-                    return;
-                }
-                this.sendClient(client, {
-                    type: "snapshot",
-                    sessionId: entry.sessionId,
-                    runtimeId: entry.runtimeId,
-                    seq: replay.seq,
-                    entriesVersion,
-                    baseEntryCount: sliced.baseEntryCount,
-                    entriesMode: "http",
-                    entryCount: totalCount,
-                    state,
-                    liveMessage: entry.liveMessage,
-                    pendingUiRequests,
-                });
+                this.sendHandshakeOrHttpFallback(entry, client, replayMsg, sliced.baseEntryCount, fallback);
                 return;
             }
         }
@@ -1206,19 +1174,7 @@ export class SessionRegistry {
             entry.diskSizeBytes !== undefined &&
             entry.diskSizeBytes > MAX_WS_INLINE_ENTRIES_BYTES;
         if (sliced.entries.length > MAX_WS_INLINE_ENTRY_COUNT || overDiskHint) {
-            this.sendClient(client, {
-                type: "snapshot",
-                sessionId: entry.sessionId,
-                runtimeId: entry.runtimeId,
-                seq: replay.seq,
-                entriesVersion,
-                baseEntryCount: sliced.baseEntryCount,
-                entriesMode: "http",
-                entryCount: totalCount,
-                state,
-                liveMessage: entry.liveMessage,
-                pendingUiRequests,
-            });
+            this.sendHttpSnapshot(entry, client, sliced.baseEntryCount, fallback);
             return;
         }
 
@@ -1235,35 +1191,17 @@ export class SessionRegistry {
             liveMessage: entry.liveMessage,
             pendingUiRequests,
         };
-        const raw = JSON.stringify(inlineSnapshot);
-        if (Buffer.byteLength(raw, "utf8") <= MAX_WS_INLINE_ENTRIES_BYTES) {
-            this.sendClientRaw(client, raw, inlineSnapshot);
-            return;
-        }
-
-        this.sendClient(client, {
-            type: "snapshot",
-            sessionId: entry.sessionId,
-            runtimeId: entry.runtimeId,
-            seq: replay.seq,
-            entriesVersion,
-            baseEntryCount: sliced.baseEntryCount,
-            entriesMode: "http",
-            entryCount: totalCount,
-            state,
-            liveMessage: entry.liveMessage,
-            pendingUiRequests,
-        });
+        this.sendHandshakeOrHttpFallback(entry, client, inlineSnapshot, sliced.baseEntryCount, fallback);
     }
 
     private scheduleFlushAppendedEntries(entry: ActiveSession): void {
-        if (entry.phase === "closing" || entry.flushScheduled) {
+        if (entry.lifecycle.phase === "closing" || entry.flushScheduled) {
             return;
         }
         entry.flushScheduled = true;
         queueMicrotask(() => {
             entry.flushScheduled = false;
-            if (entry.phase === "closing" || this.active.get(entry.sessionId) !== entry) {
+            if (entry.lifecycle.phase === "closing" || this.active.get(entry.sessionId) !== entry) {
                 return;
             }
             const currentCount = entry.runtime.session.getEntryCount();
@@ -1374,7 +1312,7 @@ export class SessionRegistry {
     /** Restart the idle countdown when the last dialog resolves and no client is attached. */
     private handlePendingChange(sessionId: SessionId): void {
         const entry = this.active.get(sessionId);
-        if (entry !== undefined && entry.phase === "open" && entry.clients.size === 0) {
+        if (entry !== undefined && entry.lifecycle.phase === "open" && entry.clients.size === 0) {
             this.touch(entry);
         }
     }
@@ -1406,7 +1344,7 @@ export class SessionRegistry {
      * shortened to the remaining dialog grace period even when the run reports streaming.
      */
     private touch(entry: ActiveSession): void {
-        if (this.idleTimeoutMs <= 0 || this.disposed || entry.phase !== "open") {
+        if (this.idleTimeoutMs <= 0 || this.disposed || entry.lifecycle.phase !== "open") {
             return;
         }
         this.clearIdleTimer(entry);
@@ -1432,7 +1370,7 @@ export class SessionRegistry {
         if (
             this.disposed ||
             this.active.get(entry.sessionId) !== entry ||
-            entry.phase !== "open" ||
+            entry.lifecycle.phase !== "open" ||
             entry.clients.size > 0
         ) {
             return;

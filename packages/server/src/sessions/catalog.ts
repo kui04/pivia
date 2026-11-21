@@ -1,4 +1,4 @@
-import { createReadStream, readFileSync } from "node:fs";
+import { createReadStream, readFileSync, type Stats } from "node:fs";
 import { readFile, readdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -15,6 +15,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import {
+    assertNever,
     isFileEntryRecord,
     isRecord,
     parseEntriesVersion,
@@ -86,6 +87,12 @@ interface DiscoveryResult {
     readonly root: ResolvedDiscoveryRoot;
     readonly sessions: readonly DiscoveredSession[];
 }
+
+type ContainedFileResult =
+    | { readonly kind: "ok"; readonly realPath: string; readonly stats: Stats }
+    | { readonly kind: "rejected" }
+    | { readonly kind: "non_file"; readonly realPath: string }
+    | { readonly kind: "io_error"; readonly error: unknown };
 
 interface CachedFileSummary {
     readonly mtimeMs: number;
@@ -482,28 +489,50 @@ export class SessionCatalog {
         return this.verifyDiscoveredPath(root, id, match);
     }
 
+    private async verifyContainedFile(
+        root: ResolvedDiscoveryRoot,
+        sessionId: SessionId,
+        candidatePath: string,
+        action: "open" | "read",
+    ): Promise<ContainedFileResult> {
+        try {
+            // Re-resolve symlinks at access time so a swapped link cannot escape the root boundary.
+            const realPath = await realpath(candidatePath);
+            if (!isPathWithin(root.realDir, realPath)) {
+                this.logger.warn(
+                    { sessionId, path: candidatePath },
+                    `refused to ${action} session outside the session root`,
+                );
+                return { kind: "rejected" };
+            }
+            const stats = await stat(realPath);
+            if (!stats.isFile()) {
+                return { kind: "non_file", realPath };
+            }
+            if (stats.size > MAX_SESSION_FILE_BYTES) {
+                this.logger.warn({ sessionId, size: stats.size }, `refused to ${action} an oversized session file`);
+                return { kind: "rejected" };
+            }
+            return { kind: "ok", realPath, stats };
+        } catch (error) {
+            return { kind: "io_error", error };
+        }
+    }
+
     private async verifyIndexedPath(
         root: ResolvedDiscoveryRoot,
         id: SessionId,
         candidatePath: string,
     ): Promise<ResolvedSession | null | undefined> {
+        const verified = await this.verifyContainedFile(root, id, candidatePath, "open");
+        if (verified.kind === "rejected") {
+            return null;
+        }
+        if (verified.kind !== "ok") {
+            return undefined;
+        }
+        const { realPath, stats } = verified;
         try {
-            const realPath = await realpath(candidatePath);
-            if (!isPathWithin(root.realDir, realPath)) {
-                this.logger.warn(
-                    { sessionId: id, path: candidatePath },
-                    "refused to open session outside the session root",
-                );
-                return null;
-            }
-            const stats = await stat(realPath);
-            if (!stats.isFile()) {
-                return undefined;
-            }
-            if (stats.size > MAX_SESSION_FILE_BYTES) {
-                this.logger.warn({ sessionId: id, size: stats.size }, "refused to open an oversized session file");
-                return null;
-            }
             const cached = this.pathCache.get(realPath);
             if (cached !== undefined && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) {
                 if (cached.summary.id === id) {
@@ -527,29 +556,20 @@ export class SessionCatalog {
         id: SessionId,
         match: DiscoveredSession,
     ): Promise<ResolvedSession | null> {
-        try {
-            // Resolve again after discovery so a swapped symbolic link cannot redirect the open.
-            const realPath = await realpath(match.path);
-            if (!isPathWithin(root.realDir, realPath)) {
-                this.logger.warn(
-                    { sessionId: id, path: match.path },
-                    "refused to open session outside the session root",
-                );
+        const verified = await this.verifyContainedFile(root, id, match.path, "open");
+        switch (verified.kind) {
+            case "ok":
+                return { summary: match.summary, realPath: verified.realPath, sizeBytes: verified.stats.size, root };
+            case "rejected":
                 return null;
-            }
-            const stats = await stat(realPath);
-            if (!stats.isFile()) {
-                this.logger.warn({ sessionId: id, path: realPath }, "refused to open a non-file session path");
+            case "non_file":
+                this.logger.warn({ sessionId: id, path: verified.realPath }, "refused to open a non-file session path");
                 return null;
-            }
-            if (stats.size > MAX_SESSION_FILE_BYTES) {
-                this.logger.warn({ sessionId: id, size: stats.size }, "refused to open an oversized session file");
+            case "io_error":
+                this.logger.warn({ err: verified.error, sessionId: id }, "failed to resolve session file");
                 return null;
-            }
-            return { summary: match.summary, realPath, sizeBytes: stats.size, root };
-        } catch (error) {
-            this.logger.warn({ err: error, sessionId: id }, "failed to resolve session file");
-            return null;
+            default:
+                return assertNever(verified);
         }
     }
 
@@ -717,25 +737,18 @@ export class SessionCatalog {
         session: DiscoveredSession,
         sliceAnchor?: SessionPrefixAnchor,
     ): Promise<SessionDetailResponse | null> {
+        const verified = await this.verifyContainedFile(root, sessionId, session.path, "read");
+        if (verified.kind !== "ok") {
+            if (verified.kind === "non_file") {
+                this.logger.warn({ sessionId, path: verified.realPath }, "refused to read a non-file session path");
+            } else if (verified.kind === "io_error") {
+                this.logger.warn({ err: verified.error, sessionId }, "failed to read session");
+            }
+            return null;
+        }
+
+        const { realPath } = verified;
         try {
-            // Resolve the path again right before the read so a swapped symbolic link cannot point
-            // the request at a file outside the session root.
-            const realPath = await realpath(session.path);
-            if (!isPathWithin(root.realDir, realPath)) {
-                this.logger.warn({ sessionId, path: session.path }, "refused to read session outside the session root");
-                return null;
-            }
-
-            const stats = await stat(realPath);
-            if (!stats.isFile()) {
-                this.logger.warn({ sessionId, path: realPath }, "refused to read a non-file session path");
-                return null;
-            }
-            if (stats.size > MAX_SESSION_FILE_BYTES) {
-                this.logger.warn({ sessionId, size: stats.size }, "refused to read an oversized session file");
-                return null;
-            }
-
             const content = await readFile(realPath, "utf8");
             const parsed = parseSessionEntries(content);
             const entries = parsed.filter(isFileEntryRecord);

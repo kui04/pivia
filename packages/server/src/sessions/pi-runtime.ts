@@ -55,7 +55,7 @@ export const SESSION_APPEND_METHODS = [
     "appendContextEdit",
     "appendLabelChange",
     "branchWithSummary",
-] as const;
+] as const satisfies readonly (keyof SessionManager)[];
 
 type SessionAppendMethodName = (typeof SESSION_APPEND_METHODS)[number];
 
