@@ -10,10 +10,25 @@ import {
     type SessionRegistry,
     SessionRegistryError,
 } from "../sessions/runtime.ts";
+import { createHeartbeat, type HeartbeatSocket } from "./heartbeat.ts";
 import { commandIdOf, parseWsClientCommand, parseWsHandshakeQuery } from "./protocol.ts";
 
 /** Largest WebSocket frame the server accepts. */
 export const MAX_WS_PAYLOAD_BYTES = 4 * 1024 * 1024;
+
+/**
+ * Default interval for the protocol-level ping that detects a dead peer.
+ *
+ * A client that stops answering is terminated one interval later, so a half-open link is cleaned
+ * up within a minute.
+ */
+export const DEFAULT_WS_HEARTBEAT_INTERVAL_MS = 30_000;
+
+/** Options for {@link registerSessionSocketRoute}. */
+export interface SessionSocketRouteOptions {
+    /** Ping interval in milliseconds; `0` disables the heartbeat. */
+    readonly heartbeatIntervalMs?: number | undefined;
+}
 
 /** Close a client whose unsent backlog exceeds this, so a stalled mobile link cannot grow memory. */
 const MAX_WS_BUFFERED_BYTES = 4 * 1024 * 1024;
@@ -54,9 +69,28 @@ function websocketDataToText(data: unknown): string {
  * Register the `/ws/sessions/:id` WebSocket route.
  *
  * Must be registered after `@fastify/websocket` so its `onRoute` hook converts the route into a
- * WebSocket handler.
+ * WebSocket handler. The route also runs a protocol-level ping/pong heartbeat so a peer that
+ * disappears without closing its socket cannot hold its attachment forever.
  */
-export function registerSessionSocketRoute(app: FastifyInstance, sessionRegistry: SessionRegistry): void {
+export function registerSessionSocketRoute(
+    app: FastifyInstance,
+    sessionRegistry: SessionRegistry,
+    options: SessionSocketRouteOptions = {},
+): void {
+    const sessionIds = new WeakMap<HeartbeatSocket, string>();
+    const heartbeat = createHeartbeat({
+        intervalMs: options.heartbeatIntervalMs ?? DEFAULT_WS_HEARTBEAT_INTERVAL_MS,
+        onStale(socket) {
+            app.log.warn({ sessionId: sessionIds.get(socket) }, "terminating unresponsive websocket");
+        },
+        onError(error, socket) {
+            app.log.warn({ err: error, sessionId: sessionIds.get(socket) }, "websocket heartbeat failed");
+        },
+    });
+    app.addHook("onClose", () => {
+        heartbeat.dispose();
+    });
+
     app.register((instance, _options, done) => {
         // Handles of sessions opened during `preValidation` for this upgrade. A WeakMap avoids
         // decorating every request for a value only WebSocket routes read.
@@ -228,6 +262,8 @@ export function registerSessionSocketRoute(app: FastifyInstance, sessionRegistry
                 });
                 socket.on("close", () => {
                     socketClosed = true;
+                    heartbeat.untrack(socket);
+                    sessionIds.delete(socket);
                     attachment?.detach();
                     attachment = undefined;
                     bufferedCommands.length = 0;
@@ -235,6 +271,11 @@ export function registerSessionSocketRoute(app: FastifyInstance, sessionRegistry
                 socket.on("error", (error: Error) => {
                     request.log.warn({ err: error, sessionId: handle.sessionId }, "websocket connection error");
                 });
+                socket.on("pong", () => {
+                    heartbeat.markAlive(socket);
+                });
+                sessionIds.set(socket, handle.sessionId);
+                heartbeat.track(socket);
 
                 try {
                     attachment = sessionRegistry.attach(handle.sessionId, client, parsedQuery.value);

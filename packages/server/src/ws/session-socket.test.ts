@@ -177,6 +177,7 @@ describe("session websocket route", () => {
     interface AppFixtureOptions {
         readonly onCreate?: ((session: FakeSession) => void) | undefined;
         readonly shutdownUiTimeoutMs?: number | undefined;
+        readonly wsHeartbeatIntervalMs?: number | undefined;
     }
 
     async function startAppFixture(options: AppFixtureOptions = {}): Promise<WsAppFixture> {
@@ -197,7 +198,15 @@ describe("session websocket route", () => {
             idleTimeoutMs: 0,
             shutdownUiTimeoutMs: options.shutdownUiTimeoutMs,
         });
-        const app = buildApp({ logger, auth: { password: "secret" }, sessions: catalog, registry });
+        const app = buildApp({
+            logger,
+            auth: { password: "secret" },
+            sessions: catalog,
+            registry,
+            ...(options.wsHeartbeatIntervalMs === undefined
+                ? {}
+                : { wsHeartbeatIntervalMs: options.wsHeartbeatIntervalMs }),
+        });
         apps.push(app);
         const address = await app.listen({ host: "127.0.0.1", port: 0 });
         const url = new URL(address);
@@ -352,6 +361,37 @@ describe("session websocket route", () => {
         const closeResponse = await closeResponsePromise;
         expect(closeResponse.statusCode).toBe(200);
         expect(closeResponse.json()).toEqual({ closed: true });
+        await client.close();
+    });
+
+    it("terminates a socket that stops answering heartbeat pings", async () => {
+        const fixture = await startAppFixture({ wsHeartbeatIntervalMs: 40 });
+        const { id } = await createSession(fixture);
+        const url = `${fixture.wsBaseUrl}/ws/sessions/${id}`;
+        const client = await connectWebSocket(url, fixture.authHeaders);
+        await client.waitFor(
+            (message): message is Extract<WsServerMessage, { type: "snapshot" }> => message.type === "snapshot",
+        );
+
+        // `autoPong: false` models a peer that vanished: the TCP connection still looks open and
+        // nothing answers, exactly like a phone that lost its network without closing the socket.
+        const silent = new WebSocket(url, { headers: fixture.authHeaders, autoPong: false });
+        await new Promise<void>((resolve, reject) => {
+            silent.once("open", () => resolve());
+            silent.once("error", reject);
+        });
+        const silentClosed = new Promise<number>((resolve) => {
+            silent.once("close", (code) => resolve(code));
+        });
+        await expect(silentClosed).resolves.toBe(1006);
+
+        // The answering client spans several heartbeat intervals and keeps working.
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        client.send({ type: "get_state", id: "state-after-heartbeat" });
+        await client.waitFor(
+            (message): message is Extract<WsServerMessage, { type: "response" }> =>
+                message.type === "response" && message.id === "state-after-heartbeat",
+        );
         await client.close();
     });
 

@@ -26,6 +26,8 @@ export interface BuildAppOptions {
     sessions?: SessionCatalog | undefined;
     /** Session runtime registry; defaults to one using the production pi runtime factory. */
     registry?: SessionRegistry | undefined;
+    /** Session WebSocket ping interval in milliseconds; `0` disables it. */
+    wsHeartbeatIntervalMs?: number | undefined;
 }
 
 /**
@@ -104,7 +106,9 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
 
     registerAuthRoutes(app, authService);
     registerSessionRoutes(app, sessionRegistry);
-    registerSessionSocketRoute(app, sessionRegistry);
+    registerSessionSocketRoute(app, sessionRegistry, {
+        ...(options.wsHeartbeatIntervalMs === undefined ? {} : { heartbeatIntervalMs: options.wsHeartbeatIntervalMs }),
+    });
 
     return app;
 }
