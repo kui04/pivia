@@ -240,6 +240,9 @@ export type WsClientCommand =
       >
     | RpcExtensionUIResponse;
 
+/** Discriminant names of client control commands that produce a `WsResponseMessage`. */
+export type WsCommandName = Exclude<WsClientCommand, RpcExtensionUIResponse>["type"];
+
 /** One session event with its monotonic replay sequence number. */
 export interface SequencedSessionEvent {
     readonly seq: number;
@@ -280,6 +283,12 @@ export type WsSnapshotMessage =
           readonly pendingUiRequests: readonly RpcExtensionUIRequest[];
       };
 
+/** Appended entries slice carried by a Tier 1 hot replay when new entries persisted after the client's prefix anchor. */
+export interface WsReplayAppendedSlice {
+    readonly baseEntryCount: number;
+    readonly entries: readonly FileEntry[];
+}
+
 /** Tier 1 hot replay after a reconnect that asks for events after `afterSeq`. */
 export interface WsReplayMessage {
     readonly type: "replay";
@@ -291,8 +300,7 @@ export interface WsReplayMessage {
     readonly events: readonly SequencedSessionEvent[];
     /** Authoritative streaming assistant message at `seq`, or `null` when none is streaming. */
     readonly liveMessage: AssistantMessage | null;
-    readonly baseEntryCount?: number;
-    readonly appendedEntries?: readonly FileEntry[];
+    readonly appendedSlice?: WsReplayAppendedSlice;
     readonly pendingUiRequests: readonly RpcExtensionUIRequest[];
 }
 
@@ -346,15 +354,22 @@ export interface WsExtensionErrorMessage {
     readonly error: string;
 }
 
-/** Success or failure result for one client command. */
-export interface WsResponseMessage {
-    readonly type: "response";
-    readonly id?: string;
-    readonly command: string;
-    readonly success: boolean;
-    readonly data?: unknown;
-    readonly error?: string;
-}
+/** Success or failure result for one client command, discriminated by `success`. */
+export type WsResponseMessage =
+    | {
+          readonly type: "response";
+          readonly id?: string;
+          readonly command: WsCommandName;
+          readonly success: true;
+          readonly data?: unknown;
+      }
+    | {
+          readonly type: "response";
+          readonly id?: string;
+          readonly command: WsCommandName;
+          readonly success: false;
+          readonly error: string;
+      };
 
 /** Protocol-level error, such as malformed JSON or an unknown command. */
 export interface WsErrorMessage {

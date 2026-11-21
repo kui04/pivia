@@ -163,6 +163,18 @@ function responseFor(messages: readonly WsServerMessage[], id: string): Promise<
     });
 }
 
+async function successResponseFor(
+    messages: readonly WsServerMessage[],
+    id: string,
+): Promise<Extract<WsResponseMessage, { success: true }>> {
+    const response = await responseFor(messages, id);
+    expect(response.success).toBe(true);
+    if (!response.success) {
+        throw new Error(`Expected successful response for ${id}, got: ${response.error}`);
+    }
+    return response;
+}
+
 function findSessionFiles(dir: string): string[] {
     const results: string[] = [];
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -811,7 +823,7 @@ describe("SessionRegistry", () => {
         });
 
         await attachment.handleCommand({ type: "get_state", id: "state" });
-        expect((await responseFor(collector.messages, "state")).data).toMatchObject({
+        expect((await successResponseFor(collector.messages, "state")).data).toMatchObject({
             sessionId: handle.sessionId,
             name: null,
             thinkingLevel: "medium",
@@ -833,31 +845,31 @@ describe("SessionRegistry", () => {
         });
 
         await attachment.handleCommand({ type: "set_model", id: "model", provider: "fake", modelId: "model-2" });
-        expect((await responseFor(collector.messages, "model")).data).toEqual({
+        expect((await successResponseFor(collector.messages, "model")).data).toEqual({
             provider: "fake",
             id: "model-2",
             name: "fake/model-2",
         });
 
         await attachment.handleCommand({ type: "get_available_models", id: "models" });
-        expect((await responseFor(collector.messages, "models")).data).toEqual({
+        expect((await successResponseFor(collector.messages, "models")).data).toEqual({
             models: [{ provider: "fake", id: "model-2", name: "fake/model-2" }],
         });
 
         await attachment.handleCommand({ type: "set_thinking_level", id: "thinking", level: "high" });
-        expect((await responseFor(collector.messages, "thinking")).data).toEqual({ level: "high" });
+        expect((await successResponseFor(collector.messages, "thinking")).data).toEqual({ level: "high" });
 
         await attachment.handleCommand({ type: "get_available_thinking_levels", id: "levels" });
-        expect((await responseFor(collector.messages, "levels")).data).toEqual({
+        expect((await successResponseFor(collector.messages, "levels")).data).toEqual({
             levels: ["off", "minimal", "low", "medium", "high"],
         });
 
         await attachment.handleCommand({ type: "steer", id: "steer", message: "steer text" });
-        expect((await responseFor(collector.messages, "steer")).data).toEqual({ disposition: "queued" });
+        expect((await successResponseFor(collector.messages, "steer")).data).toEqual({ disposition: "queued" });
         expect(session.steerCalls).toEqual([{ text: "steer text", images: undefined }]);
 
         await attachment.handleCommand({ type: "follow_up", id: "follow", message: "follow text" });
-        expect((await responseFor(collector.messages, "follow")).data).toEqual({ disposition: "handled" });
+        expect((await successResponseFor(collector.messages, "follow")).data).toEqual({ disposition: "handled" });
         expect(session.followUpCalls).toEqual([{ text: "follow text", images: undefined }]);
 
         await attachment.handleCommand({ type: "abort", id: "abort" });
@@ -865,13 +877,15 @@ describe("SessionRegistry", () => {
         expect(session.abortCalls).toBe(1);
 
         await attachment.handleCommand({ type: "clear_queue", id: "clear" });
-        expect((await responseFor(collector.messages, "clear")).data).toEqual({
+        expect((await successResponseFor(collector.messages, "clear")).data).toEqual({
             steering: ["steer-a"],
             followUp: ["follow-b"],
         });
 
         await attachment.handleCommand({ type: "compact", id: "compact", customInstructions: "summarize" });
-        expect((await responseFor(collector.messages, "compact")).data).toMatchObject({ summary: "fake compaction" });
+        expect((await successResponseFor(collector.messages, "compact")).data).toMatchObject({
+            summary: "fake compaction",
+        });
         expect(session.compactCalls).toEqual(["summarize"]);
     });
 
@@ -1182,7 +1196,7 @@ describe("SessionRegistry", () => {
         expect(await responseFor(collector.messages, "name")).toMatchObject({ success: true });
 
         await attachment.handleCommand({ type: "get_state", id: "state" });
-        expect((await responseFor(collector.messages, "state")).data).toMatchObject({
+        expect((await successResponseFor(collector.messages, "state")).data).toMatchObject({
             sessionId: handle.sessionId,
             cwd: realProjectDir,
             name: "Integration Session",
@@ -1268,8 +1282,8 @@ describe("SessionRegistry", () => {
         const replayMsg = tier1.collector.messages[0];
         expect(replayMsg?.type).toBe("replay");
         if (replayMsg?.type === "replay") {
-            expect(replayMsg.baseEntryCount).toBe(3);
-            expect(replayMsg.appendedEntries).toHaveLength(1);
+            expect(replayMsg.appendedSlice?.baseEntryCount).toBe(3);
+            expect(replayMsg.appendedSlice?.entries).toHaveLength(1);
             expect(replayMsg.liveMessage?.content[0]).toEqual({ type: "text", text: "Hi" });
         }
 

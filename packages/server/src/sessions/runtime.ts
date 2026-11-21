@@ -30,6 +30,7 @@ import type {
     SessionSummary,
     ThinkingLevel,
     WsClientCommand,
+    WsCommandName,
     WsEntriesAppendedMessage,
     WsReplayMessage,
     WsResponseMessage,
@@ -1049,7 +1050,7 @@ export class SessionRegistry {
         }
     }
 
-    private sendSuccess(client: SessionClient, id: string | undefined, command: string, data?: unknown): void {
+    private sendSuccess(client: SessionClient, id: string | undefined, command: WsCommandName, data?: unknown): void {
         const message: WsResponseMessage = {
             type: "response",
             command,
@@ -1060,7 +1061,7 @@ export class SessionRegistry {
         this.sendClient(client, message);
     }
 
-    private sendFailure(client: SessionClient, id: string | undefined, command: string, error: string): void {
+    private sendFailure(client: SessionClient, id: string | undefined, command: WsCommandName, error: string): void {
         this.sendClient(client, {
             type: "response",
             command,
@@ -1160,7 +1161,7 @@ export class SessionRegistry {
                     events: replay.events,
                     liveMessage: entry.liveMessage,
                     ...(sliced.entries.length > 0
-                        ? { baseEntryCount: sliced.baseEntryCount, appendedEntries: sliced.entries }
+                        ? { appendedSlice: { baseEntryCount: sliced.baseEntryCount, entries: sliced.entries } }
                         : {}),
                     pendingUiRequests,
                 };

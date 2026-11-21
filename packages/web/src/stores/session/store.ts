@@ -374,15 +374,14 @@ export function createSessionStore(options: SessionStoreOptions = {}) {
                     set((state) => reduceSessionState(state, { type: "replay", message }));
                     if (
                         cache !== undefined &&
-                        message.appendedEntries !== undefined &&
-                        message.appendedEntries.length > 0 &&
-                        message.baseEntryCount !== undefined
+                        message.appendedSlice !== undefined &&
+                        message.appendedSlice.entries.length > 0
                     ) {
                         void cache.appendEntries(
                             message.sessionId,
                             message.entriesVersion,
-                            message.baseEntryCount,
-                            message.appendedEntries,
+                            message.appendedSlice.baseEntryCount,
+                            message.appendedSlice.entries,
                         );
                     }
                     // A reconnect cancels the in-flight sync. The replay settled the prefix, so a

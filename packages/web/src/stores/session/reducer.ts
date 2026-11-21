@@ -477,10 +477,13 @@ export function reduceSessionState(state: SessionState, action: SessionAction): 
                 }
             }
             const nextEntries =
-                message.appendedEntries !== undefined && message.baseEntryCount !== undefined
-                    ? mergeAppendedEntries(state.entries, message.baseEntryCount, message.appendedEntries, {
-                          kind: "none",
-                      }).entries
+                message.appendedSlice !== undefined
+                    ? mergeAppendedEntries(
+                          state.entries,
+                          message.appendedSlice.baseEntryCount,
+                          message.appendedSlice.entries,
+                          { kind: "none" },
+                      ).entries
                     : state.entries;
             return {
                 ...state,

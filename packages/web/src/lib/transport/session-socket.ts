@@ -374,7 +374,7 @@ export class SessionSocket {
             pending.resolve(message);
             return;
         }
-        pending.reject(new SessionCommandError(pending.command, message.error ?? "The command failed."));
+        pending.reject(new SessionCommandError(pending.command, message.error));
     }
 
     private settleError(message: WsErrorMessage): void {
