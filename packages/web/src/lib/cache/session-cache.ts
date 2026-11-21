@@ -1,4 +1,14 @@
-import type { EntriesVersion, FileEntry, SessionId, SessionSummary } from "@pivia/protocol";
+import {
+    isFileEntryRecord,
+    isRecord,
+    parseEntriesVersion,
+    parseSessionId,
+    parseSessionSummary,
+    type EntriesVersion,
+    type FileEntry,
+    type SessionId,
+    type SessionSummary,
+} from "@pivia/protocol";
 
 import { Log } from "@/lib/log";
 
@@ -112,6 +122,119 @@ function estimateEntriesBytes(entries: readonly FileEntry[]): number {
     return bytes;
 }
 
+function parseSessionCacheMeta(raw: unknown): SessionCacheMeta | null {
+    if (!isRecord(raw)) {
+        return null;
+    }
+    const sessionId = parseSessionId(raw.sessionId);
+    const entriesVersion = parseEntriesVersion(raw.entriesVersion);
+    if (
+        sessionId === null ||
+        entriesVersion === null ||
+        typeof raw.entryCount !== "number" ||
+        !Number.isSafeInteger(raw.entryCount) ||
+        raw.entryCount < 1 ||
+        typeof raw.lastEntryId !== "string" ||
+        raw.lastEntryId.length === 0 ||
+        typeof raw.estimatedBytes !== "number" ||
+        !Number.isFinite(raw.estimatedBytes) ||
+        raw.estimatedBytes < 0 ||
+        typeof raw.lastAccessedAtMs !== "number" ||
+        !Number.isFinite(raw.lastAccessedAtMs)
+    ) {
+        return null;
+    }
+    return {
+        sessionId,
+        entriesVersion,
+        entryCount: raw.entryCount,
+        lastEntryId: raw.lastEntryId,
+        estimatedBytes: raw.estimatedBytes,
+        lastAccessedAtMs: raw.lastAccessedAtMs,
+    };
+}
+
+function parseSessionCacheEntryRow(raw: unknown, expectedSessionId: SessionId): SessionCacheEntryRow | null {
+    if (!isRecord(raw)) {
+        return null;
+    }
+    const sessionId = parseSessionId(raw.sessionId);
+    if (
+        sessionId !== expectedSessionId ||
+        typeof raw.index !== "number" ||
+        !Number.isSafeInteger(raw.index) ||
+        raw.index < 0 ||
+        !isFileEntryRecord(raw.entry)
+    ) {
+        return null;
+    }
+    return {
+        sessionId,
+        index: raw.index,
+        entry: raw.entry,
+    };
+}
+
+function parseSessionCacheEntryRows(raw: unknown, expectedSessionId: SessionId): SessionCacheEntryRow[] | null {
+    if (!Array.isArray(raw)) {
+        return null;
+    }
+    const rows: SessionCacheEntryRow[] = [];
+    for (const item of raw) {
+        const parsed = parseSessionCacheEntryRow(item, expectedSessionId);
+        if (parsed === null) {
+            return null;
+        }
+        rows.push(parsed);
+    }
+    return rows;
+}
+
+function partitionSessionCacheMetas(raw: unknown): {
+    readonly valid: SessionCacheMeta[];
+    readonly corruptIds: string[];
+} {
+    if (!Array.isArray(raw)) {
+        return { valid: [], corruptIds: [] };
+    }
+    const valid: SessionCacheMeta[] = [];
+    const corruptIds: string[] = [];
+    for (const item of raw) {
+        const parsed = parseSessionCacheMeta(item);
+        if (parsed !== null) {
+            valid.push(parsed);
+        } else if (isRecord(item) && typeof item.sessionId === "string" && item.sessionId.length > 0) {
+            corruptIds.push(item.sessionId);
+        }
+    }
+    return { valid, corruptIds };
+}
+
+function parseWorkspaceCatalogRecord(raw: unknown): WorkspaceCatalogCacheRecord | null {
+    if (
+        !isRecord(raw) ||
+        raw.key !== "default" ||
+        !Array.isArray(raw.sessions) ||
+        typeof raw.scannedAtMs !== "number" ||
+        !Number.isFinite(raw.scannedAtMs)
+    ) {
+        return null;
+    }
+    const sessions: SessionSummary[] = [];
+    for (const item of raw.sessions) {
+        const parsed = parseSessionSummary(item);
+        if (parsed === null) {
+            return null;
+        }
+        sessions.push(parsed);
+    }
+    return {
+        key: "default",
+        sessions,
+        scannedAtMs: raw.scannedAtMs,
+    };
+}
+
 function isQuotaExceededError(error: unknown): boolean {
     if (typeof DOMException !== "undefined" && error instanceof DOMException) {
         return error.name === "QuotaExceededError" || error.name === "NS_ERROR_DOM_QUOTA_REACHED";
@@ -150,11 +273,15 @@ export class IndexedDbSessionCache implements SessionCacheStore {
         }
     }
 
-    private sessionEntryRange(sessionId: SessionId): IDBKeyRange {
+    private rawSessionEntryRange(rawSessionId: string): IDBKeyRange {
         if (this.keyRange === undefined) {
             throw new Error("IDBKeyRange is unavailable.");
         }
-        return this.keyRange.bound([sessionId, 0], [sessionId, Infinity]);
+        return this.keyRange.bound([rawSessionId, 0], [rawSessionId, Infinity]);
+    }
+
+    private sessionEntryRange(sessionId: SessionId): IDBKeyRange {
+        return this.rawSessionEntryRange(sessionId);
     }
 
     async getSession(sessionId: SessionId): Promise<CachedSessionSnapshot | null> {
@@ -167,15 +294,20 @@ export class IndexedDbSessionCache implements SessionCacheStore {
             const metaStore = tx.objectStore(STORE_META);
             const entriesStore = tx.objectStore(STORE_ENTRIES);
 
-            const meta = (await requestPromise(metaStore.get(sessionId))) as SessionCacheMeta | undefined;
-            if (meta === undefined) {
+            const metaRaw: unknown = await requestPromise(metaStore.get(sessionId));
+            if (metaRaw === undefined) {
                 await transactionDone(tx);
                 return null;
             }
-            const rows = (await requestPromise(
-                entriesStore.getAll(this.sessionEntryRange(sessionId)),
-            )) as SessionCacheEntryRow[];
-            if (rows.length !== meta.entryCount || rows[0]?.entry.type !== "session") {
+            const meta = parseSessionCacheMeta(metaRaw);
+            const rowsRaw: unknown = await requestPromise(entriesStore.getAll(this.sessionEntryRange(sessionId)));
+            const rows = meta === null ? null : parseSessionCacheEntryRows(rowsRaw, sessionId);
+            if (
+                meta === null ||
+                rows === null ||
+                rows.length !== meta.entryCount ||
+                rows[0]?.entry.type !== "session"
+            ) {
                 await requestPromise(metaStore.delete(sessionId));
                 await requestPromise(entriesStore.delete(this.sessionEntryRange(sessionId)));
                 await transactionDone(tx);
@@ -214,9 +346,9 @@ export class IndexedDbSessionCache implements SessionCacheStore {
             const metaStore = tx.objectStore(STORE_META);
             const entriesStore = tx.objectStore(STORE_ENTRIES);
 
-            const existingMeta = (await requestPromise(metaStore.get(sessionId))) as SessionCacheMeta | undefined;
+            const existingMeta = parseSessionCacheMeta(await requestPromise(metaStore.get(sessionId)));
             if (
-                existingMeta === undefined ||
+                existingMeta === null ||
                 existingMeta.entriesVersion !== entriesVersion ||
                 existingMeta.entryCount < baseEntryCount
             ) {
@@ -285,19 +417,21 @@ export class IndexedDbSessionCache implements SessionCacheStore {
             const metaStore = tx.objectStore(STORE_META);
             const entriesStore = tx.objectStore(STORE_ENTRIES);
 
-            const existingMeta = (await requestPromise(metaStore.get(sessionId))) as SessionCacheMeta | undefined;
+            const existingMeta = parseSessionCacheMeta(await requestPromise(metaStore.get(sessionId)));
             const lastEntry = entries[entries.length - 1];
             // A slower tab can only offer an older, shorter snapshot of the same history. A file
             // rewritten down to a strict prefix looks identical here, so it is treated as stale as
             // well; the next handshake repairs that cache once the tail id differs.
             if (
-                existingMeta !== undefined &&
+                existingMeta !== null &&
                 existingMeta.entriesVersion === entriesVersion &&
                 entries.length <= existingMeta.entryCount &&
                 lastEntry !== undefined
             ) {
-                const rowAtEnd = (await requestPromise(entriesStore.get([sessionId, entries.length - 1]))) as
-                    SessionCacheEntryRow | undefined;
+                const rowAtEnd = parseSessionCacheEntryRow(
+                    await requestPromise(entriesStore.get([sessionId, entries.length - 1])),
+                    sessionId,
+                );
                 if (rowAtEnd?.entry.id === lastEntry.id) {
                     await transactionDone(tx);
                     return "skipped-stale";
@@ -357,11 +491,21 @@ export class IndexedDbSessionCache implements SessionCacheStore {
             return this.memCatalog;
         }
         try {
-            const tx = db.transaction([STORE_CATALOG], "readonly");
-            const record = (await requestPromise(tx.objectStore(STORE_CATALOG).get("default"))) as
-                WorkspaceCatalogCacheRecord | undefined;
+            const tx = db.transaction([STORE_CATALOG], "readwrite");
+            const catalogStore = tx.objectStore(STORE_CATALOG);
+            const raw: unknown = await requestPromise(catalogStore.get("default"));
+            if (raw === undefined) {
+                await transactionDone(tx);
+                return null;
+            }
+            const record = parseWorkspaceCatalogRecord(raw);
+            if (record === null) {
+                await requestPromise(catalogStore.delete("default"));
+                await transactionDone(tx);
+                return null;
+            }
             await transactionDone(tx);
-            return record ?? null;
+            return record;
         } catch (error) {
             Log.warn("IndexedDB getWorkspaceCatalog failed, falling back to memory cache", error);
             this.degrade();
@@ -509,8 +653,12 @@ export class IndexedDbSessionCache implements SessionCacheStore {
         const tx = db.transaction([STORE_META, STORE_ENTRIES], "readwrite");
         const metaStore = tx.objectStore(STORE_META);
         const entriesStore = tx.objectStore(STORE_ENTRIES);
-        const allMetas = (await requestPromise(metaStore.getAll())) as SessionCacheMeta[];
-        for (const meta of allMetas) {
+        const { valid, corruptIds } = partitionSessionCacheMetas(await requestPromise(metaStore.getAll()));
+        for (const corruptId of corruptIds) {
+            await requestPromise(metaStore.delete(corruptId));
+            await requestPromise(entriesStore.delete(this.rawSessionEntryRange(corruptId)));
+        }
+        for (const meta of valid) {
             if (meta.sessionId === keepSessionId) {
                 continue;
             }
@@ -525,7 +673,13 @@ export class IndexedDbSessionCache implements SessionCacheStore {
             const tx = db.transaction([STORE_META, STORE_ENTRIES], "readwrite");
             const metaStore = tx.objectStore(STORE_META);
             const entriesStore = tx.objectStore(STORE_ENTRIES);
-            const allMetas = (await requestPromise(metaStore.getAll())) as SessionCacheMeta[];
+            const { valid: allMetas, corruptIds } = partitionSessionCacheMetas(
+                await requestPromise(metaStore.getAll()),
+            );
+            for (const corruptId of corruptIds) {
+                await requestPromise(metaStore.delete(corruptId));
+                await requestPromise(entriesStore.delete(this.rawSessionEntryRange(corruptId)));
+            }
 
             let totalBytes = 0;
             for (const meta of allMetas) {

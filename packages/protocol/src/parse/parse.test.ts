@@ -5,12 +5,23 @@ import {
     commandIdOf,
     isRecord,
     parseAfterSeq,
+    parseAuthLoginResponse,
+    parseAuthLogoutResponse,
+    parseAuthStatusResponse,
+    parseCloseSessionResponse,
+    parseCreateSessionResponse,
     parseEntriesVersion,
     parseExtensionUiResponse,
+    parseHealthResponse,
+    parseSessionDetailResponse,
     parseSessionId,
+    parseSessionListResponse,
     parseSessionPrefixAnchor,
+    parseSessionStateSnapshot,
+    parseSessionSummary,
     parseWsClientCommand,
     parseWsHandshakeQuery,
+    parseWsServerMessage,
 } from "./index.ts";
 
 describe("protocol parse helpers", () => {
@@ -134,5 +145,138 @@ describe("protocol parse helpers", () => {
 
         expect(parseWsClientCommand({ type: "set_thinking_level", level: "invalid" })).toBeNull();
         expect(parseWsClientCommand({ type: "unknown_command" })).toBeNull();
+    });
+
+    it("parses HTTP response payloads and rejects malformed shapes", () => {
+        const summary = {
+            id: "session-1",
+            cwd: "/tmp/project",
+            name: null,
+            firstMessage: "hi",
+            messageCount: 1,
+            createdAtMs: 1000,
+            modifiedAtMs: 2000,
+            hasParent: false,
+            runtimeState: "idle",
+            attachedClients: 0,
+        };
+
+        expect(parseHealthResponse({ status: "ok", version: "0.1.0" })).toEqual({ status: "ok", version: "0.1.0" });
+        expect(parseHealthResponse({ status: "down", version: "0.1.0" })).toBeNull();
+        expect(parseAuthStatusResponse({ authRequired: true, authenticated: false })).toEqual({
+            authRequired: true,
+            authenticated: false,
+        });
+        expect(parseAuthLoginResponse({ authenticated: true })).toEqual({ authenticated: true });
+        expect(parseAuthLoginResponse({ authenticated: false })).toBeNull();
+        expect(parseAuthLogoutResponse({ authenticated: false })).toEqual({ authenticated: false });
+        expect(parseCloseSessionResponse({ closed: true })).toEqual({ closed: true });
+        expect(parseSessionSummary(summary)).toEqual(summary);
+        expect(parseSessionSummary({ ...summary, id: "../bad" })).toBeNull();
+        expect(parseSessionListResponse({ sessions: [summary], scannedAtMs: 5000 })).toEqual({
+            sessions: [summary],
+            scannedAtMs: 5000,
+        });
+        expect(parseCreateSessionResponse({ session: summary })).toEqual({ session: summary });
+        expect(
+            parseSessionDetailResponse({
+                session: summary,
+                entriesVersion: "3:1.5.2",
+                baseEntryCount: 0,
+                entries: [{ type: "session", id: "session-1" }],
+            }),
+        ).toEqual({
+            session: summary,
+            entriesVersion: "3:1.5.2",
+            baseEntryCount: 0,
+            entries: [{ type: "session", id: "session-1" }],
+        });
+        expect(
+            parseSessionDetailResponse({
+                session: summary,
+                entriesVersion: null,
+                baseEntryCount: 0,
+                entries: [{ type: "session", id: "session-1" }],
+            }),
+        ).toEqual({
+            session: summary,
+            entriesVersion: null,
+            baseEntryCount: 0,
+            entries: [{ type: "session", id: "session-1" }],
+        });
+        expect(
+            parseSessionDetailResponse({
+                session: summary,
+                entriesVersion: "bad",
+                baseEntryCount: 0,
+                entries: [],
+            }),
+        ).toBeNull();
+    });
+
+    it("parses WS server messages and rejects malformed or unknown frames", () => {
+        const stateSnapshot = {
+            sessionId: "session-1",
+            cwd: "/tmp/project",
+            name: null,
+            model: { provider: "anthropic", id: "claude", name: "Claude" },
+            thinkingLevel: "medium",
+            isStreaming: false,
+            isCompacting: false,
+            steeringMode: "one-at-a-time",
+            followUpMode: "all",
+            autoCompactionEnabled: true,
+            messageCount: 0,
+            pendingMessageCount: 0,
+            steeringMessages: [],
+            followUpMessages: [],
+        };
+
+        expect(parseSessionStateSnapshot(stateSnapshot)).toEqual(stateSnapshot);
+        expect(parseSessionStateSnapshot({ ...stateSnapshot, thinkingLevel: "bogus" })).toBeNull();
+
+        expect(
+            parseWsServerMessage({
+                type: "snapshot",
+                sessionId: "session-1",
+                runtimeId: "rt-1",
+                seq: 0,
+                entriesVersion: "3:1.5.2",
+                baseEntryCount: 0,
+                entriesMode: "inline",
+                entries: [],
+                state: stateSnapshot,
+                liveMessage: null,
+                pendingUiRequests: [],
+            }),
+        ).toMatchObject({ type: "snapshot", entriesMode: "inline" });
+
+        expect(
+            parseWsServerMessage({
+                type: "replay",
+                sessionId: "session-1",
+                runtimeId: "rt-1",
+                seq: 2,
+                entriesVersion: "3:1.5.2",
+                state: stateSnapshot,
+                events: [{ seq: 2, event: { type: "agent_start" } }],
+                liveMessage: { role: "assistant", content: [{ type: "text", text: "streaming" }] },
+                appendedSlice: { baseEntryCount: 1, entries: [{ type: "message" }] },
+                pendingUiRequests: [],
+            }),
+        ).toMatchObject({
+            type: "replay",
+            liveMessage: { role: "assistant", content: [{ type: "text", text: "streaming" }] },
+            appendedSlice: { baseEntryCount: 1 },
+        });
+
+        expect(parseWsServerMessage({ type: "response", command: "abort", success: true })).toEqual({
+            type: "response",
+            command: "abort",
+            success: true,
+        });
+        expect(parseWsServerMessage({ type: "response", command: "abort", success: false })).toBeNull();
+        expect(parseWsServerMessage({ type: "response", command: "made_up", success: true })).toBeNull();
+        expect(parseWsServerMessage({ type: "unknown_type" })).toBeNull();
     });
 });

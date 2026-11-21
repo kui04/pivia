@@ -15,6 +15,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import {
+    isFileEntryRecord,
     isRecord,
     parseEntriesVersion,
     parseSessionId,
@@ -403,13 +404,6 @@ export function defaultProjectSessionDir(sessionsRoot: string, cwd: string): str
     const resolvedCwd = resolve(cwd);
     const safePath = `--${resolvedCwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
     return join(sessionsRoot, safePath);
-}
-
-function isFileEntryRecord(value: unknown): value is FileEntry {
-    if (typeof value !== "object" || value === null || Array.isArray(value)) {
-        return false;
-    }
-    return typeof (value as Record<string, unknown>).type === "string";
 }
 
 function isSessionHeader(entry: FileEntry): boolean {

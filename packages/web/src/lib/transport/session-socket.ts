@@ -1,7 +1,8 @@
 import {
-    isRecord,
-    SESSION_CLOSE_CODE,
+    assertNever,
     classifySessionClose,
+    parseWsServerMessage,
+    SESSION_CLOSE_CODE,
     type RpcExtensionUIResponse,
     type SessionCloseReason,
     type SessionId,
@@ -332,12 +333,11 @@ export class SessionSocket {
             Log.warn("Ignored a malformed session WebSocket message");
             return;
         }
-        if (!isRecord(parsed) || typeof parsed.type !== "string") {
-            Log.warn("Ignored a session WebSocket message without a type");
+        const message = parseWsServerMessage(parsed);
+        if (message === null) {
+            Log.warn("Ignored an invalid session WebSocket message");
             return;
         }
-
-        const message = parsed as unknown as WsServerMessage;
         switch (message.type) {
             case "response":
                 this.settleResponse(message);
@@ -345,8 +345,17 @@ export class SessionSocket {
             case "error":
                 this.settleError(message);
                 return;
-            default:
+            case "snapshot":
+            case "replay":
+            case "entries_appended":
+            case "event":
+            case "extension_ui_request":
+            case "extension_ui_resolved":
+            case "extension_error":
                 this.onMessage?.(message);
+                return;
+            default:
+                return assertNever(message);
         }
     }
 

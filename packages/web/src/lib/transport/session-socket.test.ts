@@ -379,6 +379,8 @@ describe("SessionSocket", () => {
         instance.open();
 
         instance.onmessage?.({ data: "not json" } as MessageEvent);
+        instance.onmessage?.({ data: JSON.stringify({ type: "unknown_message" }) } as MessageEvent);
+        instance.onmessage?.({ data: JSON.stringify({ type: "event", sessionId: "../bad", seq: 1 }) } as MessageEvent);
         instance.receive({ type: "response", command: "abort", success: true });
         instance.receive({ type: "error", code: "unknown", message: "No id." });
 

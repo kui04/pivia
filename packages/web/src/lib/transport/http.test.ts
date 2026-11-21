@@ -1,4 +1,10 @@
-import { parseEntriesVersion, parseSessionId, type EntriesVersion, type SessionId } from "@pivia/protocol";
+import {
+    parseEntriesVersion,
+    parseSessionId,
+    type EntriesVersion,
+    type SessionId,
+    type SessionSummary,
+} from "@pivia/protocol";
 import { describe, expect, it, vi } from "vitest";
 
 import { ApiClientError, createApiClient, type FetchLike } from "./http";
@@ -17,6 +23,21 @@ function ev(raw: string): EntriesVersion {
         throw new Error(`Invalid test entries version: ${raw}`);
     }
     return parsed;
+}
+
+function summary(id = "s1"): SessionSummary {
+    return {
+        id: sid(id),
+        cwd: "/home/u/project",
+        name: null,
+        firstMessage: "hi",
+        messageCount: 1,
+        createdAtMs: 1_000,
+        modifiedAtMs: 2_000,
+        hasParent: false,
+        runtimeState: "idle",
+        attachedClients: 0,
+    };
 }
 
 function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
@@ -83,7 +104,17 @@ describe("createApiClient", () => {
 
         const detailFetch: FetchLike = (url) => {
             urls.push(urlString(url));
-            return Promise.resolve(jsonResponse({ session: {}, entries: [] }));
+            if (urlString(url).endsWith("/close")) {
+                return Promise.resolve(jsonResponse({ closed: true }));
+            }
+            return Promise.resolve(
+                jsonResponse({
+                    session: summary("session.1_a-b"),
+                    entriesVersion: "3:1.5.2",
+                    baseEntryCount: 0,
+                    entries: [],
+                }),
+            );
         };
         const detailClient = createApiClient({ fetch: detailFetch });
         await detailClient.getSession(sid("session.1_a-b"));
@@ -136,18 +167,22 @@ describe("createApiClient", () => {
     });
 
     it("creates and closes sessions with the typed payloads", async () => {
+        const createdSummary = summary("s1");
         const requests: { url: string; init: RequestInit | undefined }[] = [];
         const fetchImpl: FetchLike = (url, init) => {
             requests.push({ url: urlString(url), init });
-            return Promise.resolve(jsonResponse({ session: { id: "s1" }, closed: true }));
+            if (urlString(url).endsWith("/close")) {
+                return Promise.resolve(jsonResponse({ closed: true }));
+            }
+            return Promise.resolve(jsonResponse({ session: createdSummary }));
         };
         const client = createApiClient({ fetch: fetchImpl });
 
         const created = await client.createSession("/home/u/project");
         const closed = await client.closeSession(sid("s1"));
 
-        expect(created).toEqual({ session: { id: "s1" }, closed: true });
-        expect(closed).toEqual({ session: { id: "s1" }, closed: true });
+        expect(created).toEqual({ session: createdSummary });
+        expect(closed).toEqual({ closed: true });
         expect(requests[0]?.url).toBe("/api/sessions");
         expect(requests[0]?.init?.body).toBe(JSON.stringify({ cwd: "/home/u/project" }));
         expect(requests[1]?.url).toBe("/api/sessions/s1/close");
@@ -276,7 +311,7 @@ describe("createApiClient", () => {
         const fetchImpl: FetchLike = (url, init) => {
             seen.push({ url: urlString(url), signal: init?.signal });
             return Promise.resolve(
-                jsonResponse({ session: {}, entriesVersion: "3:1.5.2", baseEntryCount: 2, entries: [] }),
+                jsonResponse({ session: summary("s1"), entriesVersion: "3:1.5.2", baseEntryCount: 2, entries: [] }),
             );
         };
         const client = createApiClient({ fetch: fetchImpl });
@@ -293,5 +328,16 @@ describe("createApiClient", () => {
 
         expect(seen[0]?.url).toBe("/api/sessions/s1?entriesVersion=3%3A1.5.2&afterCount=2&afterEntryId=e1");
         expect(seen[0]?.signal).toBe(controller.signal);
+    });
+
+    it("rejects a 200 response whose JSON shape fails boundary decoding", async () => {
+        const { fetch } = recordingFetch(jsonResponse({ status: "wrong", version: 42 }));
+        const client = createApiClient({ fetch });
+
+        await expect(client.getHealth()).rejects.toMatchObject({
+            status: 200,
+            code: "internal_error",
+            message: "The server returned an invalid response payload for /api/health.",
+        });
     });
 });

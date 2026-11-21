@@ -35,7 +35,8 @@ const THINKING_LEVELS: Readonly<Record<ThinkingLevel, true>> = {
     max: true,
 };
 
-function isThinkingLevel(value: unknown): value is ThinkingLevel {
+/** Returns true when `value` is one of the known SDK {@link ThinkingLevel} literals. */
+export function isThinkingLevel(value: unknown): value is ThinkingLevel {
     return typeof value === "string" && Object.hasOwn(THINKING_LEVELS, value);
 }
 

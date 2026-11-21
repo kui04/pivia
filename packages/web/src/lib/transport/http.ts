@@ -1,4 +1,15 @@
-import { isRecord, PUBLIC_API_PATHS } from "@pivia/protocol";
+import {
+    isRecord,
+    parseAuthLoginResponse,
+    parseAuthLogoutResponse,
+    parseAuthStatusResponse,
+    parseCloseSessionResponse,
+    parseCreateSessionResponse,
+    parseHealthResponse,
+    parseSessionDetailResponse,
+    parseSessionListResponse,
+    PUBLIC_API_PATHS,
+} from "@pivia/protocol";
 import type {
     ApiErrorCode,
     ApiErrorResponse,
@@ -8,6 +19,7 @@ import type {
     CloseSessionResponse,
     CreateSessionResponse,
     HealthResponse,
+    JsonDecoder,
     SessionDetailResponse,
     SessionId,
     SessionListResponse,
@@ -201,7 +213,7 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
         }
     };
 
-    const request = async <T>(path: string, init: RequestInit): Promise<T> => {
+    const request = async <T>(path: string, init: RequestInit, decode: JsonDecoder<T>): Promise<T> => {
         let response: Response;
         try {
             response = await fetchImpl(joinUrl(baseUrl, path), {
@@ -249,27 +261,58 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
                 message: "The server returned an empty response.",
             });
         }
-        return body as T;
+        const parsed = decode(body);
+        if (parsed === null) {
+            throw new ApiClientError({
+                status: response.status,
+                code: "internal_error",
+                message: `The server returned an invalid response payload for ${pathnameOf(path)}.`,
+            });
+        }
+        return parsed;
     };
 
     return {
-        getHealth: () => request<HealthResponse>("/api/health", { method: "GET", headers: ACCEPT_HEADERS }),
+        getHealth: () =>
+            request<HealthResponse>("/api/health", { method: "GET", headers: ACCEPT_HEADERS }, parseHealthResponse),
         getAuthStatus: () =>
-            request<AuthStatusResponse>("/api/auth/status", { method: "GET", headers: ACCEPT_HEADERS }),
+            request<AuthStatusResponse>(
+                "/api/auth/status",
+                { method: "GET", headers: ACCEPT_HEADERS },
+                parseAuthStatusResponse,
+            ),
         login: (password) =>
-            request<AuthLoginResponse>("/api/auth", {
-                method: "POST",
-                headers: JSON_HEADERS,
-                body: JSON.stringify({ password }),
-            }),
-        logout: () => request<AuthLogoutResponse>("/api/auth/logout", { method: "POST", headers: ACCEPT_HEADERS }),
-        listSessions: () => request<SessionListResponse>("/api/sessions", { method: "GET", headers: ACCEPT_HEADERS }),
+            request<AuthLoginResponse>(
+                "/api/auth",
+                {
+                    method: "POST",
+                    headers: JSON_HEADERS,
+                    body: JSON.stringify({ password }),
+                },
+                parseAuthLoginResponse,
+            ),
+        logout: () =>
+            request<AuthLogoutResponse>(
+                "/api/auth/logout",
+                { method: "POST", headers: ACCEPT_HEADERS },
+                parseAuthLogoutResponse,
+            ),
+        listSessions: () =>
+            request<SessionListResponse>(
+                "/api/sessions",
+                { method: "GET", headers: ACCEPT_HEADERS },
+                parseSessionListResponse,
+            ),
         createSession: (cwd) =>
-            request<CreateSessionResponse>("/api/sessions", {
-                method: "POST",
-                headers: JSON_HEADERS,
-                body: JSON.stringify({ cwd }),
-            }),
+            request<CreateSessionResponse>(
+                "/api/sessions",
+                {
+                    method: "POST",
+                    headers: JSON_HEADERS,
+                    body: JSON.stringify({ cwd }),
+                },
+                parseCreateSessionResponse,
+            ),
         getSession: (id, sessionOptions) => {
             const params = new URLSearchParams();
             const anchor = sessionOptions?.anchor;
@@ -287,13 +330,17 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
             if (sessionOptions?.signal !== undefined) {
                 init.signal = sessionOptions.signal;
             }
-            return request<SessionDetailResponse>(path, init);
+            return request<SessionDetailResponse>(path, init, parseSessionDetailResponse);
         },
         closeSession: (id) =>
-            request<CloseSessionResponse>(`/api/sessions/${encodeURIComponent(id)}/close`, {
-                method: "POST",
-                headers: ACCEPT_HEADERS,
-            }),
+            request<CloseSessionResponse>(
+                `/api/sessions/${encodeURIComponent(id)}/close`,
+                {
+                    method: "POST",
+                    headers: ACCEPT_HEADERS,
+                },
+                parseCloseSessionResponse,
+            ),
         setUnauthorizedHandler: (handler) => {
             unauthorizedHandler = handler ?? undefined;
         },

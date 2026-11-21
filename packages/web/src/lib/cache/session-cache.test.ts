@@ -190,4 +190,60 @@ describe("IndexedDbSessionCache", () => {
         expect(await cache.appendEntries(S1, V152, 1, [userEntry("e1", null, "hi")])).toBe("degraded-memory");
         expect((await cache.getSession(S1))?.entries).toHaveLength(2);
     });
+
+    it("rejects and self-heals corrupted IndexedDB meta and catalog records", async () => {
+        const factory = new IDBFactory();
+        const cache = new IndexedDbSessionCache({ indexedDB: factory, keyRange: IDBKeyRange });
+        await cache.replaceEntries(S1, V152, [header("s1")]);
+        await cache.putWorkspaceCatalog([summary(S1)], 5_000);
+
+        const db = await new Promise<IDBDatabase>((resolve, reject) => {
+            const req = factory.open("pivia.cache.v1", 1);
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error ?? new Error("Failed to open IndexedDB."));
+        });
+        await new Promise<void>((resolve, reject) => {
+            const tx = db.transaction(["session_meta", "workspace_catalog"], "readwrite");
+            tx.objectStore("session_meta").put({ sessionId: S1, entriesVersion: "corrupt" });
+            tx.objectStore("session_meta").put({ sessionId: "s-corrupt", entriesVersion: "bad" });
+            tx.objectStore("workspace_catalog").put({ key: "default", sessions: [{ id: "../bad" }], scannedAtMs: 1 });
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error ?? new Error("Failed to write corrupted IndexedDB rows."));
+        });
+        db.close();
+
+        expect(await cache.getSession(S1)).toBeNull();
+        expect(await cache.getWorkspaceCatalog()).toBeNull();
+        expect(await cache.replaceEntries(S2, V152, [header("s2")])).toBe("written");
+
+        const reopened = await new Promise<IDBDatabase>((resolve, reject) => {
+            const req = factory.open("pivia.cache.v1", 1);
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error ?? new Error("Failed to reopen IndexedDB."));
+        });
+        const remaining = await new Promise<{
+            metaS1: unknown;
+            metaCorrupt: unknown;
+            catalog: unknown;
+        }>((resolve, reject) => {
+            const tx = reopened.transaction(["session_meta", "workspace_catalog"], "readonly");
+            const reqS1 = tx.objectStore("session_meta").get(S1);
+            const reqCorrupt = tx.objectStore("session_meta").get("s-corrupt");
+            const reqCatalog = tx.objectStore("workspace_catalog").get("default");
+            tx.oncomplete = () =>
+                resolve({
+                    metaS1: reqS1.result,
+                    metaCorrupt: reqCorrupt.result,
+                    catalog: reqCatalog.result,
+                });
+            tx.onerror = () => reject(tx.error ?? new Error("Failed to inspect IndexedDB."));
+        });
+        reopened.close();
+
+        expect(remaining).toEqual({
+            metaS1: undefined,
+            metaCorrupt: undefined,
+            catalog: undefined,
+        });
+    });
 });
