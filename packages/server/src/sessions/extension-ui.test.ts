@@ -1,12 +1,12 @@
 import type { RpcExtensionUIResponse } from "@earendil-works/pi-coding-agent";
 
-import { parseSessionId, type WsServerMessage } from "@pivia/protocol";
+import { parseSessionId, type SessionWsServerMessage } from "@pivia/protocol";
 import { describe, expect, it } from "vitest";
 
 import { SessionUiBridge } from "./extension-ui.ts";
 
-function createBridge(): { bridge: SessionUiBridge; messages: WsServerMessage[] } {
-    const messages: WsServerMessage[] = [];
+function createBridge(): { bridge: SessionUiBridge; messages: SessionWsServerMessage[] } {
+    const messages: SessionWsServerMessage[] = [];
     const sessionId = parseSessionId("session-1");
     if (sessionId === null) {
         throw new Error("invalid test session id");

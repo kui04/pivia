@@ -265,6 +265,22 @@ describe("SessionCatalog", () => {
         expect(serialized).not.toContain(sessionsRoot);
     });
 
+    it("preserves a long first user message in full in the session summary", async () => {
+        const agentDir = createTempDir("pivia-agent-");
+        const sessionDir = createTempDir("pivia-sessions-");
+        const longMessage = "x".repeat(2_000);
+        writeSessionFile(join(sessionDir, "long.jsonl"), {
+            id: "session-long",
+            messages: [{ role: "user", text: longMessage, timestamp: "2026-01-01T00:00:01.000Z" }],
+        });
+
+        const catalog = createCatalog({ agentDir, sessionDir, logger: createRecordingLogger().logger });
+        const result = await catalog.list();
+
+        expect(result.sessions).toHaveLength(1);
+        expect(result.sessions[0]?.firstMessage).toBe(longMessage);
+    });
+
     it("lists sessions from a flat custom directory and ignores nested files", async () => {
         const sessionDir = createTempDir("pivia-sessions-");
         writeSessionFile(join(sessionDir, "flat.jsonl"), { id: "session-flat", messages: [] });
@@ -544,14 +560,51 @@ describe("SessionCatalog", () => {
             ],
         });
         const resolved = await catalog.resolveById(sid("session-cached"));
-        expect(resolved?.summary.messageCount).toBe(2);
-        expect(resolved?.summary.name).toBe("Updated Title");
-        expect(resolved?.sizeBytes).toBe(statSync(filePath).size);
+        expect(resolved.kind).toBe("found");
+        if (resolved.kind === "found") {
+            expect(resolved.session.summary.messageCount).toBe(2);
+            expect(resolved.session.summary.name).toBe("Updated Title");
+            expect(resolved.session.sizeBytes).toBe(statSync(filePath).size);
+        }
 
-        // Deleting the file removes it on the next list() and makes resolveById return null.
+        // Deleting the file removes it on the next list() and makes resolveById return missing.
         rmSync(filePath);
-        expect(await catalog.resolveById(sid("session-cached"))).toBeNull();
+        expect(await catalog.resolveById(sid("session-cached"))).toEqual({ kind: "missing" });
         expect((await catalog.list()).sessions).toEqual([]);
+    });
+
+    it("reports oversized persisted sessions without dropping them from list or misclassifying them as missing", async () => {
+        const sessionDir = createTempDir("pivia-sessions-");
+        const filePath = join(sessionDir, "oversized.jsonl");
+        writeSessionFile(filePath, {
+            id: "session-oversized",
+            messages: [{ role: "user", text: "x".repeat(500) }],
+        });
+        const fileSize = statSync(filePath).size;
+
+        const { logger, logs } = createRecordingLogger();
+        const catalog = new SessionCatalog({
+            sessionDir,
+            agentDir: createTempDir("pivia-agent-"),
+            cwd: sessionDir,
+            env: {},
+            logger,
+            maxSessionFileBytes: 100,
+        });
+
+        expect((await catalog.list()).sessions.map((session) => session.id)).toEqual(["session-oversized"]);
+
+        const firstResolution = await catalog.resolveById(sid("session-oversized"));
+        expect(firstResolution).toMatchObject({ kind: "oversized", sizeBytes: fileSize });
+        expect(logs.some((entry) => entry.message.includes("oversized"))).toBe(false);
+
+        // Cached fast path must preserve the oversized classification without triggering a read warning.
+        const secondResolution = await catalog.resolveById(sid("session-oversized"));
+        expect(secondResolution).toMatchObject({ kind: "oversized", sizeBytes: fileSize });
+        expect(logs.some((entry) => entry.message.includes("oversized"))).toBe(false);
+
+        expect(await catalog.getById(sid("session-oversized"))).toBeNull();
+        expect(logs.some((entry) => entry.message.includes("refused to read an oversized session file"))).toBe(true);
     });
 
     it("returns null entriesVersion for unmigrated v1/v2 files and slices v3 files by prefix anchor", async () => {

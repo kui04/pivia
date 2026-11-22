@@ -1,0 +1,10 @@
+/*
+ * The story frame that holds one folder section.
+ *
+ *   .frame
+ */
+.frame {
+    inline-size: 18rem;
+    padding: var(--space-8);
+    background-color: var(--color-surface-container);
+}

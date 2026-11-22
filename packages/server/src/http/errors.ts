@@ -35,5 +35,8 @@ export function sendRegistryError(reply: FastifyReply, error: SessionRegistryErr
     if (error.code === "not_found") {
         return sendApiError(reply, 404, "not_found", error.message);
     }
+    if (error.code === "directory_not_found") {
+        return sendApiError(reply, 400, "directory_not_found", error.message);
+    }
     return sendApiError(reply, 400, "invalid_request", error.message);
 }

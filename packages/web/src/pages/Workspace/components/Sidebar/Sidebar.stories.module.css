@@ -1,0 +1,11 @@
+/*
+ * The story frame that stands in for the sidebar column.
+ *
+ *   .frame
+ */
+.frame {
+    display: flex;
+    inline-size: 18rem;
+    block-size: 36rem;
+    border: var(--border-width) solid var(--color-outline-variant);
+}

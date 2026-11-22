@@ -1,22 +1,22 @@
 import {
     assertNever,
     classifySessionClose,
-    parseWsServerMessage,
+    parseSessionWsServerMessage,
     SESSION_CLOSE_CODE,
     type RpcExtensionUIResponse,
     type SessionCloseReason,
     type SessionId,
     type SessionPrefixAnchor,
-    type WsClientCommand,
-    type WsErrorMessage,
-    type WsResponseMessage,
-    type WsServerMessage,
+    type SessionWsClientCommand,
+    type SessionWsErrorMessage,
+    type SessionWsResponseMessage,
+    type SessionWsServerMessage,
 } from "@pivia/protocol";
 
 import { Log } from "@/lib/log";
 
 /** A control command. UI answers travel through {@link SessionSocket.sendUiResponse}. */
-export type SessionCommand = Exclude<WsClientCommand, RpcExtensionUIResponse>;
+export type SessionCommand = Exclude<SessionWsClientCommand, RpcExtensionUIResponse>;
 
 /** Why a session socket closed, from the browser client's point of view. */
 export type SessionSocketCloseReason = SessionCloseReason;
@@ -63,7 +63,7 @@ export interface SessionSocketOptions {
     readonly WebSocket?: SessionSocketConstructor | undefined;
     readonly onOpen?: (() => void) | undefined;
     /** Receives protocol messages that are not a response to a command. */
-    readonly onMessage?: ((message: WsServerMessage) => void) | undefined;
+    readonly onMessage?: ((message: SessionWsServerMessage) => void) | undefined;
     readonly onClose?: ((close: SessionSocketClose) => void) | undefined;
     /** Receives transport errors. A close event normally follows. */
     readonly onError?: ((message: string) => void) | undefined;
@@ -95,7 +95,7 @@ export class SessionCommandError extends Error {
 
 interface PendingCommand {
     readonly command: string;
-    readonly resolve: (message: WsResponseMessage) => void;
+    readonly resolve: (message: SessionWsResponseMessage) => void;
     readonly reject: (error: Error) => void;
 }
 
@@ -164,7 +164,7 @@ export class SessionSocket {
     private readonly url: string | undefined;
     private readonly socketConstructor: SessionSocketConstructor | undefined;
     private readonly onOpen: (() => void) | undefined;
-    private readonly onMessage: ((message: WsServerMessage) => void) | undefined;
+    private readonly onMessage: ((message: SessionWsServerMessage) => void) | undefined;
     private readonly onClose: ((close: SessionSocketClose) => void) | undefined;
     private readonly onError: ((message: string) => void) | undefined;
 
@@ -228,7 +228,7 @@ export class SessionSocket {
      * A command without an `id` gets one; a supplied `id` is reused so a caller can correlate a
      * command with its own state. Commands sent before the socket opens are queued in order.
      */
-    sendCommand(command: SessionCommand): Promise<WsResponseMessage> {
+    sendCommand(command: SessionCommand): Promise<SessionWsResponseMessage> {
         if (this.closed) {
             return Promise.reject(new SessionSocketClosedError(this.closeReason ?? "client"));
         }
@@ -240,7 +240,7 @@ export class SessionSocket {
         }
 
         const payload = { ...command, id } satisfies SessionCommand;
-        const promise = new Promise<WsResponseMessage>((resolve, reject) => {
+        const promise = new Promise<SessionWsResponseMessage>((resolve, reject) => {
             this.pending.set(id, { command: command.type, resolve, reject });
         });
 
@@ -333,7 +333,7 @@ export class SessionSocket {
             Log.warn("Ignored a malformed session WebSocket message");
             return;
         }
-        const message = parseWsServerMessage(parsed);
+        const message = parseSessionWsServerMessage(parsed);
         if (message === null) {
             Log.warn("Ignored an invalid session WebSocket message");
             return;
@@ -359,7 +359,7 @@ export class SessionSocket {
         }
     }
 
-    private settleResponse(message: WsResponseMessage): void {
+    private settleResponse(message: SessionWsResponseMessage): void {
         const id = message.id;
         if (id === undefined) {
             Log.debug("Ignored a session response without a command id", message.command);
@@ -378,7 +378,7 @@ export class SessionSocket {
         pending.reject(new SessionCommandError(pending.command, message.error));
     }
 
-    private settleError(message: WsErrorMessage): void {
+    private settleError(message: SessionWsErrorMessage): void {
         const id = message.id;
         if (id !== undefined) {
             const pending = this.pending.get(id);

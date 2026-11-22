@@ -4,7 +4,7 @@ import {
     SESSION_CLOSE_CODE,
     type EntriesVersion,
     type SessionId,
-    type WsServerMessage,
+    type SessionWsServerMessage,
 } from "@pivia/protocol";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -69,7 +69,7 @@ class FakeSocket implements SessionSocketLike {
         this.onopen?.();
     }
 
-    receive(message: WsServerMessage): void {
+    receive(message: SessionWsServerMessage): void {
         this.onmessage?.({ data: JSON.stringify(message) } as MessageEvent);
     }
 
@@ -283,11 +283,11 @@ describe("SessionSocket", () => {
     });
 
     it("delivers non-response messages to the message callback", () => {
-        const onMessage = vi.fn<(message: WsServerMessage) => void>();
+        const onMessage = vi.fn<(message: SessionWsServerMessage) => void>();
         const { instance } = openSocket({ onMessage });
         instance.open();
 
-        const messages: WsServerMessage[] = [
+        const messages: SessionWsServerMessage[] = [
             {
                 type: "snapshot",
                 sessionId: SESSION_1,
@@ -374,7 +374,7 @@ describe("SessionSocket", () => {
     });
 
     it("ignores malformed JSON and responses without a pending command", () => {
-        const onMessage = vi.fn<(message: WsServerMessage) => void>();
+        const onMessage = vi.fn<(message: SessionWsServerMessage) => void>();
         const { instance } = openSocket({ onMessage });
         instance.open();
 

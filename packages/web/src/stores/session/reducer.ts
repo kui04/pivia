@@ -7,13 +7,13 @@ import type {
     SessionCloseReason,
     SessionId,
     SessionStateSnapshot,
-    WsEntriesAppendedMessage,
-    WsErrorMessage,
-    WsEventMessage,
-    WsExtensionUiRequestMessage,
-    WsExtensionUiResolvedMessage,
-    WsReplayMessage,
-    WsSnapshotMessage,
+    SessionWsEntriesAppendedMessage,
+    SessionWsErrorMessage,
+    SessionWsEventMessage,
+    SessionWsExtensionUiRequestMessage,
+    SessionWsExtensionUiResolvedMessage,
+    SessionWsReplayMessage,
+    SessionWsSnapshotMessage,
 } from "@pivia/protocol";
 
 /** Connection lifecycle of the one session the workspace currently shows. */
@@ -88,11 +88,11 @@ export type SessionAction =
           readonly liveEvents?: readonly SequencedSessionEvent[] | undefined;
       }
     | { readonly type: "open" }
-    | { readonly type: "snapshot"; readonly message: WsSnapshotMessage }
-    | { readonly type: "replay"; readonly message: WsReplayMessage }
+    | { readonly type: "snapshot"; readonly message: SessionWsSnapshotMessage }
+    | { readonly type: "replay"; readonly message: SessionWsReplayMessage }
     | {
           readonly type: "entries_appended";
-          readonly message: Extract<WsEntriesAppendedMessage, { readonly entriesMode: "inline" }>;
+          readonly message: Extract<SessionWsEntriesAppendedMessage, { readonly entriesMode: "inline" }>;
       }
     | { readonly type: "entries_sync_started"; readonly baseEntryCount: number; readonly targetEntryCount: number }
     | {
@@ -103,10 +103,10 @@ export type SessionAction =
           readonly entries: readonly FileEntry[];
       }
     | { readonly type: "entries_sync_failed"; readonly sessionId: SessionId; readonly message: string }
-    | { readonly type: "event"; readonly message: WsEventMessage }
-    | { readonly type: "extension_ui_request"; readonly message: WsExtensionUiRequestMessage }
-    | { readonly type: "extension_ui_resolved"; readonly message: WsExtensionUiResolvedMessage }
-    | { readonly type: "server_error"; readonly message: WsErrorMessage }
+    | { readonly type: "event"; readonly message: SessionWsEventMessage }
+    | { readonly type: "extension_ui_request"; readonly message: SessionWsExtensionUiRequestMessage }
+    | { readonly type: "extension_ui_resolved"; readonly message: SessionWsExtensionUiResolvedMessage }
+    | { readonly type: "server_error"; readonly message: SessionWsErrorMessage }
     | { readonly type: "reconnecting" }
     | {
           readonly type: "closed";

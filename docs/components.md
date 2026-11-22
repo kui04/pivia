@@ -52,12 +52,14 @@
   `DialogTitle`, `DialogDescription`, `DialogActions` and `DialogClose`, and owns any `Form` and action buttons. Dialog
   and AlertDialog import `DialogSurface.module.css` for the shared overlay; `AlertDialog` is the semantic confirmation
   wrapper with its own actions. Base UI owns the modal focus trap, scroll lock, Escape and focus return.
-- `Drawer` wraps Base UI Drawer as an edge-anchored modal panel, used for the session sidebar below the column
-  breakpoint. Base UI owns the focus trap, the scroll lock, Escape, focus return and the swipe gesture, and focuses the
+- `Drawer` wraps Base UI Drawer as an edge-anchored modal panel (`left`, `right`, or `bottom` bottom sheet), used
+  for the session sidebar and mobile sheets below the column breakpoint. Base UI owns the focus trap, the scroll lock, Escape, focus return and the swipe gesture, and focuses the
   panel on open, which keeps mobile virtual keyboards closed; a disabled primary action is skipped by the tab order, so
   the first Tab reaches the first usable control. The panel portals to `document.body`, outside the `#root` safe-area
   padding, so the viewport adds `env(safe-area-inset-*)` itself and keeps the larger of the safe area and `--kb-inset`
-  at the bottom: while the keyboard is open it covers the home indicator. The portal stays mounted while the drawer is
+  at the bottom: while the keyboard is open it covers the home indicator. A bottom sheet also caps its
+  height to the viewport content box and scrolls its form body, so the keyboard inset cannot push the
+  actions off-screen. The portal stays mounted while the drawer is
   closed, so the content keeps its own state such as search text and scroll position; Base UI hides the panel and the
   backdrop from the accessibility tree meanwhile. `useInsideDrawer` tells content whether it renders inside the panel, so
   page-level gestures do not claim the drawer's swipe area.

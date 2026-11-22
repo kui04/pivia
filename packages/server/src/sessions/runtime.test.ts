@@ -4,7 +4,12 @@ import { join } from "node:path";
 
 import type { SessionManager } from "@earendil-works/pi-coding-agent";
 
-import { parseSessionId, type SessionId, type WsResponseMessage, type WsServerMessage } from "@pivia/protocol";
+import {
+    parseSessionId,
+    type SessionId,
+    type SessionWsResponseMessage,
+    type SessionWsServerMessage,
+} from "@pivia/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createLogger } from "../logger.ts";
@@ -17,6 +22,7 @@ import {
     type SessionAttachment,
     type SessionClient,
     type SessionRegistryLogger,
+    type WorkspaceCatalogEvent,
 } from "./runtime.ts";
 import { SessionCatalog } from "./catalog.ts";
 import {
@@ -46,7 +52,7 @@ afterEach(async () => {
 
 interface Collector {
     readonly client: SessionClient;
-    readonly messages: WsServerMessage[];
+    readonly messages: SessionWsServerMessage[];
     readonly closes: Array<{ readonly code: number; readonly reason: string }>;
 }
 
@@ -68,6 +74,7 @@ interface FixtureOptions {
     readonly logger?: SessionRegistryLogger;
     readonly nowMs?: (() => number) | undefined;
     readonly onCreate?: ((session: FakeSession) => void) | undefined;
+    readonly maxSessionFileBytes?: number | undefined;
 }
 
 function createFixture(options: FixtureOptions = {}): Fixture {
@@ -80,7 +87,14 @@ function createFixture(options: FixtureOptions = {}): Fixture {
     mkdirSync(projectDir, { recursive: true });
     mkdirSync(sessionDir, { recursive: true });
     const logger = createLogger({ level: "silent" });
-    const catalog = new SessionCatalog({ sessionDir, agentDir, cwd: root, env: {}, logger });
+    const catalog = new SessionCatalog({
+        sessionDir,
+        agentDir,
+        cwd: root,
+        env: {},
+        logger,
+        maxSessionFileBytes: options.maxSessionFileBytes,
+    });
     const harness = createFakeRuntimeHarness({ delayMs: options.delayMs, onCreate: options.onCreate });
     const registry = new SessionRegistry({
         catalog,
@@ -97,7 +111,7 @@ function createFixture(options: FixtureOptions = {}): Fixture {
 }
 
 function createCollector(): Collector {
-    const messages: WsServerMessage[] = [];
+    const messages: SessionWsServerMessage[] = [];
     const closes: Array<{ readonly code: number; readonly reason: string }> = [];
     return {
         messages,
@@ -149,9 +163,9 @@ async function waitForRuntimeState(
     throw new Error(`Timed out waiting for runtime state ${expected}`);
 }
 
-async function waitForMessage<T extends WsServerMessage>(
-    messages: readonly WsServerMessage[],
-    predicate: (message: WsServerMessage) => message is T,
+async function waitForMessage<T extends SessionWsServerMessage>(
+    messages: readonly SessionWsServerMessage[],
+    predicate: (message: SessionWsServerMessage) => message is T,
     timeoutMs = 2000,
 ): Promise<T> {
     const deadline = Date.now() + timeoutMs;
@@ -165,16 +179,16 @@ async function waitForMessage<T extends WsServerMessage>(
     throw new Error(`Timed out waiting for message. Received: ${JSON.stringify(messages)}`);
 }
 
-function responseFor(messages: readonly WsServerMessage[], id: string): Promise<WsResponseMessage> {
-    return waitForMessage(messages, (message): message is WsResponseMessage => {
+function responseFor(messages: readonly SessionWsServerMessage[], id: string): Promise<SessionWsResponseMessage> {
+    return waitForMessage(messages, (message): message is SessionWsResponseMessage => {
         return message.type === "response" && message.id === id;
     });
 }
 
 async function successResponseFor(
-    messages: readonly WsServerMessage[],
+    messages: readonly SessionWsServerMessage[],
     id: string,
-): Promise<Extract<WsResponseMessage, { success: true }>> {
+): Promise<Extract<SessionWsResponseMessage, { success: true }>> {
     const response = await responseFor(messages, id);
     expect(response.success).toBe(true);
     if (!response.success) {
@@ -346,7 +360,7 @@ describe("SessionRegistry", () => {
         const closePromise = fixture.registry.closeSession(handle.sessionId);
         const request = await waitForMessage(
             collector.messages,
-            (message): message is Extract<WsServerMessage, { type: "extension_ui_request" }> =>
+            (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_request" }> =>
                 message.type === "extension_ui_request" && message.request.method === "confirm",
         );
         expect((await fixture.registry.getById(handle.sessionId))?.session.runtimeState).toBe("closing");
@@ -355,7 +369,7 @@ describe("SessionRegistry", () => {
         await attachment.handleCommand({ type: "get_state", id: "closing-state" });
         const closingResponse = await waitForMessage(
             collector.messages,
-            (message): message is Extract<WsServerMessage, { type: "response" }> =>
+            (message): message is Extract<SessionWsServerMessage, { type: "response" }> =>
                 message.type === "response" && message.id === "closing-state",
         );
         expect(closingResponse).toMatchObject({ success: false, error: "Session is closing." });
@@ -456,7 +470,7 @@ describe("SessionRegistry", () => {
         const closePromise = fixture.registry.closeSession(handle.sessionId);
         await waitForMessage(
             collector.messages,
-            (message): message is Extract<WsServerMessage, { type: "extension_ui_request" }> =>
+            (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_request" }> =>
                 message.type === "extension_ui_request" && message.request.method === "confirm",
         );
         attachment.detach();
@@ -506,7 +520,7 @@ describe("SessionRegistry", () => {
         const dialog = bindings.uiContext.select("Still there?", ["yes", "no"]);
         const request = await waitForMessage(
             collector.messages,
-            (message): message is Extract<WsServerMessage, { type: "extension_ui_request" }> =>
+            (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_request" }> =>
                 message.type === "extension_ui_request" && message.request.method === "select",
         );
         attachment.detach();
@@ -542,7 +556,7 @@ describe("SessionRegistry", () => {
         const dialog = bindings.uiContext.select("Timeout?", ["yes", "no"]);
         await waitForMessage(
             collector.messages,
-            (message): message is Extract<WsServerMessage, { type: "extension_ui_request" }> =>
+            (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_request" }> =>
                 message.type === "extension_ui_request" && message.request.method === "select",
         );
         attachment.detach();
@@ -565,7 +579,7 @@ describe("SessionRegistry", () => {
         const dialog = bindings.uiContext.confirm("Tool confirmation", "Proceed while streaming?");
         await waitForMessage(
             collector.messages,
-            (message): message is Extract<WsServerMessage, { type: "extension_ui_request" }> =>
+            (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_request" }> =>
                 message.type === "extension_ui_request" && message.request.method === "confirm",
         );
         attachment.detach();
@@ -613,7 +627,7 @@ describe("SessionRegistry", () => {
         const closePromise = fixture.registry.closeSession(handle.sessionId);
         await waitForMessage(
             collector.messages,
-            (message): message is Extract<WsServerMessage, { type: "extension_ui_resolved" }> =>
+            (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_resolved" }> =>
                 message.type === "extension_ui_resolved" && message.requestId === startupRequest.id,
         );
         if (startupDialog === undefined) {
@@ -623,7 +637,7 @@ describe("SessionRegistry", () => {
 
         const shutdownRequest = await waitForMessage(
             collector.messages,
-            (message): message is Extract<WsServerMessage, { type: "extension_ui_request" }> =>
+            (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_request" }> =>
                 message.type === "extension_ui_request" && message.request.method === "confirm",
         );
         await attachment.handleCommand({
@@ -678,12 +692,22 @@ describe("SessionRegistry", () => {
         const filePath = join(fixture.root, "not-a-directory.txt");
         writeFileSync(filePath, "file", "utf8");
 
-        const cases = [missing, filePath, "relative/project"];
-        for (const cwd of cases) {
-            await expect(fixture.registry.createSession(cwd)).rejects.toBeInstanceOf(SessionRegistryError);
+        const cases = [
+            { cwd: missing, code: "directory_not_found" },
+            { cwd: filePath, code: "invalid_request" },
+            { cwd: "relative/project", code: "invalid_request" },
+        ] as const;
+        for (const testCase of cases) {
+            await expect(fixture.registry.createSession(testCase.cwd)).rejects.toMatchObject({
+                code: testCase.code,
+            });
         }
         expect(fixture.registry.activeSessionCount).toBe(0);
         expect(fixture.harness.runtimes).toHaveLength(0);
+
+        const createdMissing = await fixture.registry.createSession(missing, { createDirectory: true });
+        expect(createdMissing.cwd).toBe(realpathSync(missing));
+        expect(fixture.registry.activeSessionCount).toBe(1);
     });
 
     it("merges an unflushed new session into list and detail responses", async () => {
@@ -908,7 +932,7 @@ describe("SessionRegistry", () => {
 
         const event = await waitForMessage(
             collector.messages,
-            (message): message is Extract<WsServerMessage, { type: "event" }> => message.type === "event",
+            (message): message is Extract<SessionWsServerMessage, { type: "event" }> => message.type === "event",
         );
         expect(event.seq).toBe(1);
         expect(event.event.type).toBe("message_update");
@@ -917,7 +941,7 @@ describe("SessionRegistry", () => {
 
         const settled = await waitForMessage(
             collector.messages,
-            (message): message is Extract<WsServerMessage, { type: "event" }> =>
+            (message): message is Extract<SessionWsServerMessage, { type: "event" }> =>
                 message.type === "event" && message.event.type === "agent_settled",
         );
         expect(settled.seq).toBe(2);
@@ -938,7 +962,7 @@ describe("SessionRegistry", () => {
 
         const broadcast = await waitForMessage(
             collector.messages,
-            (message): message is Extract<WsServerMessage, { type: "extension_error" }> =>
+            (message): message is Extract<SessionWsServerMessage, { type: "extension_error" }> =>
                 message.type === "extension_error",
         );
         expect(broadcast).toMatchObject({
@@ -965,14 +989,14 @@ describe("SessionRegistry", () => {
         const confirmed = ui.confirm("Clear session?", "All messages will be lost.");
         const request = await waitForMessage(
             first.collector.messages,
-            (message): message is Extract<WsServerMessage, { type: "extension_ui_request" }> =>
+            (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_request" }> =>
                 message.type === "extension_ui_request" &&
                 message.request.method === "confirm" &&
                 message.request.title === "Clear session?",
         );
         await waitForMessage(
             second.collector.messages,
-            (message): message is Extract<WsServerMessage, { type: "extension_ui_request" }> =>
+            (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_request" }> =>
                 message.type === "extension_ui_request" && message.request.id === request.request.id,
         );
 
@@ -984,19 +1008,19 @@ describe("SessionRegistry", () => {
         await expect(confirmed).resolves.toBe(true);
         await waitForMessage(
             first.collector.messages,
-            (message): message is Extract<WsServerMessage, { type: "extension_ui_resolved" }> =>
+            (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_resolved" }> =>
                 message.type === "extension_ui_resolved" && message.requestId === request.request.id,
         );
         await waitForMessage(
             second.collector.messages,
-            (message): message is Extract<WsServerMessage, { type: "extension_ui_resolved" }> =>
+            (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_resolved" }> =>
                 message.type === "extension_ui_resolved" && message.requestId === request.request.id,
         );
 
         const selected = ui.select("Allow command?", ["Allow", "Block"]);
         const selectRequest = await waitForMessage(
             first.collector.messages,
-            (message): message is Extract<WsServerMessage, { type: "extension_ui_request" }> =>
+            (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_request" }> =>
                 message.type === "extension_ui_request" && message.request.method === "select",
         );
         await second.attachment.handleCommand({
@@ -1009,7 +1033,7 @@ describe("SessionRegistry", () => {
         const input = ui.input("Enter a value", "placeholder");
         const inputRequest = await waitForMessage(
             first.collector.messages,
-            (message): message is Extract<WsServerMessage, { type: "extension_ui_request" }> =>
+            (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_request" }> =>
                 message.type === "extension_ui_request" && message.request.method === "input",
         );
         await first.attachment.handleCommand({
@@ -1022,7 +1046,7 @@ describe("SessionRegistry", () => {
         const edited = ui.editor("Edit text", "prefill");
         const editorRequest = await waitForMessage(
             first.collector.messages,
-            (message): message is Extract<WsServerMessage, { type: "extension_ui_request" }> =>
+            (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_request" }> =>
                 message.type === "extension_ui_request" && message.request.method === "editor",
         );
         await first.attachment.handleCommand({
@@ -1035,7 +1059,7 @@ describe("SessionRegistry", () => {
         const late = attach(fixture.registry, handle.sessionId);
         const snapshot = await waitForMessage(
             late.collector.messages,
-            (message): message is Extract<WsServerMessage, { type: "snapshot" }> => message.type === "snapshot",
+            (message): message is Extract<SessionWsServerMessage, { type: "snapshot" }> => message.type === "snapshot",
         );
         expect(snapshot.pendingUiRequests).toEqual([]);
     });
@@ -1063,7 +1087,7 @@ describe("SessionRegistry", () => {
         for (const method of methods) {
             await waitForMessage(
                 collector.messages,
-                (message): message is Extract<WsServerMessage, { type: "extension_ui_request" }> =>
+                (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_request" }> =>
                     message.type === "extension_ui_request" && message.request.method === method,
             );
         }
@@ -1091,7 +1115,7 @@ describe("SessionRegistry", () => {
         await expect(timedOut).resolves.toBe(false);
         await waitForMessage(
             collector.messages,
-            (message): message is Extract<WsServerMessage, { type: "extension_ui_resolved" }> =>
+            (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_resolved" }> =>
                 message.type === "extension_ui_resolved",
         );
 
@@ -1103,14 +1127,14 @@ describe("SessionRegistry", () => {
         const pending = ui.select("Close?", ["one", "two"]);
         const selectRequest = await waitForMessage(
             collector.messages,
-            (message): message is Extract<WsServerMessage, { type: "extension_ui_request" }> =>
+            (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_request" }> =>
                 message.type === "extension_ui_request" && message.request.method === "select",
         );
         const late = createCollector();
         fixture.registry.attach(handle.sessionId, late.client);
         const lateSnapshot = await waitForMessage(
             late.messages,
-            (message): message is Extract<WsServerMessage, { type: "snapshot" }> => message.type === "snapshot",
+            (message): message is Extract<SessionWsServerMessage, { type: "snapshot" }> => message.type === "snapshot",
         );
         expect(lateSnapshot.pendingUiRequests.map((request) => request.id)).toContain(selectRequest.request.id);
 
@@ -1270,7 +1294,7 @@ describe("SessionRegistry", () => {
 
         const appendedMsg = await waitForMessage(
             first.collector.messages,
-            (message): message is Extract<WsServerMessage, { type: "entries_appended" }> =>
+            (message): message is Extract<SessionWsServerMessage, { type: "entries_appended" }> =>
                 message.type === "entries_appended",
         );
         expect(appendedMsg.entriesMode).toBe("inline");
@@ -1314,7 +1338,7 @@ describe("SessionRegistry", () => {
         session.appendUserMessage(huge);
         const hugeBroadcast = await waitForMessage(
             first.collector.messages,
-            (message): message is Extract<WsServerMessage, { type: "entries_appended" }> =>
+            (message): message is Extract<SessionWsServerMessage, { type: "entries_appended" }> =>
                 message.type === "entries_appended" && message.entriesMode === "http",
         );
         expect(hugeBroadcast).toMatchObject({ entriesMode: "http", baseEntryCount: 4, entryCount: 5 });
@@ -1344,5 +1368,298 @@ describe("SessionRegistry", () => {
         tier2.attachment.detach();
         tier1Offload.attachment.detach();
         tier3Offload.attachment.detach();
+    });
+
+    it("emits workspace catalog updates across lifecycle transitions without leaking message_update deltas", async () => {
+        let releaseBind: (() => void) | undefined;
+        const bindGate = new Promise<void>((resolve) => {
+            releaseBind = resolve;
+        });
+        const fixture = createFixture({
+            onCreate(session) {
+                session.bindExtensionsHandler = async () => {
+                    await bindGate;
+                };
+            },
+        });
+
+        const events: WorkspaceCatalogEvent[] = [];
+        const secondaryEvents: WorkspaceCatalogEvent[] = [];
+        const unsubscribeThrowing = fixture.registry.subscribeCatalog(() => {
+            throw new Error("boom");
+        });
+        const unsubscribe = fixture.registry.subscribeCatalog((event) => {
+            events.push(event);
+        });
+        const unsubscribeSecondary = fixture.registry.subscribeCatalog((event) => {
+            secondaryEvents.push(event);
+        });
+
+        const handle = await fixture.registry.createSession(fixture.projectDir);
+        const session = fakeSession(fixture, handle);
+
+        expect(events.at(-1)).toMatchObject({
+            type: "session_upserted",
+            session: { id: handle.sessionId, runtimeState: "starting", attachedClients: 0 },
+        });
+        expect(secondaryEvents).toHaveLength(events.length);
+
+        releaseBind?.();
+        await waitUntil(() =>
+            events.some(
+                (event) =>
+                    event.type === "session_updated" &&
+                    event.sessionId === handle.sessionId &&
+                    event.patch.runtimeState === "idle",
+            ),
+        );
+
+        const { attachment } = attach(fixture.registry, handle.sessionId);
+        expect(events.at(-1)).toMatchObject({
+            type: "session_updated",
+            sessionId: handle.sessionId,
+            patch: { attachedClients: 1 },
+        });
+
+        await attachment.handleCommand({ type: "set_session_name", id: "rename-1", name: "Live Rename" });
+        expect(events.at(-1)).toMatchObject({
+            type: "session_updated",
+            sessionId: handle.sessionId,
+            patch: { name: "Live Rename" },
+        });
+
+        session.setState({ isStreaming: true });
+        session.emit({ type: "agent_start" });
+        expect(events.at(-1)).toMatchObject({
+            type: "session_updated",
+            sessionId: handle.sessionId,
+            patch: { runtimeState: "streaming" },
+        });
+
+        const countBeforeDeltas = events.length;
+        session.emit(createTextDeltaEvent("Hel", "Hel"));
+        session.emit(createTextDeltaEvent("lo", "Hello"));
+        expect(events).toHaveLength(countBeforeDeltas);
+
+        session.setState({ isStreaming: false });
+        session.emit({ type: "agent_settled", aborted: false });
+        expect(events.at(-1)).toMatchObject({
+            type: "session_updated",
+            sessionId: handle.sessionId,
+            patch: { runtimeState: "idle" },
+        });
+
+        attachment.detach();
+        expect(events.at(-1)).toMatchObject({
+            type: "session_updated",
+            sessionId: handle.sessionId,
+            patch: { attachedClients: 0 },
+        });
+
+        await fixture.registry.closeSession(handle.sessionId);
+        await waitUntil(() =>
+            events.some((event) => event.type === "session_removed" && event.sessionId === handle.sessionId),
+        );
+        expect(events.at(-2)).toMatchObject({
+            type: "session_updated",
+            sessionId: handle.sessionId,
+            patch: { runtimeState: "closing" },
+        });
+        expect(events.at(-1)).toMatchObject({
+            type: "session_removed",
+            sessionId: handle.sessionId,
+        });
+
+        // Unsubscribing stops further notifications, and persisted disk sessions fall back to idle on close.
+        unsubscribeThrowing();
+        unsubscribeSecondary();
+        const countBeforePersisted = events.length;
+        const persistedPath = join(fixture.sessionDir, "persisted.jsonl");
+        writeSessionFixture(persistedPath, "session-persisted");
+        const persistedId = parseSessionId("session-persisted");
+        if (persistedId === null) {
+            throw new Error("expected valid test session id");
+        }
+        await fixture.registry.open(persistedId);
+        const countBeforeClose = events.length;
+        await fixture.registry.closeSession(persistedId);
+
+        await waitUntil(() =>
+            events
+                .slice(countBeforeClose)
+                .some(
+                    (event) =>
+                        event.type === "session_updated" &&
+                        event.sessionId === persistedId &&
+                        event.patch.runtimeState === "idle" &&
+                        event.patch.attachedClients === 0,
+                ),
+        );
+        expect(secondaryEvents).toHaveLength(countBeforePersisted);
+        expect(events.at(-1)).toMatchObject({
+            type: "session_updated",
+            sessionId: persistedId,
+            patch: { runtimeState: "idle", attachedClients: 0 },
+        });
+
+        // All catalog events share one catalogEpoch and strictly increasing seq matching list().
+        const listAfterEvents = await fixture.registry.list();
+        expect(events.length).toBeGreaterThan(0);
+        for (let index = 0; index < events.length; index += 1) {
+            const event = events[index];
+            expect(event?.catalogEpoch).toBe(listAfterEvents.catalogEpoch);
+            if (index > 0) {
+                const prev = events[index - 1];
+                if (prev !== undefined && event !== undefined) {
+                    expect(event.seq).toBeGreaterThan(prev.seq);
+                }
+            }
+        }
+        expect(events.at(-1)?.seq).toBe(listAfterEvents.catalogSeq);
+
+        unsubscribe();
+        const countAfterUnsubscribe = events.length;
+        await fixture.registry.createSession(fixture.projectDir);
+        expect(events).toHaveLength(countAfterUnsubscribe);
+        expect((await fixture.registry.list()).catalogSeq).toBeGreaterThan(listAfterEvents.catalogSeq);
+    });
+
+    it("preserves full firstMessage and sends it once instead of repeating it on later patches", async () => {
+        const fixture = createFixture();
+        const handle = await fixture.registry.createSession(fixture.projectDir);
+        const session = fakeSession(fixture, handle);
+        const events: WorkspaceCatalogEvent[] = [];
+        fixture.registry.subscribeCatalog((event) => {
+            events.push(event);
+        });
+        const longMessage = "x".repeat(2_000);
+
+        session.appendUserMessage(longMessage);
+        session.emit({
+            type: "message_end",
+            message: { role: "user", content: longMessage, timestamp: Date.now() },
+        });
+
+        expect(handle.summarize().firstMessage).toBe(longMessage);
+        expect(events).toHaveLength(1);
+        expect(events[0]).toMatchObject({
+            type: "session_updated",
+            sessionId: handle.sessionId,
+            patch: { firstMessage: longMessage },
+        });
+
+        session.setState({ isStreaming: true });
+        session.emit({ type: "agent_start" });
+        session.emit({
+            type: "message_end",
+            message: {
+                role: "assistant",
+                content: [{ type: "text", text: "Done" }],
+                timestamp: Date.now(),
+            } as never,
+        });
+        session.setState({ isStreaming: false });
+        session.emit({ type: "agent_end", messages: [], willRetry: false });
+        session.emit({ type: "agent_settled", aborted: false });
+
+        const laterPatches = events
+            .slice(1)
+            .filter(
+                (event): event is Extract<WorkspaceCatalogEvent, { type: "session_updated" }> =>
+                    event.type === "session_updated",
+            );
+        expect(laterPatches.length).toBeGreaterThan(0);
+        for (const update of laterPatches) {
+            expect("firstMessage" in update.patch).toBe(false);
+        }
+    });
+
+    it("ignores late detach after close and caches header-derived summary fields", async () => {
+        const fixture = createFixture();
+        const handle = await fixture.registry.createSession(fixture.projectDir);
+        const session = fakeSession(fixture, handle);
+        const events: WorkspaceCatalogEvent[] = [];
+        fixture.registry.subscribeCatalog((event) => {
+            events.push(event);
+        });
+
+        const { attachment } = attach(fixture.registry, handle.sessionId);
+        session.appendUserMessage("Cached prompt");
+        session.emit({
+            type: "message_end",
+            message: { role: "user", content: "Cached prompt", timestamp: Date.now() },
+        });
+
+        // After initialization and caching, summarize() should not invoke session.getEntries().
+        const originalGetEntries = session.getEntries.bind(session);
+        let getEntriesCalls = 0;
+        session.getEntries = () => {
+            getEntriesCalls += 1;
+            return originalGetEntries();
+        };
+        const summary = handle.summarize();
+        expect(summary.firstMessage).toBe("Cached prompt");
+        expect(getEntriesCalls).toBe(0);
+
+        const countBeforeClose = events.length;
+        await fixture.registry.closeSession(handle.sessionId);
+        await waitUntil(() =>
+            events
+                .slice(countBeforeClose)
+                .some(
+                    (event) =>
+                        event.type === "session_updated" &&
+                        event.sessionId === handle.sessionId &&
+                        event.patch.runtimeState === "idle" &&
+                        event.patch.attachedClients === 0,
+                ),
+        );
+        const countAfterTerminal = events.length;
+
+        // A late detach arriving after closeSession removed the entry must not re-publish "closing".
+        attachment.detach();
+        expect(events).toHaveLength(countAfterTerminal);
+    });
+
+    it("emits a terminal fallback catalog event even when resolveById rejects after close", async () => {
+        const fixture = createFixture();
+        const handle = await fixture.registry.createSession(fixture.projectDir);
+        const events: WorkspaceCatalogEvent[] = [];
+        fixture.registry.subscribeCatalog((event) => {
+            events.push(event);
+        });
+
+        fixture.catalog.resolveById = () => Promise.reject(new Error("disk read error"));
+        await fixture.registry.closeSession(handle.sessionId);
+        await waitUntil(() =>
+            events.some((event) => event.type === "session_removed" && event.sessionId === handle.sessionId),
+        );
+        expect(events.at(-1)).toMatchObject({ type: "session_removed", sessionId: handle.sessionId });
+    });
+
+    it("keeps an oversized persisted session in the catalog on close instead of emitting session_removed", async () => {
+        const fixture = createFixture({ maxSessionFileBytes: 100 });
+        const handle = await fixture.registry.createSession(fixture.projectDir);
+        const events: WorkspaceCatalogEvent[] = [];
+        fixture.registry.subscribeCatalog((event) => {
+            events.push(event);
+        });
+
+        // Simulate a live session that flushed a >64 MiB transcript before closing.
+        writeSessionFixture(join(fixture.sessionDir, "oversized.jsonl"), handle.sessionId, {
+            messages: [{ role: "user", text: "x".repeat(500) }],
+        });
+
+        await fixture.registry.closeSession(handle.sessionId);
+        await waitUntil(() =>
+            events.some(
+                (event) =>
+                    event.type === "session_updated" &&
+                    event.sessionId === handle.sessionId &&
+                    event.patch.runtimeState === "idle" &&
+                    event.patch.attachedClients === 0,
+            ),
+        );
+        expect(events.some((event) => event.type === "session_removed")).toBe(false);
     });
 });

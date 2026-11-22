@@ -1,0 +1,32 @@
+/*
+ * The facts list inside the settings dialog.
+ *
+ *   .facts (dl)
+ *   ├─ .term (dt)
+ *   └─ .value (dd)
+ */
+.facts {
+    display: grid;
+    grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
+    gap: var(--space-8) var(--space-16);
+    margin: 0;
+
+    .term {
+        color: var(--color-on-surface-variant);
+        font-size: var(--type-label-large-size);
+        font-weight: var(--type-label-large-weight);
+        letter-spacing: var(--type-label-large-tracking);
+        line-height: var(--type-label-large-line-height);
+    }
+
+    /* A host origin and status break anywhere rather than widening the dialog. */
+    .value {
+        margin: 0;
+        color: var(--color-on-surface);
+        font-family: var(--font-mono);
+        font-size: var(--type-body-medium-size);
+        letter-spacing: var(--type-body-medium-tracking);
+        line-height: var(--type-body-medium-line-height);
+        overflow-wrap: anywhere;
+    }
+}

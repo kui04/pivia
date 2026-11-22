@@ -1,0 +1,216 @@
+/*
+ * The row and the folder header above it span the same box, so both hover layers end on the same
+ * edge and the list reads as one column of cards. The 32px height is shared with the folder header
+ * and the skeleton rows, so a loaded list replaces the skeleton without a jump.
+ *
+ * The nesting this file styles; a DOM parent that is not a CSS ancestor is noted:
+ *
+ *   .item (li)                     data-selected and data-open drive the tint
+ *   ├─ .select (button)            the row itself; the title and age sit inside it
+ *   ├─ &:hover                     hover-capable pointers only
+ *   ├─ &[data-open="true"]         an open menu keeps the row marked
+ *   ├─ &:has(.select:active)       a press answers, before the selected tint
+ *   ├─ &[data-selected="true"]
+ *   │   └─ .select                 the selected colours
+ *   ├─ &, .select                  pointer: coarse, 48px tall
+ *   ├─ .title                      inside the button, a sibling rule here
+ *   │   └─ &[data-named="false"]   a preview name, in the muted colour
+ *   ├─ .age                        inside the button, a sibling rule here
+ *   │   └─ &[data-status="active"] an active runtime badge
+ *   ├─ &:hover .age
+ *   ├─ &:has(:focus-visible) .age, &[data-open="true"] .age
+ *   ├─ .actions (span)             pin IconButton and Menu trigger
+ *   ├─ &:hover .actions
+ *   └─ &:has(:focus-visible) .actions, &[data-open="true"] .actions
+ *
+ * The actions are a sibling of the button, never a child, because a button cannot hold buttons
+ * and a keyboard has to reach the name and the actions separately.
+ */
+.item {
+    --row-inset: var(--space-8);
+    /* The pin and the menu read as one group, so they sit closer than the rows below. */
+    --actions-gap: var(--space-4);
+    /* The soft left edge of the actions layer that hides the end of a long title. */
+    --actions-fade: var(--space-12);
+    /*
+     * The surface the row sits on, and the tint the row adds to it. The actions layer paints both,
+     * so it covers the title under it with exactly the colour the row shows there.
+     */
+    --row-base: var(--color-surface-container);
+    --row-overlay: transparent;
+
+    position: relative;
+    display: flex;
+    align-items: center;
+    min-block-size: var(--space-32);
+
+    /*
+     * The title starts at 36px: the row inset, the 20px flush icon box and its 8px gap, so titles
+     * line up with the folder names above them.
+     */
+    .select {
+        display: flex;
+        flex: 1;
+        align-items: center;
+        gap: var(--space-8);
+        min-inline-size: 0;
+        min-block-size: var(--space-32);
+        padding-block: var(--space-4);
+        padding-inline: calc(var(--row-inset) + var(--space-20) + var(--space-8)) var(--row-inset);
+        border-radius: var(--shape-corner-small);
+        background-color: var(--row-overlay);
+        color: var(--color-on-surface);
+        cursor: pointer;
+        text-align: start;
+        /* A long press opens the menu instead of selecting text. */
+        user-select: none;
+        touch-action: pan-y;
+        transition: background-color var(--motion-duration-effects-fast) var(--motion-easing-standard);
+    }
+
+    /* A touch screen has no hover, so the tint only follows a pointer or an open menu. */
+    @media (hover: hover) {
+        &:hover {
+            --row-overlay: var(--state-hover);
+        }
+    }
+
+    /* An open menu keeps the row marked while the pointer is on the popup. */
+    &[data-open="true"] {
+        --row-overlay: var(--state-hover);
+    }
+
+    /* Kept after the hover rules so a press answers, and before the chosen row so that one wins. */
+    &:has(.select:active) {
+        --row-overlay: var(--state-pressed);
+    }
+
+    &[data-selected="true"] {
+        --row-overlay: var(--color-primary-container);
+
+        .select {
+            color: var(--color-on-primary-container);
+        }
+    }
+
+    /*
+     * A touch screen gets the 48px target that Button already uses, so a row is as easy to hit
+     * as the actions beside it. The folder headers and the skeleton follow the same metric.
+     */
+    @media (pointer: coarse) {
+        &,
+        .select {
+            min-block-size: var(--space-48);
+        }
+    }
+
+    .title {
+        flex: 1;
+        min-inline-size: 0;
+        overflow: hidden;
+        font-size: var(--type-label-large-size);
+        font-weight: var(--type-label-large-weight);
+        letter-spacing: var(--type-label-large-tracking);
+        line-height: var(--type-label-large-line-height);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+
+        /* A preview is not the session's name, so it does not carry the same weight. */
+        &[data-named="false"] {
+            color: var(--color-on-surface-variant);
+        }
+    }
+
+    .age {
+        flex: none;
+        /* The menu glyph sits 4px inside its 24px box, so the age ends on the same line. */
+        padding-inline-end: var(--space-4);
+        color: var(--color-on-surface-variant);
+        font-family: var(--font-mono);
+        font-size: var(--type-label-medium-size);
+        font-variant-numeric: tabular-nums;
+        letter-spacing: var(--type-label-medium-tracking);
+        line-height: var(--type-label-medium-line-height);
+        /* Same duration as the actions, so one fades out while the other fades in. */
+        transition: opacity var(--motion-duration-effects-fast) var(--motion-easing-standard);
+
+        /* A running session answers "what is it doing", not "when did it change". */
+        &[data-status="active"] {
+            color: var(--color-on-surface);
+            font-family: var(--font-sans);
+            font-weight: var(--type-label-medium-emphasized-weight);
+        }
+    }
+
+    @media (hover: hover) {
+        &:hover .age {
+            opacity: 0;
+        }
+    }
+
+    &:has(:focus-visible) .age,
+    &[data-open="true"] .age {
+        opacity: 0;
+    }
+
+    /*
+     * The actions sit on top of the row's end and the title keeps its width, so nothing moves when a
+     * pointer arrives; the title only disappears under the layer. The layer repaints the row colour
+     * and fades in on its start side, so a long title ends in a fade instead of a cut. It is inert
+     * until it is revealed: it never blocks the row's hit area.
+     */
+    .actions {
+        position: absolute;
+        inset-block-start: 50%;
+        inset-inline-end: var(--row-inset);
+        display: flex;
+        align-items: center;
+        gap: var(--actions-gap);
+        padding-inline-start: var(--actions-fade);
+        background-color: var(--row-base);
+        background-image: linear-gradient(var(--row-overlay), var(--row-overlay));
+        mask-image: linear-gradient(to right, transparent, black var(--actions-fade));
+        opacity: 0;
+        pointer-events: none;
+        transform: translateY(-50%);
+        transition: opacity var(--motion-duration-effects-fast) var(--motion-easing-standard);
+    }
+
+    @media (hover: hover) {
+        &:hover .actions {
+            opacity: 1;
+            pointer-events: auto;
+        }
+    }
+
+    /* Keyboard focus anywhere in the row, including the actions themselves, keeps them visible. */
+    &:has(:focus-visible) .actions,
+    &[data-open="true"] .actions {
+        opacity: 1;
+        pointer-events: auto;
+    }
+
+    /*
+     * Forced colours drop the background that marks the hovered row, so the actions stay visible,
+     * paint a system colour in place of the row colour, and the age yields its place for good.
+     */
+    @media (forced-colors: active) {
+        .actions {
+            background: Canvas;
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .age {
+            opacity: 0;
+        }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .select,
+        .age,
+        .actions {
+            transition: none;
+        }
+    }
+}

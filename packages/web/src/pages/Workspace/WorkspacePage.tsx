@@ -16,14 +16,14 @@ export function WorkspacePage() {
             <div className={styles.stage}>
                 {sessionId === undefined ? (
                     <div className={styles.empty}>
-                        <h1 className={styles.title}>No session selected</h1>
+                        <h2 className={styles.title}>No session selected</h2>
                         <p className={styles.text}>
                             Choose a session from the workspace sidebar. Its transcript opens here.
                         </p>
                     </div>
                 ) : (
                     <div className={styles.empty}>
-                        <h1 className={styles.title}>Session</h1>
+                        <h2 className={styles.title}>Session</h2>
                         <p className={styles.text}>
                             The chat view for this session arrives with the next workspace update.
                         </p>

@@ -1,11 +1,28 @@
-import { parseSessionId, type SessionId, type SessionSummary } from "@pivia/protocol";
+import {
+    parseCatalogEpoch,
+    parseCatalogSeq,
+    parseSessionId,
+    type CatalogEpoch,
+    type CatalogSeq,
+    type SessionId,
+    type SessionSummary,
+} from "@pivia/protocol";
 import { describe, expect, it } from "vitest";
 
 import {
+    applyCatalogEvent,
     buildWorkspaceModel,
+    canApplyCatalogEvent,
+    canApplyCatalogSnapshot,
+    collectKnownCwds,
     compareSessions,
     folderLabel,
+    formatRelativeAge,
+    mergeRefreshSnapshot,
+    patchSession,
     removeSession,
+    selectedSession,
+    sessionRowStatus,
     sessionTitle,
     sortSessions,
     upsertSession,
@@ -15,6 +32,22 @@ function sid(raw: string): SessionId {
     const parsed = parseSessionId(raw);
     if (parsed === null) {
         throw new Error(`Invalid test session id: ${raw}`);
+    }
+    return parsed;
+}
+
+function epoch(raw: string): CatalogEpoch {
+    const parsed = parseCatalogEpoch(raw);
+    if (parsed === null) {
+        throw new Error(`Invalid test catalog epoch: ${raw}`);
+    }
+    return parsed;
+}
+
+function seq(raw: number): CatalogSeq {
+    const parsed = parseCatalogSeq(raw);
+    if (parsed === null) {
+        throw new Error(`Invalid test catalog seq: ${raw}`);
     }
     return parsed;
 }
@@ -103,11 +136,94 @@ describe("session list helpers", () => {
 
         expect(upsertSession([one, two], replacement)).toEqual([replacement, two]);
         expect(upsertSession([one], summary("three"))).toEqual([one, summary("three")]);
+        const unchanged = [one, two];
+        expect(upsertSession(unchanged, { ...one })).toBe(unchanged);
+    });
+
+    it("patches mutable session fields and preserves array identity on no-op or missing id", () => {
+        const one = summary("one", { name: "One", firstMessage: "initial", runtimeState: "starting" });
+        const two = summary("two", { name: "Two" });
+        const list = [one, two];
+
+        const patched = patchSession(list, sid("one"), { runtimeState: "idle", attachedClients: 1 });
+        expect(patched).toEqual([{ ...one, runtimeState: "idle", attachedClients: 1 }, two]);
+
+        expect(patchSession(list, sid("one"), { runtimeState: "starting" })).toBe(list);
+        expect(patchSession(list, sid("missing"), { runtimeState: "idle" })).toBe(list);
     });
 
     it("removes a session by id", () => {
         expect(removeSession([summary("a"), summary("b")], sid("a")).map((session) => session.id)).toEqual(["b"]);
         expect(removeSession([summary("a")], sid("missing"))).toHaveLength(1);
+    });
+
+    it("gates catalog snapshots and events by epoch and monotonic seq", () => {
+        const e1 = epoch("e1");
+        const e2 = epoch("e2");
+        expect(canApplyCatalogSnapshot(null, { epoch: e1, seq: seq(0) })).toBe(true);
+        expect(canApplyCatalogSnapshot({ epoch: e1, seq: seq(5) }, { epoch: e1, seq: seq(4) })).toBe(false);
+        expect(canApplyCatalogSnapshot({ epoch: e1, seq: seq(5) }, { epoch: e1, seq: seq(5) })).toBe(true);
+        expect(canApplyCatalogSnapshot({ epoch: e1, seq: seq(5) }, { epoch: e2, seq: seq(0) })).toBe(true);
+
+        expect(canApplyCatalogEvent(null, { epoch: e1, seq: seq(1) })).toBe(true);
+        expect(canApplyCatalogEvent({ epoch: e1, seq: seq(5) }, { epoch: e1, seq: seq(5) })).toBe(false);
+        expect(canApplyCatalogEvent({ epoch: e1, seq: seq(5) }, { epoch: e1, seq: seq(6) })).toBe(true);
+        expect(canApplyCatalogEvent({ epoch: e1, seq: seq(5) }, { epoch: e2, seq: seq(6) })).toBe(false);
+    });
+
+    it("applies catalog events and folds buffered refresh updates after snapshot seq", () => {
+        const e1 = epoch("e1");
+        const e2 = epoch("e2");
+        const one = summary("one", { runtimeState: "idle" });
+        const two = summary("two", { runtimeState: "starting" });
+
+        const afterUpsert = applyCatalogEvent([one], {
+            type: "session_upserted",
+            catalogEpoch: e1,
+            seq: seq(1),
+            session: two,
+        });
+        expect(afterUpsert).toEqual([one, two]);
+
+        const merged = mergeRefreshSnapshot({ sessions: [one], cursor: { epoch: e1, seq: seq(10) } }, [
+            // Stale seq <= 10 and foreign-epoch events must be skipped.
+            {
+                type: "session_updated",
+                catalogEpoch: e1,
+                seq: seq(10),
+                sessionId: sid("one"),
+                patch: { runtimeState: "closing" },
+            },
+            {
+                type: "session_updated",
+                catalogEpoch: e2,
+                seq: seq(11),
+                sessionId: sid("one"),
+                patch: { runtimeState: "closing" },
+            },
+            // Newer events in the same epoch fold in order and advance the resulting cursor.
+            {
+                type: "session_upserted",
+                catalogEpoch: e1,
+                seq: seq(11),
+                session: two,
+            },
+            {
+                type: "session_updated",
+                catalogEpoch: e1,
+                seq: seq(12),
+                sessionId: sid("one"),
+                patch: { runtimeState: "streaming", attachedClients: 1 },
+            },
+            {
+                type: "session_removed",
+                catalogEpoch: e1,
+                seq: seq(13),
+                sessionId: sid("two"),
+            },
+        ]);
+        expect(merged.cursor).toEqual({ epoch: e1, seq: seq(13) });
+        expect(merged.sessions).toEqual([{ ...one, runtimeState: "streaming", attachedClients: 1 }]);
     });
 });
 
@@ -232,5 +348,88 @@ describe("buildWorkspaceModel", () => {
 
         expect(model.pinned).toEqual([]);
         expect(model.folders[0]?.sessions.map((row) => row.id)).toEqual(["one"]);
+    });
+});
+
+describe("selectedSession", () => {
+    it("returns null when no session is selected or found, and projects title metadata when matched", () => {
+        const one = summary("one", {
+            name: "  Named  ",
+            cwd: "/repo/a",
+            runtimeState: "streaming",
+            attachedClients: 2,
+        });
+        expect(selectedSession([one], null)).toBeNull();
+        expect(selectedSession([one], sid("missing"))).toBeNull();
+        expect(selectedSession([one], sid("one"))).toEqual({
+            id: sid("one"),
+            title: "Named",
+            named: true,
+            cwd: "/repo/a",
+            runtimeState: "streaming",
+            attachedClients: 2,
+        });
+    });
+});
+
+describe("sessionRowStatus", () => {
+    it("maps every runtime state and attachment count to its display union", () => {
+        expect(sessionRowStatus({ runtimeState: "idle", attachedClients: 0, modifiedAtMs: 5_000 })).toEqual({
+            kind: "idle",
+            modifiedAtMs: 5_000,
+        });
+        expect(sessionRowStatus({ runtimeState: "idle", attachedClients: 1, modifiedAtMs: 5_000 })).toEqual({
+            kind: "active",
+            state: "attached",
+            label: "Attached",
+        });
+        expect(sessionRowStatus({ runtimeState: "starting", attachedClients: 0, modifiedAtMs: 5_000 })).toEqual({
+            kind: "active",
+            state: "starting",
+            label: "Starting",
+        });
+        expect(sessionRowStatus({ runtimeState: "streaming", attachedClients: 1, modifiedAtMs: 5_000 })).toEqual({
+            kind: "active",
+            state: "streaming",
+            label: "Streaming",
+        });
+        expect(sessionRowStatus({ runtimeState: "compacting", attachedClients: 1, modifiedAtMs: 5_000 })).toEqual({
+            kind: "active",
+            state: "compacting",
+            label: "Compacting",
+        });
+        expect(sessionRowStatus({ runtimeState: "closing", attachedClients: 0, modifiedAtMs: 5_000 })).toEqual({
+            kind: "active",
+            state: "closing",
+            label: "Closing",
+        });
+    });
+});
+
+describe("formatRelativeAge", () => {
+    it("formats compact ages across thresholds and clamps future timestamps to now", () => {
+        const now = 1_000_000_000_000;
+        expect(formatRelativeAge(now + 10_000, now)).toBe("now");
+        expect(formatRelativeAge(now - 59_999, now)).toBe("now");
+        expect(formatRelativeAge(now - 60_000, now)).toBe("1m");
+        expect(formatRelativeAge(now - 3_599_999, now)).toBe("59m");
+        expect(formatRelativeAge(now - 3_600_000, now)).toBe("1h");
+        expect(formatRelativeAge(now - 86_400_000, now)).toBe("1d");
+        expect(formatRelativeAge(now - 7 * 86_400_000, now)).toBe("1w");
+        expect(formatRelativeAge(now - 365 * 86_400_000, now)).toBe("1y");
+    });
+});
+
+describe("collectKnownCwds", () => {
+    it("deduplicates non-empty cwds ordered by most recently modified session first", () => {
+        const sessions = [
+            summary("a", { cwd: "/repo/old", modifiedAtMs: 1_000 }),
+            summary("b", { cwd: "/repo/new", modifiedAtMs: 5_000 }),
+            summary("c", { cwd: "/repo/old", modifiedAtMs: 3_000 }),
+            summary("d", { cwd: "   ", modifiedAtMs: 9_000 }),
+            summary("e", { cwd: "", modifiedAtMs: 8_000 }),
+        ];
+
+        expect(collectKnownCwds(sessions)).toEqual(["/repo/new", "/repo/old"]);
     });
 });

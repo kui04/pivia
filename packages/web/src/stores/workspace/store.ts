@@ -1,9 +1,11 @@
 import {
     isRecord,
     parseSessionId,
+    type CatalogCursor,
     type SessionId,
-    type SessionListResponse,
     type SessionSummary,
+    type SessionSummaryPatch,
+    type WorkspaceWsCatalogEvent,
 } from "@pivia/protocol";
 import { create } from "zustand";
 import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
@@ -11,7 +13,15 @@ import { createJSONStorage, persist, type StateStorage } from "zustand/middlewar
 import type { SessionCacheStore } from "@/lib/cache/session-cache";
 import { Log } from "@/lib/log";
 
-import { removeSession, upsertSession, type ScanPhase } from "./model";
+import {
+    applyCatalogEvent as applyCatalogEventToSessions,
+    canApplyCatalogEvent,
+    canApplyCatalogSnapshot,
+    patchSession,
+    removeSession,
+    upsertSession,
+    type CatalogSyncPhase,
+} from "./model";
 
 /** One in-memory storage so a browser context that denies localStorage still runs. */
 const FALLBACK_STORAGE = new Map<string, string>();
@@ -75,11 +85,13 @@ function persistedStorage(): StateStorage {
 
 /** What the workspace remembers about the single host. */
 export interface WorkspaceState {
-    /** Sessions from the last complete scan, in server order. */
+    /** Sessions from the last complete catalog snapshot or HTTP refresh, in server order. */
     readonly sessions: readonly SessionSummary[];
-    /** Time the server finished the last scan, in Unix epoch milliseconds. */
-    readonly scannedAtMs: number | null;
-    readonly scan: ScanPhase;
+    /** Time the server produced the last catalog snapshot, in Unix epoch milliseconds. */
+    readonly updatedAtMs: number | null;
+    /** Server epoch and sequence cursor of the latest applied snapshot or catalog event. */
+    readonly catalogCursor: CatalogCursor | null;
+    readonly sync: CatalogSyncPhase;
     readonly query: string;
     readonly selectedId: SessionId | null;
     /** Pinned session ids; only this field persists across reloads. */
@@ -98,16 +110,19 @@ export interface WorkspaceStoreOptions {
 
 /** What a caller may change in the workspace store. */
 export interface WorkspaceActions {
-    /** Hydrate stale-while-revalidate catalog rows from IndexedDB before the first scan finishes. */
+    /** Hydrate stale-while-revalidate catalog rows from IndexedDB before the first sync finishes. */
     hydrateCatalog: () => Promise<void>;
-    beginScan: (manual: boolean) => void;
-    applyScan: (result: SessionListResponse) => void;
-    failScan: (message: string) => void;
+    beginSync: () => void;
+    applyCatalog: (sessions: readonly SessionSummary[], updatedAtMs: number, cursor: CatalogCursor) => void;
+    applyCatalogEvent: (event: WorkspaceWsCatalogEvent) => void;
+    markReconnecting: (attempt: number) => void;
+    failSync: (message: string) => void;
     setQuery: (query: string) => void;
     select: (id: SessionId | null) => void;
     togglePinned: (id: SessionId) => void;
     toggleFolder: (cwd: string) => void;
     upsertSession: (session: SessionSummary) => void;
+    patchSession: (id: SessionId, patch: SessionSummaryPatch) => void;
     removeSession: (id: SessionId) => void;
     /** Drops connection-scoped state but keeps the pins the user set. */
     reset: () => void;
@@ -117,8 +132,9 @@ export type WorkspaceStore = WorkspaceState & WorkspaceActions;
 
 export const initialWorkspaceState: WorkspaceState = {
     sessions: [],
-    scannedAtMs: null,
-    scan: { kind: "idle" },
+    updatedAtMs: null,
+    catalogCursor: null,
+    sync: { kind: "idle" },
     query: "",
     selectedId: null,
     pins: [],
@@ -152,8 +168,8 @@ function persistedPins(persisted: unknown): readonly SessionId[] {
 /**
  * Creates the session catalog store of the single host.
  *
- * Pins persist in localStorage. When `options.cache` is provided, `applyScan` writes the catalog to
- * IndexedDB and `hydrateCatalog` loads it before the first live scan completes. Without `cache`,
+ * Pins persist in localStorage. When `options.cache` is provided, `applyCatalog` writes the catalog
+ * to IndexedDB and `hydrateCatalog` loads it before the first live sync completes. Without `cache`,
  * catalog persistence is disabled and a warning is logged once.
  */
 export function createWorkspaceStore(options: WorkspaceStoreOptions = {}) {
@@ -180,46 +196,80 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}) {
                         return;
                     }
                     const current = get();
-                    if (current.scan.kind !== "idle" || current.scannedAtMs !== null) {
+                    if (current.sync.kind !== "idle" || current.updatedAtMs !== null) {
                         return;
                     }
                     set({
                         sessions: cached.sessions,
-                        scannedAtMs: cached.scannedAtMs,
+                        updatedAtMs: cached.scannedAtMs,
                     });
                 },
-                beginScan: (manual) =>
+                beginSync: () =>
                     set((state) =>
-                        state.scan.kind === "scanning"
+                        state.sync.kind === "syncing"
                             ? state
                             : {
-                                  // The rows stay in place: a manual scan draws its skeleton from the phase,
-                                  // and a failed scan leaves the last rows visible.
-                                  scan: { kind: "scanning", manual },
+                                  // The rows stay in place while the refresh runs so a failed sync keeps them visible.
+                                  sync: { kind: "syncing" },
                               },
                     ),
-                applyScan: (result) => {
-                    const cache = resolveCache();
-                    if (cache !== undefined) {
-                        void cache.putWorkspaceCatalog(result.sessions, result.scannedAtMs);
+                applyCatalog: (sessions, updatedAtMs, cursor) => {
+                    const current = get();
+                    if (!canApplyCatalogSnapshot(current.catalogCursor, cursor)) {
+                        return;
                     }
+                    const cache = resolveCache();
                     set((state) => {
-                        const ids = new Set(result.sessions.map((session) => session.id));
+                        if (!canApplyCatalogSnapshot(state.catalogCursor, cursor)) {
+                            return state;
+                        }
+                        if (cache !== undefined) {
+                            void cache.putWorkspaceCatalog(sessions, updatedAtMs);
+                        }
+                        const ids = new Set(sessions.map((session) => session.id));
                         return {
-                            sessions: result.sessions,
-                            scannedAtMs: result.scannedAtMs,
-                            scan: { kind: "ready" },
-                            // A pin for a session the complete scan did not see belongs to a deleted session.
+                            sessions,
+                            updatedAtMs,
+                            catalogCursor: cursor,
+                            sync: { kind: "live" },
+                            // A pin for a session the complete catalog did not see belongs to a deleted session.
                             pins: state.pins.filter((id) => ids.has(id)),
                             selectedId:
                                 state.selectedId !== null && ids.has(state.selectedId) ? state.selectedId : null,
                         };
                     });
                 },
-                failScan: (message) =>
+                applyCatalogEvent: (event) =>
+                    set((state) => {
+                        const incomingCursor: CatalogCursor = { epoch: event.catalogEpoch, seq: event.seq };
+                        if (!canApplyCatalogEvent(state.catalogCursor, incomingCursor)) {
+                            return state;
+                        }
+                        const nextSessions = applyCatalogEventToSessions(state.sessions, event);
+                        if (event.type === "session_removed") {
+                            return {
+                                sessions: nextSessions,
+                                catalogCursor: incomingCursor,
+                                pins: state.pins.filter((pinned) => pinned !== event.sessionId),
+                                selectedId: state.selectedId === event.sessionId ? null : state.selectedId,
+                            };
+                        }
+                        if (nextSessions === state.sessions) {
+                            return { catalogCursor: incomingCursor };
+                        }
+                        return {
+                            sessions: nextSessions,
+                            catalogCursor: incomingCursor,
+                        };
+                    }),
+                markReconnecting: (attempt) =>
+                    set({
+                        sync: { kind: "reconnecting", attempt },
+                    }),
+                failSync: (message) =>
                     set({
                         // The last rows and their timestamp stay, marked with the failure.
-                        scan: { kind: "failed", message },
+                        sync: { kind: "failed", message },
                     }),
                 setQuery: (query) => set({ query }),
                 select: (selectedId) => set({ selectedId }),
@@ -236,9 +286,15 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}) {
                             : [...state.collapsed, cwd],
                     })),
                 upsertSession: (session) =>
-                    set((state) => ({
-                        sessions: upsertSession(state.sessions, session),
-                    })),
+                    set((state) => {
+                        const next = upsertSession(state.sessions, session);
+                        return next === state.sessions ? state : { sessions: next };
+                    }),
+                patchSession: (id, patch) =>
+                    set((state) => {
+                        const next = patchSession(state.sessions, id, patch);
+                        return next === state.sessions ? state : { sessions: next };
+                    }),
                 removeSession: (id) =>
                     set((state) => ({
                         sessions: removeSession(state.sessions, id),

@@ -5,6 +5,7 @@ import {
     parseAuthStatusResponse,
     parseCloseSessionResponse,
     parseCreateSessionResponse,
+    parseDirectoryListResponse,
     parseHealthResponse,
     parseSessionDetailResponse,
     parseSessionListResponse,
@@ -18,6 +19,7 @@ import type {
     AuthStatusResponse,
     CloseSessionResponse,
     CreateSessionResponse,
+    DirectoryListResponse,
     HealthResponse,
     JsonDecoder,
     SessionDetailResponse,
@@ -82,6 +84,11 @@ export interface GetSessionOptions {
     readonly signal?: AbortSignal | undefined;
 }
 
+/** Optional flags for {@link ApiClient.createSession}. */
+export interface CreateSessionOptions {
+    readonly createDirectory?: boolean | undefined;
+}
+
 /** HTTP operations used by the auth and workspace stores. */
 export interface ApiClient {
     getHealth(): Promise<HealthResponse>;
@@ -89,7 +96,8 @@ export interface ApiClient {
     login(password: string): Promise<AuthLoginResponse>;
     logout(): Promise<AuthLogoutResponse>;
     listSessions(): Promise<SessionListResponse>;
-    createSession(cwd: string): Promise<CreateSessionResponse>;
+    listDirectories(path?: string): Promise<DirectoryListResponse>;
+    createSession(cwd: string, options?: CreateSessionOptions): Promise<CreateSessionResponse>;
     getSession(id: SessionId, options?: GetSessionOptions): Promise<SessionDetailResponse>;
     closeSession(id: SessionId): Promise<CloseSessionResponse>;
     /** Registers or clears the callback for `401` responses from protected endpoints and returns a disposer. */
@@ -105,6 +113,7 @@ const API_ERROR_CODES: ReadonlySet<string> = new Set<ApiErrorCode>([
     "invalid_credentials",
     "rate_limited",
     "not_found",
+    "directory_not_found",
     "internal_error",
 ]);
 
@@ -303,13 +312,26 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
                 { method: "GET", headers: ACCEPT_HEADERS },
                 parseSessionListResponse,
             ),
-        createSession: (cwd) =>
+        listDirectories: (path) => {
+            const trimmed = path?.trim() ?? "";
+            const endpoint =
+                trimmed === "" ? "/api/fs/directories" : `/api/fs/directories?path=${encodeURIComponent(trimmed)}`;
+            return request<DirectoryListResponse>(
+                endpoint,
+                { method: "GET", headers: ACCEPT_HEADERS },
+                parseDirectoryListResponse,
+            );
+        },
+        createSession: (cwd, sessionOptions) =>
             request<CreateSessionResponse>(
                 "/api/sessions",
                 {
                     method: "POST",
                     headers: JSON_HEADERS,
-                    body: JSON.stringify({ cwd }),
+                    body: JSON.stringify({
+                        cwd,
+                        ...(sessionOptions?.createDirectory === true ? { createDirectory: true } : {}),
+                    }),
                 },
                 parseCreateSessionResponse,
             ),

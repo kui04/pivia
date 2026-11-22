@@ -1,0 +1,12 @@
+/*
+ * The story list that holds session rows.
+ *
+ *   .list
+ */
+.list {
+    display: flex;
+    flex-direction: column;
+    inline-size: 18rem;
+    padding: var(--space-8);
+    background-color: var(--color-surface-container);
+}

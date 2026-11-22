@@ -36,7 +36,8 @@
 
 /*
  * The panel bleeds past the edge it slides from, so the viewport only supplies the system insets.
- * Base UI moves the popup with the swipe gesture through `--drawer-swipe-movement-x`.
+ * Base UI moves the popup with the swipe gesture through `--drawer-swipe-movement-x` or
+ * `--drawer-swipe-movement-y`.
  *
  * The portal sits on `document.body`, outside the `#root` safe-area padding, so the viewport adds
  * the system insets itself. The bottom keeps the larger of the safe area and the keyboard: while
@@ -57,6 +58,11 @@
 
     &[data-side="right"] {
         justify-content: flex-end;
+    }
+
+    &[data-side="bottom"] {
+        align-items: flex-end;
+        justify-content: center;
     }
 
     /*
@@ -102,6 +108,19 @@
             border-end-start-radius: var(--shape-corner-large);
         }
 
+        &[data-side="bottom"] {
+            inline-size: 100%;
+            max-inline-size: 36rem;
+            block-size: auto;
+            max-block-size: calc(min(85dvh, 42rem) + var(--drawer-bleed));
+            margin-block-end: calc(-1 * var(--drawer-bleed));
+            padding-block-end: var(--drawer-bleed);
+            border-block-start: var(--border-width) solid var(--color-outline-variant);
+            border-start-start-radius: var(--shape-corner-extra-large);
+            border-start-end-radius: var(--shape-corner-extra-large);
+            transform: translateY(var(--drawer-swipe-movement-y, 0px));
+        }
+
         /* Stop with the inner edge just past the window so the off-screen bleed leaves no gap. */
         &[data-side="left"][data-starting-style],
         &[data-side="left"][data-ending-style] {
@@ -111,6 +130,11 @@
         &[data-side="right"][data-starting-style],
         &[data-side="right"][data-ending-style] {
             transform: translateX(calc(100% - var(--drawer-bleed) + var(--space-2)));
+        }
+
+        &[data-side="bottom"][data-starting-style],
+        &[data-side="bottom"][data-ending-style] {
+            transform: translateY(calc(100% - var(--drawer-bleed) + var(--space-2)));
         }
 
         .content {

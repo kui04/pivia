@@ -23,7 +23,6 @@ import {
     type EntriesVersion,
     type SessionDetailResponse,
     type SessionId,
-    type SessionListResponse,
     type SessionPrefixAnchor,
     type SessionSummary,
 } from "@pivia/protocol";
@@ -71,6 +70,8 @@ export interface SessionCatalogOptions extends SessionRootOptions {
     readonly logger?: SessionCatalogLogger | undefined;
     /** Clock used for `scannedAtMs`; defaults to `Date.now`. */
     readonly nowMs?: (() => number) | undefined;
+    /** Largest session file allowed for detail reads or opening; defaults to 64 MiB. */
+    readonly maxSessionFileBytes?: number | undefined;
 }
 
 interface DiscoveredSession {
@@ -90,7 +91,8 @@ interface DiscoveryResult {
 
 type ContainedFileResult =
     | { readonly kind: "ok"; readonly realPath: string; readonly stats: Stats }
-    | { readonly kind: "rejected" }
+    | { readonly kind: "outside_root" }
+    | { readonly kind: "oversized"; readonly realPath: string; readonly stats: Stats }
     | { readonly kind: "non_file"; readonly realPath: string }
     | { readonly kind: "io_error"; readonly error: unknown };
 
@@ -110,6 +112,12 @@ export interface ResolvedSession {
     /** Configured session root; `realDir` is the canonical containment boundary. */
     readonly root: SessionRoot & { readonly realDir: string };
 }
+
+/** Explicit resolution outcome separating missing files from persisted files above the read limit. */
+export type SessionResolution =
+    | { readonly kind: "found"; readonly session: ResolvedSession }
+    | { readonly kind: "oversized"; readonly realPath: string; readonly sizeBytes: number }
+    | { readonly kind: "missing" };
 
 /** Slice result produced by {@link sliceEntriesForAnchor}. */
 export interface SlicedEntries {
@@ -427,6 +435,12 @@ function countNonEmptyLines(content: string): number {
     return count;
 }
 
+/** Result of scanning session `.jsonl` files on disk without live runtime state or catalog cursors. */
+export interface DiskSessionList {
+    readonly sessions: readonly SessionSummary[];
+    readonly scannedAtMs: number;
+}
+
 /**
  * Read-only view of the sessions stored for one host.
  *
@@ -439,6 +453,7 @@ export class SessionCatalog {
     private readonly options: SessionCatalogOptions;
     private readonly logger: SessionCatalogLogger;
     private readonly nowMs: () => number;
+    private readonly maxSessionFileBytes: number;
     private readonly pathCache = new Map<string, CachedFileSummary>();
     private readonly idToPath = new Map<SessionId, string>();
 
@@ -446,11 +461,17 @@ export class SessionCatalog {
         this.options = options;
         this.logger = options.logger ?? createLogger();
         this.nowMs = options.nowMs ?? (() => Date.now());
+        this.maxSessionFileBytes =
+            options.maxSessionFileBytes !== undefined &&
+            Number.isFinite(options.maxSessionFileBytes) &&
+            options.maxSessionFileBytes >= 0
+                ? options.maxSessionFileBytes
+                : MAX_SESSION_FILE_BYTES;
         this.entriesVersion = resolveEntriesVersion();
     }
 
     /** List every readable session under the session root, newest activity first. */
-    async list(): Promise<SessionListResponse> {
+    async list(): Promise<DiskSessionList> {
         const { sessions } = await this.discover();
         return {
             sessions: sessions.map((session) => session.summary),
@@ -467,10 +488,9 @@ export class SessionCatalog {
     }
 
     /**
-     * Resolve one session file for opening. Applies the same containment and file checks as
-     * {@link getById} without reading the transcript body.
+     * Resolve one session file for opening or persistence checks without reading the transcript body.
      */
-    async resolveById(id: SessionId): Promise<ResolvedSession | null> {
+    async resolveById(id: SessionId): Promise<SessionResolution> {
         const root = await this.resolveDiscoveryRoot();
         const indexedPath = this.idToPath.get(id);
         if (indexedPath !== undefined) {
@@ -484,7 +504,7 @@ export class SessionCatalog {
         const { sessions } = await this.discover();
         const match = sessions.find((session) => session.summary.id === id);
         if (match === undefined) {
-            return null;
+            return { kind: "missing" };
         }
         return this.verifyDiscoveredPath(root, id, match);
     }
@@ -503,15 +523,14 @@ export class SessionCatalog {
                     { sessionId, path: candidatePath },
                     `refused to ${action} session outside the session root`,
                 );
-                return { kind: "rejected" };
+                return { kind: "outside_root" };
             }
             const stats = await stat(realPath);
             if (!stats.isFile()) {
                 return { kind: "non_file", realPath };
             }
-            if (stats.size > MAX_SESSION_FILE_BYTES) {
-                this.logger.warn({ sessionId, size: stats.size }, `refused to ${action} an oversized session file`);
-                return { kind: "rejected" };
+            if (stats.size > this.maxSessionFileBytes) {
+                return { kind: "oversized", realPath, stats };
             }
             return { kind: "ok", realPath, stats };
         } catch (error) {
@@ -523,10 +542,23 @@ export class SessionCatalog {
         root: ResolvedDiscoveryRoot,
         id: SessionId,
         candidatePath: string,
-    ): Promise<ResolvedSession | null | undefined> {
+    ): Promise<SessionResolution | undefined> {
         const verified = await this.verifyContainedFile(root, id, candidatePath, "open");
-        if (verified.kind === "rejected") {
-            return null;
+        if (verified.kind === "outside_root") {
+            return { kind: "missing" };
+        }
+        if (verified.kind === "oversized") {
+            const cached = this.pathCache.get(verified.realPath);
+            if (
+                cached !== undefined &&
+                cached.mtimeMs === verified.stats.mtimeMs &&
+                cached.size === verified.stats.size &&
+                cached.summary.id === id
+            ) {
+                return { kind: "oversized", realPath: verified.realPath, sizeBytes: verified.stats.size };
+            }
+            // Fall back to discover() so an oversized replacement file cannot spoof `id`.
+            return undefined;
         }
         if (verified.kind !== "ok") {
             return undefined;
@@ -536,7 +568,10 @@ export class SessionCatalog {
             const cached = this.pathCache.get(realPath);
             if (cached !== undefined && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) {
                 if (cached.summary.id === id) {
-                    return { summary: cached.summary, realPath, sizeBytes: stats.size, root };
+                    return {
+                        kind: "found",
+                        session: { summary: cached.summary, realPath, sizeBytes: stats.size, root },
+                    };
                 }
                 return undefined;
             }
@@ -545,7 +580,10 @@ export class SessionCatalog {
                 return undefined;
             }
             this.pathCache.set(realPath, { mtimeMs: stats.mtimeMs, size: stats.size, summary: refreshed.summary });
-            return { summary: refreshed.summary, realPath, sizeBytes: stats.size, root };
+            return {
+                kind: "found",
+                session: { summary: refreshed.summary, realPath, sizeBytes: stats.size, root },
+            };
         } catch {
             return undefined;
         }
@@ -555,19 +593,29 @@ export class SessionCatalog {
         root: ResolvedDiscoveryRoot,
         id: SessionId,
         match: DiscoveredSession,
-    ): Promise<ResolvedSession | null> {
+    ): Promise<SessionResolution> {
         const verified = await this.verifyContainedFile(root, id, match.path, "open");
         switch (verified.kind) {
             case "ok":
-                return { summary: match.summary, realPath: verified.realPath, sizeBytes: verified.stats.size, root };
-            case "rejected":
-                return null;
+                return {
+                    kind: "found",
+                    session: {
+                        summary: match.summary,
+                        realPath: verified.realPath,
+                        sizeBytes: verified.stats.size,
+                        root,
+                    },
+                };
+            case "oversized":
+                return { kind: "oversized", realPath: verified.realPath, sizeBytes: verified.stats.size };
+            case "outside_root":
+                return { kind: "missing" };
             case "non_file":
                 this.logger.warn({ sessionId: id, path: verified.realPath }, "refused to open a non-file session path");
-                return null;
+                return { kind: "missing" };
             case "io_error":
                 this.logger.warn({ err: verified.error, sessionId: id }, "failed to resolve session file");
-                return null;
+                return { kind: "missing" };
             default:
                 return assertNever(verified);
         }
@@ -581,10 +629,25 @@ export class SessionCatalog {
      */
     async getById(id: SessionId, sliceAnchor?: SessionPrefixAnchor): Promise<SessionDetailResponse | null> {
         const resolved = await this.resolveById(id);
-        if (resolved === null) {
-            return null;
+        switch (resolved.kind) {
+            case "found":
+                return this.readSession(
+                    resolved.session.root,
+                    id,
+                    { summary: resolved.session.summary, path: resolved.session.realPath },
+                    sliceAnchor,
+                );
+            case "oversized":
+                this.logger.warn(
+                    { sessionId: id, size: resolved.sizeBytes },
+                    "refused to read an oversized session file",
+                );
+                return null;
+            case "missing":
+                return null;
+            default:
+                return assertNever(resolved);
         }
-        return this.readSession(resolved.root, id, { summary: resolved.summary, path: resolved.realPath }, sliceAnchor);
     }
 
     private async resolveDiscoveryRoot(): Promise<ResolvedDiscoveryRoot> {
@@ -739,7 +802,9 @@ export class SessionCatalog {
     ): Promise<SessionDetailResponse | null> {
         const verified = await this.verifyContainedFile(root, sessionId, session.path, "read");
         if (verified.kind !== "ok") {
-            if (verified.kind === "non_file") {
+            if (verified.kind === "oversized") {
+                this.logger.warn({ sessionId, size: verified.stats.size }, "refused to read an oversized session file");
+            } else if (verified.kind === "non_file") {
                 this.logger.warn({ sessionId, path: verified.realPath }, "refused to read a non-file session path");
             } else if (verified.kind === "io_error") {
                 this.logger.warn({ err: verified.error, sessionId }, "failed to read session");

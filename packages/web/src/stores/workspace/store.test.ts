@@ -1,4 +1,13 @@
-import { parseSessionId, type SessionId, type SessionListResponse, type SessionSummary } from "@pivia/protocol";
+import {
+    parseCatalogEpoch,
+    parseCatalogSeq,
+    parseSessionId,
+    type CatalogCursor,
+    type CatalogEpoch,
+    type CatalogSeq,
+    type SessionId,
+    type SessionSummary,
+} from "@pivia/protocol";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 function sid(raw: string): SessionId {
@@ -7,6 +16,26 @@ function sid(raw: string): SessionId {
         throw new Error(`Invalid test session id: ${raw}`);
     }
     return parsed;
+}
+
+function epoch(raw: string): CatalogEpoch {
+    const parsed = parseCatalogEpoch(raw);
+    if (parsed === null) {
+        throw new Error(`Invalid test catalog epoch: ${raw}`);
+    }
+    return parsed;
+}
+
+function seq(raw: number): CatalogSeq {
+    const parsed = parseCatalogSeq(raw);
+    if (parsed === null) {
+        throw new Error(`Invalid test catalog seq: ${raw}`);
+    }
+    return parsed;
+}
+
+function cursor(epochId: string, value: number): CatalogCursor {
+    return { epoch: epoch(epochId), seq: seq(value) };
 }
 
 const A = sid("a");
@@ -76,28 +105,27 @@ function summary(id: SessionId, overrides: Partial<SessionSummary> = {}): Sessio
     };
 }
 
-function listResponse(sessions: SessionSummary[], scannedAtMs = 10_000): SessionListResponse {
-    return { sessions, scannedAtMs };
-}
-
 describe("createWorkspaceStore", () => {
     beforeEach(() => {
         storageBacking.clear();
     });
 
-    it("keeps one scan phase while a scan is in flight", () => {
+    it("tracks syncing state while a sync is in flight and records reconnecting", () => {
         const workspace = createWorkspaceStore({ cache: noopCache() });
         const store = workspace.getState();
-        store.applyScan(listResponse([summary(A)]));
-        expect(workspace.getState().scan).toEqual({ kind: "ready" });
+        store.applyCatalog([summary(A)], 10_000, cursor("e1", 0));
+        expect(workspace.getState().sync).toEqual({ kind: "live" });
 
-        store.beginScan(true);
-        store.beginScan(false);
+        store.beginSync();
+        store.beginSync();
 
-        expect(workspace.getState().scan).toEqual({ kind: "scanning", manual: true });
+        expect(workspace.getState().sync).toEqual({ kind: "syncing" });
+
+        store.markReconnecting(2);
+        expect(workspace.getState().sync).toEqual({ kind: "reconnecting", attempt: 2 });
     });
 
-    it("applies a complete scan and reconciles the selection and pins", () => {
+    it("applies a complete catalog snapshot and reconciles the selection and pins", () => {
         const putWorkspaceCatalog = vi.fn(() => Promise.resolve());
         const cache: WorkspaceCatalogCache = {
             getWorkspaceCatalog: vi.fn(() => Promise.resolve(null)),
@@ -108,34 +136,72 @@ describe("createWorkspaceStore", () => {
         store.togglePinned(DELETED);
         store.togglePinned(LIVE);
         store.select(DELETED);
-        store.beginScan(true);
+        store.beginSync();
 
-        const scannedSessions = [summary(LIVE)];
-        store.applyScan(listResponse(scannedSessions, 42_000));
+        const liveSessions = [summary(LIVE)];
+        store.applyCatalog(liveSessions, 42_000, cursor("e1", 3));
 
         const state = workspace.getState();
         expect(state.sessions.map((session) => session.id)).toEqual([LIVE]);
-        expect(state.scannedAtMs).toBe(42_000);
-        expect(state.scan).toEqual({ kind: "ready" });
+        expect(state.updatedAtMs).toBe(42_000);
+        expect(state.catalogCursor).toEqual(cursor("e1", 3));
+        expect(state.sync).toEqual({ kind: "live" });
         expect(state.pins).toEqual([LIVE]);
         expect(state.selectedId).toBeNull();
-        expect(putWorkspaceCatalog).toHaveBeenCalledWith(scannedSessions, 42_000);
+        expect(putWorkspaceCatalog).toHaveBeenCalledWith(liveSessions, 42_000);
     });
 
-    it("keeps the last rows and selection when a scan fails", () => {
+    it("rejects stale catalog snapshots by seq while accepting equal-seq refreshes and new server epochs", () => {
+        const putWorkspaceCatalog = vi.fn(() => Promise.resolve());
+        const cache: WorkspaceCatalogCache = {
+            getWorkspaceCatalog: vi.fn(() => Promise.resolve(null)),
+            putWorkspaceCatalog,
+        };
+        const workspace = createWorkspaceStore({ cache });
+        const store = workspace.getState();
+        store.applyCatalog([summary(LIVE)], 20_000, cursor("e1", 5));
+        store.applyCatalogEvent({
+            type: "session_updated",
+            catalogEpoch: epoch("e1"),
+            seq: seq(6),
+            sessionId: LIVE,
+            patch: { runtimeState: "streaming" },
+        });
+        putWorkspaceCatalog.mockClear();
+
+        // An older HTTP response returning after a newer WS snapshot or event must be ignored.
+        store.applyCatalog([summary(DELETED)], 25_000, cursor("e1", 5));
+        expect(workspace.getState().sessions).toEqual([summary(LIVE, { runtimeState: "streaming" })]);
+        expect(workspace.getState().catalogCursor).toEqual(cursor("e1", 6));
+        expect(putWorkspaceCatalog).not.toHaveBeenCalled();
+
+        // A refresh at the current seq still transitions sync back to live.
+        store.beginSync();
+        store.applyCatalog([summary(LIVE, { runtimeState: "streaming" }), summary(A)], 20_000, cursor("e1", 6));
+        expect(workspace.getState().sync).toEqual({ kind: "live" });
+        expect(workspace.getState().sessions.map((session) => session.id)).toEqual([LIVE, A]);
+        expect(putWorkspaceCatalog).toHaveBeenCalledTimes(1);
+
+        // A new epoch after server restart supersedes a higher seq from the previous epoch.
+        store.applyCatalog([summary(A)], 21_000, cursor("e2", 0));
+        expect(workspace.getState().sessions.map((session) => session.id)).toEqual([A]);
+        expect(workspace.getState().catalogCursor).toEqual(cursor("e2", 0));
+    });
+
+    it("keeps the last rows and selection when a sync fails", () => {
         const workspace = createWorkspaceStore({ cache: noopCache() });
         const store = workspace.getState();
-        store.applyScan(listResponse([summary(A)], 7_000));
+        store.applyCatalog([summary(A)], 7_000, cursor("e1", 0));
         store.select(A);
-        store.beginScan(false);
+        store.beginSync();
 
-        store.failScan("The session directory is unreadable.");
+        store.failSync("The server is unreachable.");
 
         const state = workspace.getState();
         expect(state.sessions.map((session) => session.id)).toEqual([A]);
-        expect(state.scannedAtMs).toBe(7_000);
+        expect(state.updatedAtMs).toBe(7_000);
         expect(state.selectedId).toBe(A);
-        expect(state.scan).toEqual({ kind: "failed", message: "The session directory is unreadable." });
+        expect(state.sync).toEqual({ kind: "failed", message: "The server is unreachable." });
     });
 
     it("manages the query, selection, pins and collapsed folders", () => {
@@ -166,7 +232,7 @@ describe("createWorkspaceStore", () => {
     it("upserts a live session and removes it with its pin and selection", () => {
         const workspace = createWorkspaceStore({ cache: noopCache() });
         const store = workspace.getState();
-        store.applyScan(listResponse([summary(A, { name: "A" })]));
+        store.applyCatalog([summary(A, { name: "A" })], 10_000, cursor("e1", 0));
         store.togglePinned(A);
         store.select(A);
 
@@ -176,6 +242,25 @@ describe("createWorkspaceStore", () => {
         let state = workspace.getState();
         expect(state.sessions.map((session) => session.id)).toEqual([A, B]);
         expect(state.sessions[0]?.name).toBe("Renamed");
+
+        // Applying an identical upsert or patch keeps the sessions array reference stable.
+        const beforeNoop = workspace.getState().sessions;
+        store.upsertSession(summary(A, { name: "Renamed", modifiedAtMs: 5_000 }));
+        expect(workspace.getState().sessions).toBe(beforeNoop);
+
+        store.patchSession(A, { name: "Renamed" });
+        expect(workspace.getState().sessions).toBe(beforeNoop);
+
+        store.patchSession(A, { runtimeState: "streaming", attachedClients: 2 });
+        expect(workspace.getState().sessions[0]).toMatchObject({
+            id: A,
+            name: "Renamed",
+            runtimeState: "streaming",
+            attachedClients: 2,
+        });
+
+        store.patchSession(DELETED, { runtimeState: "idle" });
+        expect(workspace.getState().sessions).toHaveLength(2);
 
         store.removeSession(A);
 
@@ -188,19 +273,19 @@ describe("createWorkspaceStore", () => {
     it("drops connection state on reset but keeps pins", () => {
         const workspace = createWorkspaceStore({ cache: noopCache() });
         const store = workspace.getState();
-        store.applyScan(listResponse([summary(A)]));
+        store.applyCatalog([summary(A)], 10_000, cursor("e1", 0));
         store.togglePinned(A);
         store.select(A);
         store.setQuery("a");
         store.toggleFolder("/home/u/pivia");
-        store.beginScan(true);
+        store.beginSync();
 
         store.reset();
 
         const state = workspace.getState();
         expect(state.sessions).toEqual([]);
-        expect(state.scannedAtMs).toBeNull();
-        expect(state.scan).toEqual({ kind: "idle" });
+        expect(state.updatedAtMs).toBeNull();
+        expect(state.sync).toEqual({ kind: "idle" });
         expect(state.query).toBe("");
         expect(state.selectedId).toBeNull();
         expect(state.collapsed).toEqual([]);
@@ -254,7 +339,7 @@ describe("createWorkspaceStore", () => {
         expect(state.pins).toEqual([]);
     });
 
-    it("hydrates stale-while-revalidate catalog rows from cache only before the first live scan", async () => {
+    it("hydrates stale-while-revalidate catalog rows from cache only before the first live sync", async () => {
         const fakeCache: WorkspaceCatalogCache = {
             getWorkspaceCatalog: vi.fn(() =>
                 Promise.resolve({ key: "default" as const, sessions: [summary(CACHED)], scannedAtMs: 5_000 }),
@@ -264,10 +349,10 @@ describe("createWorkspaceStore", () => {
         const workspace = createWorkspaceStore({ cache: fakeCache });
         await workspace.getState().hydrateCatalog();
         expect(workspace.getState().sessions.map((session) => session.id)).toEqual([CACHED]);
-        expect(workspace.getState().scannedAtMs).toBe(5_000);
+        expect(workspace.getState().updatedAtMs).toBe(5_000);
 
-        workspace.getState().applyScan(listResponse([summary(LIVE)], 9_000));
-        // A late cache hydration after a live scan must not overwrite live sessions.
+        workspace.getState().applyCatalog([summary(LIVE)], 9_000, cursor("e1", 0));
+        // A late cache hydration after a live sync must not overwrite live sessions.
         await workspace.getState().hydrateCatalog();
         expect(workspace.getState().sessions.map((session) => session.id)).toEqual([LIVE]);
     });
@@ -277,7 +362,7 @@ describe("createWorkspaceStore", () => {
         const workspace = createWorkspaceStore();
 
         await workspace.getState().hydrateCatalog();
-        workspace.getState().applyScan(listResponse([summary(A)]));
+        workspace.getState().applyCatalog([summary(A)], 10_000, cursor("e1", 0));
 
         expect(warnSpy).toHaveBeenCalledTimes(1);
         warnSpy.mockRestore();

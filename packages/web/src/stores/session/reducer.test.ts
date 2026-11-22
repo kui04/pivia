@@ -7,9 +7,9 @@ import {
     type RpcExtensionUIRequest,
     type SessionId,
     type SessionStateSnapshot,
-    type WsEventMessage,
-    type WsReplayMessage,
-    type WsSnapshotMessage,
+    type SessionWsEventMessage,
+    type SessionWsReplayMessage,
+    type SessionWsSnapshotMessage,
 } from "@pivia/protocol";
 import { describe, expect, it } from "vitest";
 
@@ -76,7 +76,7 @@ function connected(): SessionState {
     return reduceSessionState(initialSessionState, { type: "connect", sessionId: SESSION_1 });
 }
 
-type InlineSnapshotMessage = Extract<WsSnapshotMessage, { readonly entriesMode: "inline" }>;
+type InlineSnapshotMessage = Extract<SessionWsSnapshotMessage, { readonly entriesMode: "inline" }>;
 
 function snapshot(seq: number, overrides: Partial<InlineSnapshotMessage> = {}): InlineSnapshotMessage {
     return {
@@ -95,7 +95,7 @@ function snapshot(seq: number, overrides: Partial<InlineSnapshotMessage> = {}): 
     };
 }
 
-function replay(seq: number, overrides: Partial<WsReplayMessage> = {}): WsReplayMessage {
+function replay(seq: number, overrides: Partial<SessionWsReplayMessage> = {}): SessionWsReplayMessage {
     return {
         type: "replay",
         sessionId: SESSION_1,
@@ -110,11 +110,11 @@ function replay(seq: number, overrides: Partial<WsReplayMessage> = {}): WsReplay
     };
 }
 
-function event(seq: number, eventMessage: WsEventMessage["event"]): WsEventMessage {
+function event(seq: number, eventMessage: SessionWsEventMessage["event"]): SessionWsEventMessage {
     return { type: "event", sessionId: SESSION_1, seq, event: eventMessage };
 }
 
-type AssistantDelta = Extract<WsEventMessage["event"], { type: "message_update" }>["assistantMessageEvent"];
+type AssistantDelta = Extract<SessionWsEventMessage["event"], { type: "message_update" }>["assistantMessageEvent"];
 
 function usage(): AssistantMessage["usage"] {
     return {
@@ -141,7 +141,7 @@ function assistant(overrides: Partial<AssistantMessage> = {}): AssistantMessage 
     };
 }
 
-function messageUpdate(seq: number, delta: AssistantDelta): WsEventMessage {
+function messageUpdate(seq: number, delta: AssistantDelta): SessionWsEventMessage {
     return event(seq, { type: "message_update", usage: usage(), assistantMessageEvent: delta });
 }
 

@@ -3,7 +3,7 @@ import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { CreateSessionResponse, SessionId, WsClientCommand, WsServerMessage } from "@pivia/protocol";
+import type { CreateSessionResponse, SessionId, SessionWsClientCommand, SessionWsServerMessage } from "@pivia/protocol";
 
 import { afterEach, describe, expect, it } from "vitest";
 import WebSocket from "ws";
@@ -20,11 +20,11 @@ import {
 } from "../testing/fake-runtime.ts";
 
 interface WsTestClient {
-    readonly messages: WsServerMessage[];
-    send(message: WsClientCommand | Record<string, unknown>): void;
+    readonly messages: SessionWsServerMessage[];
+    send(message: SessionWsClientCommand | Record<string, unknown>): void;
     sendRaw(text: string): void;
-    waitFor<T extends WsServerMessage>(
-        predicate: (message: WsServerMessage) => message is T,
+    waitFor<T extends SessionWsServerMessage>(
+        predicate: (message: SessionWsServerMessage) => message is T,
         timeoutMs?: number,
     ): Promise<T>;
     close(): Promise<void>;
@@ -45,9 +45,9 @@ function rawDataToString(data: WebSocket.RawData): string {
 
 async function connectWebSocket(url: string, headers: Record<string, string>): Promise<WsTestClient> {
     const socket = new WebSocket(url, { headers });
-    const messages: WsServerMessage[] = [];
+    const messages: SessionWsServerMessage[] = [];
     socket.on("message", (data) => {
-        messages.push(JSON.parse(rawDataToString(data)) as WsServerMessage);
+        messages.push(JSON.parse(rawDataToString(data)) as SessionWsServerMessage);
     });
     await new Promise<void>((resolve, reject) => {
         socket.once("open", () => resolve());
@@ -76,9 +76,9 @@ async function connectWebSocket(url: string, headers: Record<string, string>): P
     };
 }
 
-async function waitForWsMessage<T extends WsServerMessage>(
-    messages: readonly WsServerMessage[],
-    predicate: (message: WsServerMessage) => message is T,
+async function waitForWsMessage<T extends SessionWsServerMessage>(
+    messages: readonly SessionWsServerMessage[],
+    predicate: (message: SessionWsServerMessage) => message is T,
     timeoutMs = 2000,
 ): Promise<T> {
     const deadline = Date.now() + timeoutMs;
@@ -270,7 +270,7 @@ describe("session websocket route", () => {
         });
 
         const probe = await connectWebSocket(url.toString(), fixture.authHeaders);
-        await probe.waitFor((message): message is Extract<WsServerMessage, { type: "snapshot" }> => {
+        await probe.waitFor((message): message is Extract<SessionWsServerMessage, { type: "snapshot" }> => {
             return message.type === "snapshot";
         });
         await probe.close();
@@ -306,7 +306,7 @@ describe("session websocket route", () => {
 
         const client = await connectWebSocket(`${fixture.wsBaseUrl}/ws/sessions/${sessionId}`, fixture.authHeaders);
         const snapshot = await client.waitFor(
-            (message): message is Extract<WsServerMessage, { type: "snapshot" }> => message.type === "snapshot",
+            (message): message is Extract<SessionWsServerMessage, { type: "snapshot" }> => message.type === "snapshot",
         );
         const request = snapshot.pendingUiRequests[0];
         if (request === undefined) {
@@ -318,7 +318,7 @@ describe("session websocket route", () => {
         client.send({ type: "extension_ui_response", id: request.id, value: "safe" });
 
         const response = await client.waitFor(
-            (message): message is Extract<WsServerMessage, { type: "response" }> =>
+            (message): message is Extract<SessionWsServerMessage, { type: "response" }> =>
                 message.type === "response" && message.id === "prompt",
         );
         expect(response).toMatchObject({ success: true, data: { disposition: "started" } });
@@ -335,7 +335,7 @@ describe("session websocket route", () => {
         await waitForRuntimeState(fixture.registry, id, "idle");
         const client = await connectWebSocket(`${fixture.wsBaseUrl}/ws/sessions/${id}`, fixture.authHeaders);
         await client.waitFor(
-            (message): message is Extract<WsServerMessage, { type: "snapshot" }> => message.type === "snapshot",
+            (message): message is Extract<SessionWsServerMessage, { type: "snapshot" }> => message.type === "snapshot",
         );
 
         const runtime = fixture.harness.find(id);
@@ -355,7 +355,7 @@ describe("session websocket route", () => {
             headers: fixture.authHeaders,
         });
         const request = await client.waitFor(
-            (message): message is Extract<WsServerMessage, { type: "extension_ui_request" }> =>
+            (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_request" }> =>
                 message.type === "extension_ui_request" && message.request.method === "confirm",
         );
         client.send({ type: "extension_ui_response", id: request.request.id, confirmed: true });
@@ -372,7 +372,7 @@ describe("session websocket route", () => {
         const url = `${fixture.wsBaseUrl}/ws/sessions/${id}`;
         const client = await connectWebSocket(url, fixture.authHeaders);
         await client.waitFor(
-            (message): message is Extract<WsServerMessage, { type: "snapshot" }> => message.type === "snapshot",
+            (message): message is Extract<SessionWsServerMessage, { type: "snapshot" }> => message.type === "snapshot",
         );
 
         // `autoPong: false` models a peer that vanished: the TCP connection still looks open and
@@ -391,7 +391,7 @@ describe("session websocket route", () => {
         await new Promise((resolve) => setTimeout(resolve, 120));
         client.send({ type: "get_state", id: "state-after-heartbeat" });
         await client.waitFor(
-            (message): message is Extract<WsServerMessage, { type: "response" }> =>
+            (message): message is Extract<SessionWsServerMessage, { type: "response" }> =>
                 message.type === "response" && message.id === "state-after-heartbeat",
         );
         await client.close();
@@ -404,7 +404,7 @@ describe("session websocket route", () => {
         const client = await connectWebSocket(url, { cookie: fixture.cookie });
 
         const snapshot = await client.waitFor(
-            (message): message is Extract<WsServerMessage, { type: "snapshot" }> => message.type === "snapshot",
+            (message): message is Extract<SessionWsServerMessage, { type: "snapshot" }> => message.type === "snapshot",
         );
         expect(snapshot).toMatchObject({ sessionId: id, seq: 0 });
         expect(snapshot.state).toMatchObject({ sessionId: id, cwd: realpathSync(fixture.projectDir) });
@@ -415,28 +415,28 @@ describe("session websocket route", () => {
 
         client.send({ type: "get_state", id: "state" });
         const state = await client.waitFor(
-            (message): message is Extract<WsServerMessage, { type: "response" }> =>
+            (message): message is Extract<SessionWsServerMessage, { type: "response" }> =>
                 message.type === "response" && message.id === "state",
         );
         expect(state).toMatchObject({ command: "get_state", success: true });
 
         client.send({ type: "set_session_name", id: "name", name: "WS Session" });
         await client.waitFor(
-            (message): message is Extract<WsServerMessage, { type: "response" }> =>
+            (message): message is Extract<SessionWsServerMessage, { type: "response" }> =>
                 message.type === "response" && message.id === "name",
         );
         expect(fake.getName()).toBe("WS Session");
 
         client.send({ type: "prompt", id: "prompt", message: "hello" });
         const promptResponse = await client.waitFor(
-            (message): message is Extract<WsServerMessage, { type: "response" }> =>
+            (message): message is Extract<SessionWsServerMessage, { type: "response" }> =>
                 message.type === "response" && message.id === "prompt",
         );
         expect(promptResponse).toMatchObject({ command: "prompt", success: true, data: { disposition: "started" } });
 
         fake.emit(createTextDeltaEvent("Hel", "Hel"));
         const event = await client.waitFor(
-            (message): message is Extract<WsServerMessage, { type: "event" }> => message.type === "event",
+            (message): message is Extract<SessionWsServerMessage, { type: "event" }> => message.type === "event",
         );
         expect(event.sessionId).toBe(id);
         expect(event.seq).toBe(1);
@@ -445,19 +445,19 @@ describe("session websocket route", () => {
 
         client.sendRaw("{not json");
         const invalidJson = await client.waitFor(
-            (message): message is Extract<WsServerMessage, { type: "error" }> => message.type === "error",
+            (message): message is Extract<SessionWsServerMessage, { type: "error" }> => message.type === "error",
         );
         expect(invalidJson).toMatchObject({ code: "invalid_json" });
 
         client.send({ type: "unknown_command" });
         await client.waitFor(
-            (message): message is Extract<WsServerMessage, { type: "error" }> =>
+            (message): message is Extract<SessionWsServerMessage, { type: "error" }> =>
                 message.type === "error" && message.code === "invalid_request",
         );
 
         client.send({ type: "prompt", id: "invalid-prompt" });
         await client.waitFor(
-            (message): message is Extract<WsServerMessage, { type: "error" }> =>
+            (message): message is Extract<SessionWsServerMessage, { type: "error" }> =>
                 message.type === "error" && message.id === "invalid-prompt",
         );
 
@@ -470,7 +470,7 @@ describe("session websocket route", () => {
             fixture.authHeaders,
         );
         const replay = await replayClient.waitFor(
-            (message): message is Extract<WsServerMessage, { type: "replay" }> => message.type === "replay",
+            (message): message is Extract<SessionWsServerMessage, { type: "replay" }> => message.type === "replay",
         );
         expect(replay.seq).toBe(lastSeq + 1);
         expect(replay.events).toHaveLength(1);
@@ -481,20 +481,20 @@ describe("session websocket route", () => {
             fixture.authHeaders,
         );
         const mismatchedSnapshot = await mismatchedRuntimeClient.waitFor(
-            (message): message is Extract<WsServerMessage, { type: "snapshot" }> => message.type === "snapshot",
+            (message): message is Extract<SessionWsServerMessage, { type: "snapshot" }> => message.type === "snapshot",
         );
         expect(mismatchedSnapshot.runtimeId).toBe(snapshot.runtimeId);
         await mismatchedRuntimeClient.close();
 
         const staleClient = await connectWebSocket(`${url}?afterSeq=99999`, fixture.authHeaders);
         const staleSnapshot = await staleClient.waitFor(
-            (message): message is Extract<WsServerMessage, { type: "snapshot" }> => message.type === "snapshot",
+            (message): message is Extract<SessionWsServerMessage, { type: "snapshot" }> => message.type === "snapshot",
         );
         expect(staleSnapshot.seq).toBe(replay.seq);
 
         const secondClient = await connectWebSocket(url, fixture.authHeaders);
         await secondClient.waitFor(
-            (message): message is Extract<WsServerMessage, { type: "snapshot" }> => message.type === "snapshot",
+            (message): message is Extract<SessionWsServerMessage, { type: "snapshot" }> => message.type === "snapshot",
         );
 
         const bindings = fake.bindings;
@@ -503,17 +503,17 @@ describe("session websocket route", () => {
         }
         const confirmed = bindings.uiContext.confirm("Allow command?", "Run a dangerous tool?");
         const uiRequest = await replayClient.waitFor(
-            (message): message is Extract<WsServerMessage, { type: "extension_ui_request" }> =>
+            (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_request" }> =>
                 message.type === "extension_ui_request" && message.request.method === "confirm",
         );
         await secondClient.waitFor(
-            (message): message is Extract<WsServerMessage, { type: "extension_ui_request" }> =>
+            (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_request" }> =>
                 message.type === "extension_ui_request" && message.request.id === uiRequest.request.id,
         );
         secondClient.send({ type: "extension_ui_response", id: uiRequest.request.id, confirmed: true });
         await expect(confirmed).resolves.toBe(true);
         await replayClient.waitFor(
-            (message): message is Extract<WsServerMessage, { type: "extension_ui_resolved" }> =>
+            (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_resolved" }> =>
                 message.type === "extension_ui_resolved" && message.requestId === uiRequest.request.id,
         );
 

@@ -143,6 +143,27 @@ export const Right: Story = {
     },
 };
 
+export const Bottom: Story = {
+    args: {
+        side: "bottom",
+        label: "New session",
+    },
+    play: async ({ canvasElement, userEvent }) => {
+        const canvas = within(canvasElement);
+        await userEvent.click(canvas.getByRole("button", { name: "Open drawer" }));
+
+        const panel = await within(document.body).findByRole("dialog", { name: "New session" });
+        await expect(panel).toBeVisible();
+        await expect(panel).toHaveAttribute("data-side", "bottom");
+        await waitFor(() => expect(panel.contains(document.activeElement)).toBe(true));
+
+        await userEvent.keyboard("{Escape}");
+        await waitFor(async () => {
+            await expect(panel).not.toBeVisible();
+        });
+    },
+};
+
 function DarkTheme({ children }: { children: ReactNode }) {
     useEffect(() => {
         const root = document.documentElement;

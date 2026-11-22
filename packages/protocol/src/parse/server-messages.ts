@@ -1,36 +1,39 @@
-import type { JsonAgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import type { QueueMode } from "@earendil-works/pi-agent-core";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { FileEntry, JsonAgentSessionEvent, RpcExtensionUIRequest } from "@earendil-works/pi-coding-agent";
 
 import type {
-    AssistantMessage,
     AuthLoginResponse,
     AuthLogoutResponse,
     AuthStatusResponse,
     CloseSessionResponse,
     CreateSessionResponse,
-    FileEntry,
+    DirectoryListResponse,
     HealthResponse,
-    QueueMode,
-    RpcExtensionUIRequest,
-    SequencedSessionEvent,
     SessionDetailResponse,
     SessionListResponse,
     SessionModelInfo,
     SessionRuntimeState,
-    SessionStateSnapshot,
     SessionSummary,
-    WsCommandName,
-    WsEntriesAppendedMessage,
-    WsErrorMessage,
-    WsEventMessage,
-    WsExtensionErrorMessage,
-    WsExtensionUiRequestMessage,
-    WsExtensionUiResolvedMessage,
-    WsReplayAppendedSlice,
-    WsReplayMessage,
-    WsResponseMessage,
-    WsServerMessage,
-    WsSnapshotMessage,
-} from "../index.ts";
+} from "../http.ts";
+import type {
+    SequencedSessionEvent,
+    SessionStateSnapshot,
+    SessionWsCommandName,
+    SessionWsEntriesAppendedMessage,
+    SessionWsErrorMessage,
+    SessionWsEventMessage,
+    SessionWsExtensionErrorMessage,
+    SessionWsExtensionUiRequestMessage,
+    SessionWsExtensionUiResolvedMessage,
+    SessionWsReplayAppendedSlice,
+    SessionWsReplayMessage,
+    SessionWsResponseMessage,
+    SessionWsServerMessage,
+    SessionWsSnapshotMessage,
+} from "../session-ws.ts";
+import type { SessionSummaryPatch, WorkspaceWsServerMessage } from "../workspace-ws.ts";
+import { parseCatalogEpoch, parseCatalogSeq } from "./catalog.ts";
 import { isRecord } from "./primitives.ts";
 import { parseEntriesVersion, parseSessionId } from "./session.ts";
 import { isThinkingLevel } from "./ws.ts";
@@ -51,7 +54,7 @@ const QUEUE_MODES: Readonly<Record<QueueMode, true>> = {
     "one-at-a-time": true,
 };
 
-const WS_COMMAND_NAMES: Readonly<Record<WsCommandName, true>> = {
+const SESSION_WS_COMMAND_NAMES: Readonly<Record<SessionWsCommandName, true>> = {
     prompt: true,
     steer: true,
     follow_up: true,
@@ -86,8 +89,8 @@ function isQueueMode(value: unknown): value is QueueMode {
     return typeof value === "string" && Object.hasOwn(QUEUE_MODES, value);
 }
 
-function isWsCommandName(value: unknown): value is WsCommandName {
-    return typeof value === "string" && Object.hasOwn(WS_COMMAND_NAMES, value);
+function isSessionWsCommandName(value: unknown): value is SessionWsCommandName {
+    return typeof value === "string" && Object.hasOwn(SESSION_WS_COMMAND_NAMES, value);
 }
 
 /**
@@ -185,6 +188,72 @@ export function parseSessionSummary(raw: unknown): SessionSummary | null {
     };
 }
 
+/**
+ * Parse one {@link SessionSummaryPatch} payload, or return `null` when malformed or empty.
+ *
+ * Only mutable summary fields are accepted; unknown fields are ignored for forward compatibility,
+ * and an empty patch with no recognized mutable fields is rejected.
+ */
+export function parseSessionSummaryPatch(raw: unknown): SessionSummaryPatch | null {
+    if (!isRecord(raw)) {
+        return null;
+    }
+    const patch: {
+        name?: string | null;
+        firstMessage?: string;
+        messageCount?: number;
+        modifiedAtMs?: number;
+        runtimeState?: SessionRuntimeState;
+        attachedClients?: number;
+    } = {};
+    let hasField = false;
+
+    if (raw.name !== undefined) {
+        if (raw.name !== null && typeof raw.name !== "string") {
+            return null;
+        }
+        patch.name = raw.name;
+        hasField = true;
+    }
+    if (raw.firstMessage !== undefined) {
+        if (typeof raw.firstMessage !== "string") {
+            return null;
+        }
+        patch.firstMessage = raw.firstMessage;
+        hasField = true;
+    }
+    if (raw.messageCount !== undefined) {
+        if (!isNonNegativeSafeInteger(raw.messageCount)) {
+            return null;
+        }
+        patch.messageCount = raw.messageCount;
+        hasField = true;
+    }
+    if (raw.modifiedAtMs !== undefined) {
+        if (!isFiniteNumber(raw.modifiedAtMs)) {
+            return null;
+        }
+        patch.modifiedAtMs = raw.modifiedAtMs;
+        hasField = true;
+    }
+    if (raw.runtimeState !== undefined) {
+        if (!isSessionRuntimeState(raw.runtimeState)) {
+            return null;
+        }
+        patch.runtimeState = raw.runtimeState;
+        hasField = true;
+    }
+    if (raw.attachedClients !== undefined) {
+        if (!isNonNegativeSafeInteger(raw.attachedClients)) {
+            return null;
+        }
+        patch.attachedClients = raw.attachedClients;
+        hasField = true;
+    }
+
+    return hasField ? patch : null;
+}
+
 /** Parse one {@link SessionModelInfo} payload, or return `null` when malformed. */
 export function parseSessionModelInfo(raw: unknown): SessionModelInfo | null {
     if (
@@ -280,6 +349,11 @@ export function parseSessionListResponse(raw: unknown): SessionListResponse | nu
     if (!isRecord(raw) || !Array.isArray(raw.sessions) || !isFiniteNumber(raw.scannedAtMs)) {
         return null;
     }
+    const catalogEpoch = parseCatalogEpoch(raw.catalogEpoch);
+    const catalogSeq = parseCatalogSeq(raw.catalogSeq);
+    if (catalogEpoch === null || catalogSeq === null) {
+        return null;
+    }
     const sessions: SessionSummary[] = [];
     for (const item of raw.sessions) {
         const parsed = parseSessionSummary(item);
@@ -288,7 +362,7 @@ export function parseSessionListResponse(raw: unknown): SessionListResponse | nu
         }
         sessions.push(parsed);
     }
-    return { sessions, scannedAtMs: raw.scannedAtMs };
+    return { sessions, scannedAtMs: raw.scannedAtMs, catalogEpoch, catalogSeq };
 }
 
 /** Parse a `GET /api/sessions/:id` payload. */
@@ -333,6 +407,26 @@ export function parseCloseSessionResponse(raw: unknown): CloseSessionResponse | 
     return { closed: raw.closed };
 }
 
+/** Parse a `GET /api/fs/directories` payload. */
+export function parseDirectoryListResponse(raw: unknown): DirectoryListResponse | null {
+    if (
+        !isRecord(raw) ||
+        typeof raw.path !== "string" ||
+        raw.path.length === 0 ||
+        (raw.parent !== null && typeof raw.parent !== "string") ||
+        !isStringArray(raw.directories) ||
+        typeof raw.truncated !== "boolean"
+    ) {
+        return null;
+    }
+    return {
+        path: raw.path,
+        parent: raw.parent,
+        directories: raw.directories,
+        truncated: raw.truncated,
+    };
+}
+
 function parseLiveMessage(raw: unknown): AssistantMessage | null | undefined {
     if (raw === null) {
         return null;
@@ -340,7 +434,7 @@ function parseLiveMessage(raw: unknown): AssistantMessage | null | undefined {
     return isAssistantMessage(raw) ? raw : undefined;
 }
 
-function parseSnapshotMessage(raw: Record<string, unknown>): WsSnapshotMessage | null {
+function parseSnapshotMessage(raw: Record<string, unknown>): SessionWsSnapshotMessage | null {
     const sessionId = parseSessionId(raw.sessionId);
     const entriesVersion = parseEntriesVersion(raw.entriesVersion);
     const state = parseSessionStateSnapshot(raw.state);
@@ -396,7 +490,7 @@ function parseSnapshotMessage(raw: Record<string, unknown>): WsSnapshotMessage |
     return null;
 }
 
-function parseReplayAppendedSlice(raw: unknown): WsReplayAppendedSlice | null {
+function parseReplayAppendedSlice(raw: unknown): SessionWsReplayAppendedSlice | null {
     if (!isRecord(raw) || !isNonNegativeSafeInteger(raw.baseEntryCount)) {
         return null;
     }
@@ -404,7 +498,7 @@ function parseReplayAppendedSlice(raw: unknown): WsReplayAppendedSlice | null {
     return entries === null ? null : { baseEntryCount: raw.baseEntryCount, entries };
 }
 
-function parseReplayMessage(raw: Record<string, unknown>): WsReplayMessage | null {
+function parseReplayMessage(raw: Record<string, unknown>): SessionWsReplayMessage | null {
     const sessionId = parseSessionId(raw.sessionId);
     const entriesVersion = parseEntriesVersion(raw.entriesVersion);
     const state = parseSessionStateSnapshot(raw.state);
@@ -430,7 +524,7 @@ function parseReplayMessage(raw: Record<string, unknown>): WsReplayMessage | nul
         }
         events.push(item);
     }
-    let appendedSlice: WsReplayAppendedSlice | undefined;
+    let appendedSlice: SessionWsReplayAppendedSlice | undefined;
     if (raw.appendedSlice !== undefined) {
         const parsedSlice = parseReplayAppendedSlice(raw.appendedSlice);
         if (parsedSlice === null) {
@@ -452,7 +546,7 @@ function parseReplayMessage(raw: Record<string, unknown>): WsReplayMessage | nul
     };
 }
 
-function parseEntriesAppendedMessage(raw: Record<string, unknown>): WsEntriesAppendedMessage | null {
+function parseEntriesAppendedMessage(raw: Record<string, unknown>): SessionWsEntriesAppendedMessage | null {
     const sessionId = parseSessionId(raw.sessionId);
     const entriesVersion = parseEntriesVersion(raw.entriesVersion);
     if (sessionId === null || entriesVersion === null || !isNonNegativeSafeInteger(raw.baseEntryCount)) {
@@ -485,7 +579,7 @@ function parseEntriesAppendedMessage(raw: Record<string, unknown>): WsEntriesApp
     return null;
 }
 
-function parseEventMessage(raw: Record<string, unknown>): WsEventMessage | null {
+function parseEventMessage(raw: Record<string, unknown>): SessionWsEventMessage | null {
     const sessionId = parseSessionId(raw.sessionId);
     if (sessionId === null || !isNonNegativeSafeInteger(raw.seq) || !isJsonAgentSessionEvent(raw.event)) {
         return null;
@@ -498,7 +592,7 @@ function parseEventMessage(raw: Record<string, unknown>): WsEventMessage | null 
     };
 }
 
-function parseExtensionUiRequestMessage(raw: Record<string, unknown>): WsExtensionUiRequestMessage | null {
+function parseExtensionUiRequestMessage(raw: Record<string, unknown>): SessionWsExtensionUiRequestMessage | null {
     const sessionId = parseSessionId(raw.sessionId);
     if (sessionId === null || !isRpcExtensionUiRequest(raw.request)) {
         return null;
@@ -510,7 +604,7 @@ function parseExtensionUiRequestMessage(raw: Record<string, unknown>): WsExtensi
     };
 }
 
-function parseExtensionUiResolvedMessage(raw: Record<string, unknown>): WsExtensionUiResolvedMessage | null {
+function parseExtensionUiResolvedMessage(raw: Record<string, unknown>): SessionWsExtensionUiResolvedMessage | null {
     const sessionId = parseSessionId(raw.sessionId);
     if (sessionId === null || typeof raw.requestId !== "string") {
         return null;
@@ -522,7 +616,7 @@ function parseExtensionUiResolvedMessage(raw: Record<string, unknown>): WsExtens
     };
 }
 
-function parseExtensionErrorMessage(raw: Record<string, unknown>): WsExtensionErrorMessage | null {
+function parseExtensionErrorMessage(raw: Record<string, unknown>): SessionWsExtensionErrorMessage | null {
     const sessionId = parseSessionId(raw.sessionId);
     if (
         sessionId === null ||
@@ -541,11 +635,11 @@ function parseExtensionErrorMessage(raw: Record<string, unknown>): WsExtensionEr
     };
 }
 
-function parseResponseMessage(raw: Record<string, unknown>): WsResponseMessage | null {
+function parseResponseMessage(raw: Record<string, unknown>): SessionWsResponseMessage | null {
     if (raw.id !== undefined && typeof raw.id !== "string") {
         return null;
     }
-    if (!isWsCommandName(raw.command)) {
+    if (!isSessionWsCommandName(raw.command)) {
         return null;
     }
     const idField = typeof raw.id === "string" ? { id: raw.id } : {};
@@ -570,7 +664,7 @@ function parseResponseMessage(raw: Record<string, unknown>): WsResponseMessage |
     return null;
 }
 
-function parseErrorMessage(raw: Record<string, unknown>): WsErrorMessage | null {
+function parseErrorMessage(raw: Record<string, unknown>): SessionWsErrorMessage | null {
     if (
         typeof raw.message !== "string" ||
         (raw.code !== undefined && typeof raw.code !== "string") ||
@@ -587,10 +681,10 @@ function parseErrorMessage(raw: Record<string, unknown>): WsErrorMessage | null 
 }
 
 /**
- * Parse one server-sent WebSocket message from untrusted JSON, or return `null` when malformed or
- * unknown.
+ * Parse one server-sent `/ws/sessions/:id` WebSocket message from untrusted JSON, or return `null`
+ * when malformed or unknown.
  */
-export function parseWsServerMessage(raw: unknown): WsServerMessage | null {
+export function parseSessionWsServerMessage(raw: unknown): SessionWsServerMessage | null {
     if (!isRecord(raw) || typeof raw.type !== "string") {
         return null;
     }
@@ -613,6 +707,89 @@ export function parseWsServerMessage(raw: unknown): WsServerMessage | null {
             return parseResponseMessage(raw);
         case "error":
             return parseErrorMessage(raw);
+        default:
+            return null;
+    }
+}
+
+/**
+ * Parse one server-sent `/ws/workspace` message from untrusted JSON, or return `null` when
+ * malformed or unknown.
+ */
+export function parseWorkspaceWsServerMessage(raw: unknown): WorkspaceWsServerMessage | null {
+    if (!isRecord(raw) || typeof raw.type !== "string") {
+        return null;
+    }
+    switch (raw.type) {
+        case "catalog_snapshot": {
+            if (!Array.isArray(raw.sessions) || !isFiniteNumber(raw.updatedAtMs)) {
+                return null;
+            }
+            const catalogEpoch = parseCatalogEpoch(raw.catalogEpoch);
+            const catalogSeq = parseCatalogSeq(raw.catalogSeq);
+            if (catalogEpoch === null || catalogSeq === null) {
+                return null;
+            }
+            const sessions: SessionSummary[] = [];
+            for (const entry of raw.sessions) {
+                const parsed = parseSessionSummary(entry);
+                if (parsed === null) {
+                    return null;
+                }
+                sessions.push(parsed);
+            }
+            return {
+                type: "catalog_snapshot",
+                sessions,
+                updatedAtMs: raw.updatedAtMs,
+                catalogEpoch,
+                catalogSeq,
+            };
+        }
+        case "session_upserted": {
+            const catalogEpoch = parseCatalogEpoch(raw.catalogEpoch);
+            const seq = parseCatalogSeq(raw.seq);
+            const session = parseSessionSummary(raw.session);
+            if (catalogEpoch === null || seq === null || session === null) {
+                return null;
+            }
+            return {
+                type: "session_upserted",
+                catalogEpoch,
+                seq,
+                session,
+            };
+        }
+        case "session_updated": {
+            const catalogEpoch = parseCatalogEpoch(raw.catalogEpoch);
+            const seq = parseCatalogSeq(raw.seq);
+            const sessionId = parseSessionId(raw.sessionId);
+            const patch = parseSessionSummaryPatch(raw.patch);
+            if (catalogEpoch === null || seq === null || sessionId === null || patch === null) {
+                return null;
+            }
+            return {
+                type: "session_updated",
+                catalogEpoch,
+                seq,
+                sessionId,
+                patch,
+            };
+        }
+        case "session_removed": {
+            const catalogEpoch = parseCatalogEpoch(raw.catalogEpoch);
+            const seq = parseCatalogSeq(raw.seq);
+            const sessionId = parseSessionId(raw.sessionId);
+            if (catalogEpoch === null || seq === null || sessionId === null) {
+                return null;
+            }
+            return {
+                type: "session_removed",
+                catalogEpoch,
+                seq,
+                sessionId,
+            };
+        }
         default:
             return null;
     }

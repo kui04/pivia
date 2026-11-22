@@ -94,7 +94,9 @@ describe("createApiClient", () => {
         const urls: string[] = [];
         const fetchImpl: FetchLike = (url) => {
             urls.push(urlString(url));
-            return Promise.resolve(jsonResponse({ sessions: [], scannedAtMs: 0 }));
+            return Promise.resolve(
+                jsonResponse({ sessions: [], scannedAtMs: 0, catalogEpoch: "epoch-1", catalogSeq: 0 }),
+            );
         };
         const client = createApiClient({ baseUrl: "https://example.test/", fetch: fetchImpl });
 
@@ -187,6 +189,62 @@ describe("createApiClient", () => {
         expect(requests[0]?.init?.body).toBe(JSON.stringify({ cwd: "/home/u/project" }));
         expect(requests[1]?.url).toBe("/api/sessions/s1/close");
         expect(requests[1]?.init?.method).toBe("POST");
+    });
+
+    it("forwards createDirectory on createSession and decodes directory_not_found", async () => {
+        const createdSummary = summary("s1");
+        const requests: { url: string; init: RequestInit | undefined }[] = [];
+        const fetchImpl: FetchLike = (url, init) => {
+            requests.push({ url: urlString(url), init });
+            if (requests.length === 1) {
+                return Promise.resolve(
+                    errorResponse(400, {
+                        error: "directory_not_found",
+                        message: "Working directory does not exist.",
+                    }),
+                );
+            }
+            return Promise.resolve(jsonResponse({ session: createdSummary }));
+        };
+        const client = createApiClient({ fetch: fetchImpl });
+
+        await expect(client.createSession("/home/u/missing")).rejects.toMatchObject({
+            status: 400,
+            code: "directory_not_found",
+            message: "Working directory does not exist.",
+        });
+
+        const created = await client.createSession("/home/u/missing", { createDirectory: true });
+        expect(created).toEqual({ session: createdSummary });
+        expect(requests[1]?.init?.body).toBe(JSON.stringify({ cwd: "/home/u/missing", createDirectory: true }));
+    });
+
+    it("lists host directories with optional path query encoding", async () => {
+        const seenUrls: string[] = [];
+        const fetchImpl: FetchLike = (url) => {
+            seenUrls.push(urlString(url));
+            return Promise.resolve(
+                jsonResponse({
+                    path: "/home/u/projects",
+                    parent: "/home/u",
+                    directories: [".git", "pivia"],
+                    truncated: false,
+                }),
+            );
+        };
+        const client = createApiClient({ fetch: fetchImpl });
+
+        const rootListing = await client.listDirectories();
+        const nestedListing = await client.listDirectories("/home/u/my projects");
+
+        expect(seenUrls).toEqual(["/api/fs/directories", "/api/fs/directories?path=%2Fhome%2Fu%2Fmy%20projects"]);
+        expect(rootListing).toEqual({
+            path: "/home/u/projects",
+            parent: "/home/u",
+            directories: [".git", "pivia"],
+            truncated: false,
+        });
+        expect(nestedListing.directories).toEqual([".git", "pivia"]);
     });
 
     it("turns a standard error envelope into ApiClientError", async () => {

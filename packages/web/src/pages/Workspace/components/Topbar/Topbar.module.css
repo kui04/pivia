@@ -1,0 +1,50 @@
+/*
+ * The top bar of the session column.
+ *
+ * The nesting this file styles:
+ *
+ *   .bar       header bar with a unified surface-to-transparent gradient overhanging the stage
+ *   ├─ .title  the session name, and the workspace's only h1
+ *   └─ .actions trailing session actions menu
+ */
+.bar {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: var(--space-8);
+    /* Keep controls in the top 40px while reaching 100% surface at the 32px stage edge before fading over 16px. */
+    min-block-size: calc(var(--space-40) + var(--space-8));
+    padding-inline: var(--space-8) var(--space-4);
+    padding-block-end: var(--space-8);
+    margin-block-end: calc(-1 * var(--space-16));
+    background-image: linear-gradient(
+        to bottom,
+        var(--color-surface) 0,
+        var(--color-surface) 67%,
+        color-mix(in srgb, var(--color-surface) 40%, transparent) 84%,
+        transparent 100%
+    );
+    user-select: none;
+
+    .title {
+        flex: 1;
+        min-inline-size: 0;
+        overflow: hidden;
+        color: var(--color-on-surface);
+        font-size: var(--type-title-small-size);
+        font-weight: var(--type-title-small-emphasized-weight);
+        letter-spacing: var(--type-title-small-tracking);
+        line-height: var(--type-title-small-line-height);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .actions {
+        display: flex;
+        flex: none;
+        align-items: center;
+        gap: var(--space-8);
+    }
+}

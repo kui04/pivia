@@ -18,6 +18,7 @@ const CREATE_SESSION_BODY_SCHEMA = {
     additionalProperties: false,
     properties: {
         cwd: { type: "string", minLength: 1 },
+        createDirectory: { type: "boolean" },
     },
 } as const;
 
@@ -42,7 +43,12 @@ export function registerSessionRoutes(app: FastifyInstance, sessionRegistry: Ses
             },
             async (request, reply): Promise<CreateSessionResponse | FastifyReply> => {
                 try {
-                    const handle = await sessionRegistry.createSession(request.body.cwd);
+                    const handle = await sessionRegistry.createSession(
+                        request.body.cwd,
+                        request.body.createDirectory === undefined
+                            ? undefined
+                            : { createDirectory: request.body.createDirectory },
+                    );
                     return reply.code(201).send({ session: handle.summarize() });
                 } catch (error) {
                     if (error instanceof SessionRegistryError) {

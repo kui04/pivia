@@ -1,11 +1,13 @@
 import {
+    INITIAL_CATALOG_SEQ,
+    parseCatalogEpoch,
     parseEntriesVersion,
     parseSessionId,
     type EntriesVersion,
     type SessionId,
     type SessionStateSnapshot,
     type SessionSummary,
-    type WsServerMessage,
+    type SessionWsServerMessage,
 } from "@pivia/protocol";
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -65,7 +67,7 @@ class FakeSocket implements SessionSocketLike {
         this.onopen?.();
     }
 
-    receive(message: WsServerMessage): void {
+    receive(message: SessionWsServerMessage): void {
         this.onmessage?.({ data: JSON.stringify(message) } as MessageEvent);
     }
 }
@@ -240,9 +242,13 @@ describe("createAppStores", () => {
             WebSocket: FakeSocket,
         });
 
-        useWorkspaceStore.getState().applyScan({
-            sessions: [summary(SESSION_1), summary(SESSION_2)],
-            scannedAtMs: 5_000,
+        const catalogEpoch = parseCatalogEpoch("epoch-1");
+        if (catalogEpoch === null) {
+            throw new Error("Invalid test catalog epoch");
+        }
+        useWorkspaceStore.getState().applyCatalog([summary(SESSION_1), summary(SESSION_2)], 5_000, {
+            epoch: catalogEpoch,
+            seq: INITIAL_CATALOG_SEQ,
         });
         useWorkspaceStore.getState().togglePinned(SESSION_1);
         useWorkspaceStore.getState().select(SESSION_1);

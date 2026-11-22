@@ -123,6 +123,8 @@ describe("session routes", () => {
         const listBody = list.json<SessionListResponse>();
         expect(listBody.sessions.map((session) => session.id).sort()).toEqual(["session-alpha", "session-beta"]);
         expect(Number.isFinite(listBody.scannedAtMs)).toBe(true);
+        expect(listBody.catalogEpoch.length).toBeGreaterThan(0);
+        expect(listBody.catalogSeq).toBe(0);
         expect(list.body).not.toContain("allMessagesText");
         expect(list.body).not.toContain(sessionDir);
 
@@ -202,7 +204,18 @@ describe("session routes", () => {
             payload: { cwd: join(fixture.root, "missing") },
         });
         expect(missingDir.statusCode).toBe(400);
-        expect(missingDir.json()).toMatchObject({ error: "invalid_request" });
+        expect(missingDir.json()).toMatchObject({ error: "directory_not_found" });
+
+        const createdWithDir = await fixture.app.inject({
+            method: "POST",
+            url: "/api/sessions",
+            headers: fixture.authHeaders,
+            payload: { cwd: join(fixture.root, "created-on-demand"), createDirectory: true },
+        });
+        expect(createdWithDir.statusCode).toBe(201);
+        expect(createdWithDir.json<CreateSessionResponse>().session.cwd).toBe(
+            realpathSync(join(fixture.root, "created-on-demand")),
+        );
 
         const filePath = join(fixture.root, "file.txt");
         writeFileSync(filePath, "file", "utf8");

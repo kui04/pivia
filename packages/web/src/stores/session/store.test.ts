@@ -7,7 +7,7 @@ import {
     type SessionDetailResponse,
     type SessionId,
     type SessionStateSnapshot,
-    type WsServerMessage,
+    type SessionWsServerMessage,
 } from "@pivia/protocol";
 
 function sid(raw: string): SessionId {
@@ -69,7 +69,7 @@ class FakeSocket implements SessionSocketLike {
         this.onopen?.();
     }
 
-    receive(message: WsServerMessage): void {
+    receive(message: SessionWsServerMessage): void {
         this.onmessage?.({ data: JSON.stringify(message) } as MessageEvent);
     }
 
@@ -103,7 +103,7 @@ function summary(overrides: Partial<SessionStateSnapshot> = {}): SessionStateSna
     };
 }
 
-function snapshot(seq: number): WsServerMessage {
+function snapshot(seq: number): SessionWsServerMessage {
     return {
         type: "snapshot",
         sessionId: SESSION_1,

@@ -103,7 +103,7 @@ in step with the file: a new nested rule updates the sketch in the same change.
   the root route and renders `<Outlet />`, so chrome and auth gates shared by every route belong there. `RouteError`
   renders without `AppLayout`.
 - `/workspace` is a layout route (`WorkspaceLayout`) that owns the workspace shell (sidebar or drawer, topbar, settings,
-  session scan) and renders the chat column through its `<Outlet />`, so the shell never remounts while the active
+  catalog sync) and renders the chat column through its `<Outlet />`, so the shell never remounts while the active
   session changes.
 - Because the app connects to a single host, there is no multi-host connect page. Unauthenticated access prompts for
   the server token via an auth gate or modal and proceeds straight into the workspace once authenticated.
@@ -116,7 +116,7 @@ in step with the file: a new nested rule updates the sketch in the same change.
   `packages/web/src/hooks/<name>.ts` and is imported as `@/hooks/<name>`, such as `useMediaQuery` and `useNow`.
 - A hook that reads the context of one component stays beside it, in `packages/web/src/components/<Name>/`. A hook
   that holds the state of one page stays beside that page, in `packages/web/src/pages/<Name>/`, such as
-  `useSessionScan` in `Workspace/`. Moving those to `hooks/` would separate a rule from the only code that can call it.
+  `useWorkspaceSync` in `Workspace/`. Moving those to `hooks/` would separate a rule from the only code that can call it.
 - Do not add an index barrel to `packages/web/src/hooks/`; import the file directly.
 
 ## State and transport
@@ -128,13 +128,16 @@ in step with the file: a new nested rule updates the sketch in the same change.
 - HTTP and WebSocket client wrappers stay in `packages/web/src/lib/transport/` (using shared wire types from
   `packages/protocol`), because they are transport, not state.
 
-## Session scan
+## Workspace sync
 
-- `useSessionScan` scans on connect/auth, when the document becomes visible, every five minutes and on manual refresh.
-  One scan runs at a time, so a second refresh is ignored instead of queued.
-- The scan phase records `manual`, so the sidebar replaces the rows with the skeleton only for a scan the user asked
-  for. A background scan keeps the rows, because it would otherwise empty the sidebar every five minutes. The refresh
-  button stays focusable while it is `aria-disabled`, so the click that disables it does not drop the focus.
+- `useWorkspaceSync` hydrates the stale-while-revalidate catalog from IndexedDB on mount, subscribes to
+  `/ws/workspace` for live `catalog_snapshot`, `session_upserted`, `session_updated` and `session_removed` updates, reconnects with
+  exponential backoff (and immediately when the document becomes visible again), probes `/api/auth/status` after
+  repeated close failures so an expired session drops to the auth gate, and provides a single-flight manual
+  refresh via `GET /api/sessions`.
+- `CatalogSyncPhase` is `idle`, `syncing`, `live`, `reconnecting`, or `failed`. While `syncing`, the sidebar shows the
+  loading skeleton and disables the refresh button with `focusableWhenDisabled` so focus is preserved. While
+  `reconnecting` or `failed`, the last known rows stay visible under a status banner.
 
 ## Toasts
 

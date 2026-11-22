@@ -3,13 +3,18 @@ import { describe, expect, it } from "vitest";
 import {
     assertNever,
     commandIdOf,
+    INITIAL_CATALOG_SEQ,
     isRecord,
+    nextCatalogSeq,
     parseAfterSeq,
     parseAuthLoginResponse,
     parseAuthLogoutResponse,
     parseAuthStatusResponse,
+    parseCatalogEpoch,
+    parseCatalogSeq,
     parseCloseSessionResponse,
     parseCreateSessionResponse,
+    parseDirectoryListResponse,
     parseEntriesVersion,
     parseExtensionUiResponse,
     parseHealthResponse,
@@ -19,9 +24,11 @@ import {
     parseSessionPrefixAnchor,
     parseSessionStateSnapshot,
     parseSessionSummary,
-    parseWsClientCommand,
-    parseWsHandshakeQuery,
-    parseWsServerMessage,
+    parseSessionSummaryPatch,
+    parseSessionWsClientCommand,
+    parseSessionWsHandshakeQuery,
+    parseSessionWsServerMessage,
+    parseWorkspaceWsServerMessage,
 } from "./index.ts";
 
 describe("protocol parse helpers", () => {
@@ -93,9 +100,9 @@ describe("protocol parse helpers", () => {
         expect(parseAfterSeq(5)).toEqual({ ok: false });
     });
 
-    it("parseWsHandshakeQuery parses afterSeq strictly and degrades invalid cache hints", () => {
+    it("parseSessionWsHandshakeQuery parses afterSeq strictly and degrades invalid cache hints", () => {
         expect(
-            parseWsHandshakeQuery({
+            parseSessionWsHandshakeQuery({
                 afterSeq: "10",
                 runtimeId: "rt-1",
                 entriesVersion: "3:1.5.2",
@@ -111,17 +118,17 @@ describe("protocol parse helpers", () => {
             },
         });
 
-        expect(parseWsHandshakeQuery({ afterSeq: "nope" })).toEqual({
+        expect(parseSessionWsHandshakeQuery({ afterSeq: "nope" })).toEqual({
             ok: false,
             message: "Invalid afterSeq parameter.",
         });
 
-        expect(parseWsHandshakeQuery({ afterSeq: "2", entriesVersion: "bad", afterCount: "0" })).toEqual({
+        expect(parseSessionWsHandshakeQuery({ afterSeq: "2", entriesVersion: "bad", afterCount: "0" })).toEqual({
             ok: true,
             value: { afterSeq: 2 },
         });
 
-        expect(parseWsHandshakeQuery(undefined)).toEqual({ ok: true, value: {} });
+        expect(parseSessionWsHandshakeQuery(undefined)).toEqual({ ok: true, value: {} });
     });
 
     it("parses valid WS client commands and extension UI responses", () => {
@@ -135,7 +142,7 @@ describe("protocol parse helpers", () => {
         });
 
         expect(
-            parseWsClientCommand({ type: "prompt", id: "p1", message: "hello", streamingBehavior: "steer" }),
+            parseSessionWsClientCommand({ type: "prompt", id: "p1", message: "hello", streamingBehavior: "steer" }),
         ).toEqual({
             type: "prompt",
             id: "p1",
@@ -143,8 +150,8 @@ describe("protocol parse helpers", () => {
             streamingBehavior: "steer",
         });
 
-        expect(parseWsClientCommand({ type: "set_thinking_level", level: "invalid" })).toBeNull();
-        expect(parseWsClientCommand({ type: "unknown_command" })).toBeNull();
+        expect(parseSessionWsClientCommand({ type: "set_thinking_level", level: "invalid" })).toBeNull();
+        expect(parseSessionWsClientCommand({ type: "unknown_command" })).toBeNull();
     });
 
     it("parses HTTP response payloads and rejects malformed shapes", () => {
@@ -172,11 +179,41 @@ describe("protocol parse helpers", () => {
         expect(parseAuthLogoutResponse({ authenticated: false })).toEqual({ authenticated: false });
         expect(parseCloseSessionResponse({ closed: true })).toEqual({ closed: true });
         expect(parseSessionSummary(summary)).toEqual(summary);
+        const longFirstMessage = "x".repeat(2_000);
+        expect(parseSessionSummary({ ...summary, firstMessage: longFirstMessage })?.firstMessage).toBe(
+            longFirstMessage,
+        );
         expect(parseSessionSummary({ ...summary, id: "../bad" })).toBeNull();
-        expect(parseSessionListResponse({ sessions: [summary], scannedAtMs: 5000 })).toEqual({
+        expect(
+            parseSessionListResponse({
+                sessions: [summary],
+                scannedAtMs: 5000,
+                catalogEpoch: "epoch-1",
+                catalogSeq: 0,
+            }),
+        ).toEqual({
             sessions: [summary],
             scannedAtMs: 5000,
+            catalogEpoch: "epoch-1",
+            catalogSeq: 0,
         });
+        expect(parseSessionListResponse({ sessions: [summary], scannedAtMs: 5000 })).toBeNull();
+        expect(
+            parseSessionListResponse({
+                sessions: [summary],
+                scannedAtMs: 5000,
+                catalogEpoch: "",
+                catalogSeq: 0,
+            }),
+        ).toBeNull();
+        expect(
+            parseSessionListResponse({
+                sessions: [summary],
+                scannedAtMs: 5000,
+                catalogEpoch: "epoch-1",
+                catalogSeq: -1,
+            }),
+        ).toBeNull();
         expect(parseCreateSessionResponse({ session: summary })).toEqual({ session: summary });
         expect(
             parseSessionDetailResponse({
@@ -236,7 +273,7 @@ describe("protocol parse helpers", () => {
         expect(parseSessionStateSnapshot({ ...stateSnapshot, thinkingLevel: "bogus" })).toBeNull();
 
         expect(
-            parseWsServerMessage({
+            parseSessionWsServerMessage({
                 type: "snapshot",
                 sessionId: "session-1",
                 runtimeId: "rt-1",
@@ -252,7 +289,7 @@ describe("protocol parse helpers", () => {
         ).toMatchObject({ type: "snapshot", entriesMode: "inline" });
 
         expect(
-            parseWsServerMessage({
+            parseSessionWsServerMessage({
                 type: "replay",
                 sessionId: "session-1",
                 runtimeId: "rt-1",
@@ -270,13 +307,230 @@ describe("protocol parse helpers", () => {
             appendedSlice: { baseEntryCount: 1 },
         });
 
-        expect(parseWsServerMessage({ type: "response", command: "abort", success: true })).toEqual({
+        expect(parseSessionWsServerMessage({ type: "response", command: "abort", success: true })).toEqual({
             type: "response",
             command: "abort",
             success: true,
         });
-        expect(parseWsServerMessage({ type: "response", command: "abort", success: false })).toBeNull();
-        expect(parseWsServerMessage({ type: "response", command: "made_up", success: true })).toBeNull();
-        expect(parseWsServerMessage({ type: "unknown_type" })).toBeNull();
+        expect(parseSessionWsServerMessage({ type: "response", command: "abort", success: false })).toBeNull();
+        expect(parseSessionWsServerMessage({ type: "response", command: "made_up", success: true })).toBeNull();
+        expect(parseSessionWsServerMessage({ type: "unknown_type" })).toBeNull();
+    });
+
+    it("parses directory list responses and rejects malformed payloads", () => {
+        expect(
+            parseDirectoryListResponse({
+                path: "/home/u",
+                parent: "/home",
+                directories: ["repo", "docs"],
+                truncated: false,
+            }),
+        ).toEqual({
+            path: "/home/u",
+            parent: "/home",
+            directories: ["repo", "docs"],
+            truncated: false,
+        });
+        expect(parseDirectoryListResponse({ path: "/", parent: null, directories: [], truncated: false })).toEqual({
+            path: "/",
+            parent: null,
+            directories: [],
+            truncated: false,
+        });
+        expect(parseDirectoryListResponse({ path: "", parent: null, directories: [], truncated: false })).toBeNull();
+        expect(parseDirectoryListResponse({ path: "/", parent: 123, directories: [], truncated: false })).toBeNull();
+        expect(
+            parseDirectoryListResponse({ path: "/", parent: null, directories: [123], truncated: false }),
+        ).toBeNull();
+        expect(parseDirectoryListResponse({ path: "/", parent: null, directories: [] })).toBeNull();
+    });
+
+    it("parses workspace WebSocket messages and rejects malformed payloads", () => {
+        const sessionSummary = {
+            id: "session-1",
+            cwd: "/workspace/repo",
+            name: "First session",
+            firstMessage: "hi",
+            messageCount: 2,
+            createdAtMs: 1000,
+            modifiedAtMs: 2000,
+            hasParent: false,
+            runtimeState: "idle",
+            attachedClients: 1,
+        };
+
+        expect(parseCatalogEpoch("epoch-1")).toBe("epoch-1");
+        expect(parseCatalogEpoch("")).toBeNull();
+        expect(parseCatalogSeq(0)).toBe(0);
+        expect(parseCatalogSeq(-1)).toBeNull();
+        expect(parseCatalogSeq(1.5)).toBeNull();
+        expect(nextCatalogSeq(INITIAL_CATALOG_SEQ)).toBe(1);
+
+        expect(
+            parseWorkspaceWsServerMessage({
+                type: "catalog_snapshot",
+                sessions: [sessionSummary],
+                updatedAtMs: 3000,
+                catalogEpoch: "epoch-1",
+                catalogSeq: 0,
+            }),
+        ).toEqual({
+            type: "catalog_snapshot",
+            sessions: [sessionSummary],
+            updatedAtMs: 3000,
+            catalogEpoch: "epoch-1",
+            catalogSeq: 0,
+        });
+
+        expect(
+            parseWorkspaceWsServerMessage({
+                type: "session_upserted",
+                catalogEpoch: "epoch-1",
+                seq: 1,
+                session: sessionSummary,
+            }),
+        ).toEqual({
+            type: "session_upserted",
+            catalogEpoch: "epoch-1",
+            seq: 1,
+            session: sessionSummary,
+        });
+
+        expect(
+            parseWorkspaceWsServerMessage({
+                type: "session_updated",
+                catalogEpoch: "epoch-1",
+                seq: 2,
+                sessionId: "session-1",
+                patch: {
+                    name: null,
+                    firstMessage: "full message",
+                    messageCount: 3,
+                    modifiedAtMs: 2500,
+                    runtimeState: "streaming",
+                    attachedClients: 2,
+                },
+            }),
+        ).toEqual({
+            type: "session_updated",
+            catalogEpoch: "epoch-1",
+            seq: 2,
+            sessionId: "session-1",
+            patch: {
+                name: null,
+                firstMessage: "full message",
+                messageCount: 3,
+                modifiedAtMs: 2500,
+                runtimeState: "streaming",
+                attachedClients: 2,
+            },
+        });
+        expect(parseSessionSummaryPatch({ runtimeState: "idle" })).toEqual({ runtimeState: "idle" });
+
+        expect(
+            parseWorkspaceWsServerMessage({
+                type: "session_removed",
+                catalogEpoch: "epoch-1",
+                seq: 3,
+                sessionId: "session-1",
+            }),
+        ).toEqual({
+            type: "session_removed",
+            catalogEpoch: "epoch-1",
+            seq: 3,
+            sessionId: "session-1",
+        });
+
+        expect(parseWorkspaceWsServerMessage(null)).toBeNull();
+        expect(parseWorkspaceWsServerMessage({ type: "unknown_type" })).toBeNull();
+        expect(
+            parseWorkspaceWsServerMessage({
+                type: "catalog_snapshot",
+                sessions: [sessionSummary],
+                updatedAtMs: 3000,
+            }),
+        ).toBeNull();
+        expect(
+            parseWorkspaceWsServerMessage({
+                type: "catalog_snapshot",
+                sessions: [{ ...sessionSummary, id: "../bad" }],
+                updatedAtMs: 3000,
+                catalogEpoch: "epoch-1",
+                catalogSeq: 0,
+            }),
+        ).toBeNull();
+        expect(
+            parseWorkspaceWsServerMessage({
+                type: "catalog_snapshot",
+                sessions: [sessionSummary],
+                updatedAtMs: Number.NaN,
+                catalogEpoch: "epoch-1",
+                catalogSeq: 0,
+            }),
+        ).toBeNull();
+        expect(
+            parseWorkspaceWsServerMessage({
+                type: "session_upserted",
+                catalogEpoch: "epoch-1",
+                seq: 1,
+                session: { ...sessionSummary, runtimeState: "bogus" },
+            }),
+        ).toBeNull();
+        expect(
+            parseWorkspaceWsServerMessage({
+                type: "session_upserted",
+                catalogEpoch: "",
+                seq: 1,
+                session: sessionSummary,
+            }),
+        ).toBeNull();
+        expect(
+            parseWorkspaceWsServerMessage({
+                type: "session_updated",
+                catalogEpoch: "epoch-1",
+                seq: 2,
+                sessionId: "../bad",
+                patch: { runtimeState: "idle" },
+            }),
+        ).toBeNull();
+        expect(
+            parseWorkspaceWsServerMessage({
+                type: "session_updated",
+                catalogEpoch: "epoch-1",
+                seq: 2,
+                sessionId: "session-1",
+                patch: {},
+            }),
+        ).toBeNull();
+        expect(
+            parseWorkspaceWsServerMessage({
+                type: "session_updated",
+                catalogEpoch: "epoch-1",
+                seq: 2,
+                sessionId: "session-1",
+                patch: { runtimeState: "bogus" },
+            }),
+        ).toBeNull();
+        expect(parseSessionSummaryPatch({ messageCount: -1 })).toBeNull();
+        expect(parseSessionSummaryPatch({ attachedClients: 1.5 })).toBeNull();
+        expect(parseSessionSummaryPatch({ modifiedAtMs: Number.NaN })).toBeNull();
+        expect(parseSessionSummaryPatch({ name: 42 })).toBeNull();
+        expect(parseSessionSummaryPatch({ firstMessage: 42 })).toBeNull();
+        expect(
+            parseWorkspaceWsServerMessage({
+                type: "session_removed",
+                catalogEpoch: "epoch-1",
+                seq: -1,
+                sessionId: "session-1",
+            }),
+        ).toBeNull();
+        expect(
+            parseWorkspaceWsServerMessage({
+                type: "session_removed",
+                catalogEpoch: "epoch-1",
+                seq: 3,
+                sessionId: "../bad",
+            }),
+        ).toBeNull();
     });
 });

@@ -6,8 +6,8 @@ import { cn } from "../../lib/cn";
 import { DrawerContentContext } from "./useInsideDrawer";
 import styles from "./Drawer.module.css";
 
-/** The edge a drawer slides from, and the direction a swipe dismisses it towards. */
-export type DrawerSide = "left" | "right";
+/** The edge a drawer slides from; bottom sheets swipe down to dismiss. */
+export type DrawerSide = "left" | "right" | "bottom";
 
 export type DrawerProps = {
     /** Whether the drawer is open. */
@@ -43,8 +43,10 @@ export type DrawerProps = {
  * itself and keeps the larger of the bottom safe area and the keyboard inset.
  */
 export function Drawer({ open, onOpenChange, side = "left", label, children, className }: DrawerProps): ReactElement {
+    const swipeDirection = side === "bottom" ? "down" : side;
+
     return (
-        <BaseDrawer.Root open={open} onOpenChange={onOpenChange} swipeDirection={side}>
+        <BaseDrawer.Root open={open} onOpenChange={onOpenChange} swipeDirection={swipeDirection}>
             <BaseDrawer.Portal keepMounted>
                 <BaseDrawer.Backdrop data-slot="drawer-backdrop" className={styles.backdrop} />
                 <BaseDrawer.Viewport data-slot="drawer-viewport" data-side={side} className={styles.viewport}>

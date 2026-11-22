@@ -1,15 +1,38 @@
-import type { SessionId, SessionRuntimeState, SessionSummary } from "@pivia/protocol";
+import {
+    assertNever,
+    type CatalogCursor,
+    type SessionId,
+    type SessionRuntimeState,
+    type SessionSummary,
+    type SessionSummaryPatch,
+    type WorkspaceWsCatalogEvent,
+} from "@pivia/protocol";
 
-/** Where the last session scan stands. */
-export type ScanPhase =
+/** Where workspace catalog synchronization stands. */
+export type CatalogSyncPhase =
     | { readonly kind: "idle" }
-    | {
-          readonly kind: "scanning";
-          /** True when a person asked for this scan, so the list may show its skeleton. */
-          readonly manual: boolean;
-      }
-    | { readonly kind: "ready" }
+    | { readonly kind: "syncing" }
+    | { readonly kind: "live" }
+    | { readonly kind: "reconnecting"; readonly attempt: number }
     | { readonly kind: "failed"; readonly message: string };
+
+/** Topbar view of the currently selected session without exposing host file paths. */
+export interface SelectedSession {
+    readonly id: SessionId;
+    readonly title: string;
+    readonly named: boolean;
+    readonly cwd: string;
+    readonly runtimeState: SessionRuntimeState;
+    readonly attachedClients: number;
+}
+
+/** Display badge state for an active session runtime. */
+export type ActiveSessionBadge = "starting" | "attached" | "streaming" | "compacting" | "closing";
+
+/** Trailing status slot of a {@link SessionRow}: relative age when idle, badge when active. */
+export type SessionRowStatus =
+    | { readonly kind: "idle"; readonly modifiedAtMs: number }
+    | { readonly kind: "active"; readonly state: ActiveSessionBadge; readonly label: string };
 
 /** One session as the workspace list shows it. */
 export interface SessionRow {
@@ -118,20 +141,140 @@ export function sortSessions(sessions: readonly SessionSummary[]): readonly Sess
     return [...sessions].sort(compareSessions);
 }
 
+function summariesEqual(a: SessionSummary, b: SessionSummary): boolean {
+    return (
+        a.id === b.id &&
+        a.cwd === b.cwd &&
+        a.name === b.name &&
+        a.firstMessage === b.firstMessage &&
+        a.messageCount === b.messageCount &&
+        a.createdAtMs === b.createdAtMs &&
+        a.modifiedAtMs === b.modifiedAtMs &&
+        a.hasParent === b.hasParent &&
+        a.runtimeState === b.runtimeState &&
+        a.attachedClients === b.attachedClients
+    );
+}
+
+function patchChangesSession(existing: SessionSummary, patch: SessionSummaryPatch): boolean {
+    return (
+        (patch.name !== undefined && patch.name !== existing.name) ||
+        (patch.firstMessage !== undefined && patch.firstMessage !== existing.firstMessage) ||
+        (patch.messageCount !== undefined && patch.messageCount !== existing.messageCount) ||
+        (patch.modifiedAtMs !== undefined && patch.modifiedAtMs !== existing.modifiedAtMs) ||
+        (patch.runtimeState !== undefined && patch.runtimeState !== existing.runtimeState) ||
+        (patch.attachedClients !== undefined && patch.attachedClients !== existing.attachedClients)
+    );
+}
+
 /** Replaces the session with the same id, or appends it when the id is new. */
 export function upsertSession(sessions: readonly SessionSummary[], session: SessionSummary): readonly SessionSummary[] {
     const index = sessions.findIndex((candidate) => candidate.id === session.id);
     if (index === -1) {
         return [...sessions, session];
     }
+    const existing = sessions[index];
+    if (existing !== undefined && summariesEqual(existing, session)) {
+        return sessions;
+    }
     const next = [...sessions];
     next[index] = session;
+    return next;
+}
+
+/** Applies a mutable summary patch to `sessionId`, returning `sessions` unchanged if missing or identical. */
+export function patchSession(
+    sessions: readonly SessionSummary[],
+    sessionId: SessionId,
+    patch: SessionSummaryPatch,
+): readonly SessionSummary[] {
+    const index = sessions.findIndex((candidate) => candidate.id === sessionId);
+    if (index === -1) {
+        return sessions;
+    }
+    const existing = sessions[index];
+    if (existing === undefined || !patchChangesSession(existing, patch)) {
+        return sessions;
+    }
+    const next = [...sessions];
+    next[index] = { ...existing, ...patch };
     return next;
 }
 
 /** Returns a new list without the session of `id`. */
 export function removeSession(sessions: readonly SessionSummary[], id: SessionId): readonly SessionSummary[] {
     return sessions.filter((session) => session.id !== id);
+}
+
+/** Snapshot payload paired with its server {@link CatalogCursor}. */
+export interface CatalogSnapshotState {
+    readonly sessions: readonly SessionSummary[];
+    readonly cursor: CatalogCursor;
+}
+
+/**
+ * Returns true when an incoming catalog snapshot is at least as recent as `current`.
+ *
+ * A different `epoch` means the server restarted and started a fresh sequence space, so its
+ * snapshot always supersedes the previous server's cursor.
+ */
+export function canApplyCatalogSnapshot(current: CatalogCursor | null, incoming: CatalogCursor): boolean {
+    return current === null || current.epoch !== incoming.epoch || incoming.seq >= current.seq;
+}
+
+/**
+ * Returns true when an incremental catalog event strictly advances `current` in the same epoch.
+ *
+ * Before any snapshot has been applied (`current === null`), incremental events are accepted as
+ * received; once a snapshot establishes an epoch, stale or cross-epoch events are dropped.
+ */
+export function canApplyCatalogEvent(current: CatalogCursor | null, incoming: CatalogCursor): boolean {
+    return current === null || (current.epoch === incoming.epoch && incoming.seq > current.seq);
+}
+
+/** Apply one incremental catalog event to `sessions`, returning a new array only when changed. */
+export function applyCatalogEvent(
+    sessions: readonly SessionSummary[],
+    event: WorkspaceWsCatalogEvent,
+): readonly SessionSummary[] {
+    switch (event.type) {
+        case "session_upserted":
+            return upsertSession(sessions, event.session);
+        case "session_updated":
+            return patchSession(sessions, event.sessionId, event.patch);
+        case "session_removed":
+            return removeSession(sessions, event.sessionId);
+        default:
+            return assertNever(event, "Unknown workspace catalog event");
+    }
+}
+
+/**
+ * Fold any buffered WebSocket events newer than `snapshot.cursor` onto `snapshot.sessions`.
+ *
+ * Events from a different epoch or with `seq <= current seq` are skipped so an in-flight HTTP
+ * refresh never overwrites live incremental updates received while the request was pending.
+ */
+export function mergeRefreshSnapshot(
+    snapshot: CatalogSnapshotState,
+    buffered: readonly WorkspaceWsCatalogEvent[],
+): CatalogSnapshotState {
+    let sessions = snapshot.sessions;
+    let seq = snapshot.cursor.seq;
+    for (const event of buffered) {
+        if (event.catalogEpoch !== snapshot.cursor.epoch || event.seq <= seq) {
+            continue;
+        }
+        sessions = applyCatalogEvent(sessions, event);
+        seq = event.seq;
+    }
+    return {
+        sessions,
+        cursor: {
+            epoch: snapshot.cursor.epoch,
+            seq,
+        },
+    };
 }
 
 function toRow(summary: SessionSummary, pins: ReadonlySet<SessionId>, selectedId: SessionId | null): SessionRow {
@@ -152,7 +295,7 @@ function toRow(summary: SessionSummary, pins: ReadonlySet<SessionId>, selectedId
 /**
  * Builds the pinned rows and the folder sections.
  *
- * A search matches the name, the first message and the cwd, and it expands every folder so a
+ * A search matches the name, the first-message prefix and the cwd, and it expands every folder so a
  * match never hides inside a collapsed group. Pins only reorder; they never bypass the filter.
  */
 export function buildWorkspaceModel(input: WorkspaceModelInput): WorkspaceModel {
@@ -216,4 +359,90 @@ export function buildWorkspaceModel(input: WorkspaceModelInput): WorkspaceModel 
         total: sessions.length,
         matched: matched.length,
     };
+}
+
+/** Derives the selected session header view from the catalog, or returns `null` when missing. */
+export function selectedSession(
+    sessions: readonly SessionSummary[],
+    selectedId: SessionId | null,
+): SelectedSession | null {
+    if (selectedId === null) {
+        return null;
+    }
+    const found = sessions.find((candidate) => candidate.id === selectedId);
+    if (found === undefined) {
+        return null;
+    }
+    const { title, named } = sessionTitle(found);
+    return {
+        id: found.id,
+        title,
+        named,
+        cwd: found.cwd,
+        runtimeState: found.runtimeState,
+        attachedClients: found.attachedClients,
+    };
+}
+
+/** Maps a row's runtime state and client attachment count into a display status union. */
+export function sessionRowStatus(
+    row: Pick<SessionRow, "runtimeState" | "attachedClients" | "modifiedAtMs">,
+): SessionRowStatus {
+    switch (row.runtimeState) {
+        case "starting":
+            return { kind: "active", state: "starting", label: "Starting" };
+        case "streaming":
+            return { kind: "active", state: "streaming", label: "Streaming" };
+        case "compacting":
+            return { kind: "active", state: "compacting", label: "Compacting" };
+        case "closing":
+            return { kind: "active", state: "closing", label: "Closing" };
+        case "idle":
+            return row.attachedClients > 0
+                ? { kind: "active", state: "attached", label: "Attached" }
+                : { kind: "idle", modifiedAtMs: row.modifiedAtMs };
+        default:
+            return assertNever(row.runtimeState, "Unknown session runtime state");
+    }
+}
+
+const MINUTE_MS = 60_000;
+const HOUR_MS = 60 * MINUTE_MS;
+const DAY_MS = 24 * HOUR_MS;
+const WEEK_MS = 7 * DAY_MS;
+const YEAR_MS = 365 * DAY_MS;
+
+/** Formats a compact relative age (`now`, `5m`, `2h`, `3d`, `2w`, `1y`). */
+export function formatRelativeAge(timestampMs: number, nowMs: number): string {
+    const deltaMs = Math.max(0, nowMs - timestampMs);
+    if (deltaMs < MINUTE_MS) {
+        return "now";
+    }
+    if (deltaMs < HOUR_MS) {
+        return `${String(Math.floor(deltaMs / MINUTE_MS))}m`;
+    }
+    if (deltaMs < DAY_MS) {
+        return `${String(Math.floor(deltaMs / HOUR_MS))}h`;
+    }
+    if (deltaMs < WEEK_MS) {
+        return `${String(Math.floor(deltaMs / DAY_MS))}d`;
+    }
+    if (deltaMs < YEAR_MS) {
+        return `${String(Math.floor(deltaMs / WEEK_MS))}w`;
+    }
+    return `${String(Math.floor(deltaMs / YEAR_MS))}y`;
+}
+
+/** Collects unique non-empty working directories ordered by most recently active session first. */
+export function collectKnownCwds(sessions: readonly SessionSummary[]): readonly string[] {
+    const seen = new Set<string>();
+    const cwds: string[] = [];
+    for (const session of sortSessions(sessions)) {
+        if (session.cwd.trim() === "" || seen.has(session.cwd)) {
+            continue;
+        }
+        seen.add(session.cwd);
+        cwds.push(session.cwd);
+    }
+    return cwds;
 }

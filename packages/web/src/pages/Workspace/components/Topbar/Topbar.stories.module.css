@@ -1,0 +1,11 @@
+/*
+ * The story frame that gives the top bar a width.
+ *
+ *   .frame
+ */
+.frame {
+    display: flex;
+    inline-size: 48rem;
+    border: var(--border-width) solid var(--color-outline-variant);
+    background-color: var(--color-surface);
+}

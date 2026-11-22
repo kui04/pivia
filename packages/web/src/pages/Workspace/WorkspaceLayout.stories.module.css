@@ -1,0 +1,12 @@
+/*
+ * Story viewport frame for the workspace layout shell.
+ *
+ *   .frame
+ */
+.frame {
+    display: flex;
+    inline-size: 100%;
+    block-size: 38rem;
+    border: var(--border-width) solid var(--color-outline-variant);
+    background-color: var(--color-surface);
+}

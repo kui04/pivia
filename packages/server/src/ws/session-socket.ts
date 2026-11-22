@@ -1,12 +1,12 @@
 import {
     commandIdOf,
     parseSessionId,
-    parseWsClientCommand,
-    parseWsHandshakeQuery,
+    parseSessionWsClientCommand,
+    parseSessionWsHandshakeQuery,
     SESSION_CLOSE_CODE,
-    type ParsedWsHandshakeQuery,
+    type ParsedSessionWsHandshakeQuery,
     type SessionId,
-    type WsClientCommand,
+    type SessionWsClientCommand,
 } from "@pivia/protocol";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 
@@ -38,7 +38,7 @@ export interface SessionSocketRouteOptions {
 }
 
 /** Close a client whose unsent backlog exceeds this, so a stalled mobile link cannot grow memory. */
-const MAX_WS_BUFFERED_BYTES = 4 * 1024 * 1024;
+export const MAX_WS_BUFFERED_BYTES = 4 * 1024 * 1024;
 
 /** `ws` readyState value for an open connection. */
 const WS_READY_STATE_OPEN = 1;
@@ -57,7 +57,7 @@ interface WsSessionQuery {
 
 interface OpenedWsSession {
     readonly handle: ActiveSessionHandle;
-    readonly handshake: ParsedWsHandshakeQuery;
+    readonly handshake: ParsedSessionWsHandshakeQuery;
 }
 
 /** Decode one text frame from the `ws` raw data union without `[object Object]` fallbacks. */
@@ -117,7 +117,7 @@ export function registerSessionSocketRoute(
                     if (sessionId === null) {
                         return sendWsUpgradeError(reply, 400, "invalid_request", "Invalid session id.");
                     }
-                    const parsedQuery = parseWsHandshakeQuery(request.query);
+                    const parsedQuery = parseSessionWsHandshakeQuery(request.query);
                     if (!parsedQuery.ok) {
                         return sendWsUpgradeError(reply, 400, "invalid_request", parsedQuery.message);
                     }
@@ -194,14 +194,14 @@ export function registerSessionSocketRoute(
                 };
 
                 let attachment: SessionAttachment | undefined;
-                const bufferedCommands: WsClientCommand[] = [];
+                const bufferedCommands: SessionWsClientCommand[] = [];
                 let commandChain: Promise<void> = Promise.resolve();
 
                 const sendProtocolError = (code: string, message: string, id?: string): void => {
                     client.send({ type: "error", code, message, ...(id === undefined ? {} : { id }) });
                 };
 
-                const executeCommand = async (command: WsClientCommand): Promise<void> => {
+                const executeCommand = async (command: SessionWsClientCommand): Promise<void> => {
                     const current = attachment;
                     if (current === undefined) {
                         sendProtocolError("internal_error", "Session is not attached.", command.id);
@@ -210,7 +210,7 @@ export function registerSessionSocketRoute(
                     await current.handleCommand(command);
                 };
 
-                const dispatchCommand = (command: WsClientCommand): void => {
+                const dispatchCommand = (command: SessionWsClientCommand): void => {
                     if (command.type === "extension_ui_response") {
                         // UI answers bypass the command chain. A long prompt/compact on the same
                         // socket must not delay the dialog response that unblocks it.
@@ -261,7 +261,7 @@ export function registerSessionSocketRoute(
                         sendProtocolError("invalid_json", "Failed to parse command JSON.");
                         return;
                     }
-                    const command = parseWsClientCommand(parsed);
+                    const command = parseSessionWsClientCommand(parsed);
                     if (command === null) {
                         sendProtocolError("invalid_request", "Invalid command.", commandIdOf(parsed));
                         return;

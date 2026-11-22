@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { realpath, stat } from "node:fs/promises";
+import type { Stats } from "node:fs";
+import { mkdir, realpath, stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 
 import {
@@ -14,9 +15,18 @@ import {
     SessionManager,
 } from "@earendil-works/pi-coding-agent";
 
-import { parseSessionId, SESSION_CLOSE_CODE } from "@pivia/protocol";
+import {
+    assertNever,
+    INITIAL_CATALOG_SEQ,
+    nextCatalogSeq,
+    parseCatalogEpoch,
+    parseSessionId,
+    SESSION_CLOSE_CODE,
+} from "@pivia/protocol";
 import type {
     AssistantMessage,
+    CatalogEpoch,
+    CatalogSeq,
     EntriesVersion,
     ImageContent,
     SessionCloseCode,
@@ -29,14 +39,16 @@ import type {
     SessionRuntimeState,
     SessionStateSnapshot,
     SessionSummary,
+    SessionSummaryPatch,
+    SessionWsClientCommand,
+    SessionWsCommandName,
+    SessionWsEntriesAppendedMessage,
+    SessionWsReplayMessage,
+    SessionWsResponseMessage,
+    SessionWsServerMessage,
+    SessionWsSnapshotMessage,
     ThinkingLevel,
-    WsClientCommand,
-    WsCommandName,
-    WsEntriesAppendedMessage,
-    WsReplayMessage,
-    WsResponseMessage,
-    WsServerMessage,
-    WsSnapshotMessage,
+    WorkspaceWsCatalogEvent,
 } from "@pivia/protocol";
 
 import { SessionUiBridge } from "./extension-ui.ts";
@@ -63,7 +75,13 @@ export interface SessionRegistryLogger {
 }
 
 /** Error codes that HTTP and WebSocket routes map to client-visible responses. */
-export type SessionRegistryErrorCode = "invalid_request" | "not_found";
+export type SessionRegistryErrorCode = "invalid_request" | "not_found" | "directory_not_found";
+
+/** Options for {@link SessionRegistry.createSession}. */
+export interface CreateSessionOptions {
+    /** When true, creates the target working directory recursively if it does not exist. */
+    readonly createDirectory?: boolean | undefined;
+}
 
 /** Raised for request-level failures that the routes translate into protocol errors. */
 export class SessionRegistryError extends Error {
@@ -150,7 +168,7 @@ export type RuntimeFactory = (input: RuntimeFactoryInput) => Promise<ManagedRunt
 /** Transport that receives one session's server messages. */
 export interface SessionClient {
     /** Deliver one message. A backlogged transport must close itself; the close handler detaches it. */
-    send(message: WsServerMessage): void;
+    send(message: SessionWsServerMessage): void;
     /** Optional pre-serialized send path to avoid double `JSON.stringify` after size measurement. */
     sendRaw?(raw: string): void;
     /** Close the transport because the session runtime went away. */
@@ -215,9 +233,15 @@ export interface SessionAttachOptions {
 /** One attached client's command channel. */
 export interface SessionAttachment {
     readonly sessionId: SessionId;
-    handleCommand(command: WsClientCommand): Promise<void>;
+    handleCommand(command: SessionWsClientCommand): Promise<void>;
     detach(): void;
 }
+
+/** Incremental catalog events emitted by {@link SessionRegistry.subscribeCatalog}. */
+export type WorkspaceCatalogEvent = WorkspaceWsCatalogEvent;
+
+/** Listener invoked when a session summary changes or an unflushed session is removed. */
+export type WorkspaceCatalogListener = (event: WorkspaceCatalogEvent) => void;
 
 type ActiveSessionLifecycle =
     | { readonly phase: "starting" }
@@ -243,6 +267,10 @@ interface ActiveSession {
     flushScheduled: boolean;
     liveMessage: AssistantMessage | null;
     diskSizeBytes: number | undefined;
+    readonly createdAtMs: number;
+    readonly hasParent: boolean;
+    firstMessage: string | null;
+    lastSummary: SessionSummary | null;
 }
 
 interface HandshakeFallbackContext {
@@ -250,7 +278,7 @@ interface HandshakeFallbackContext {
     readonly entriesVersion: EntriesVersion;
     readonly entryCount: number;
     readonly state: SessionStateSnapshot;
-    readonly pendingUiRequests: readonly WsSnapshotMessage["pendingUiRequests"][number][];
+    readonly pendingUiRequests: readonly SessionWsSnapshotMessage["pendingUiRequests"][number][];
 }
 
 function toRuntimeState(state: ManagedSessionState): SessionRuntimeState {
@@ -263,46 +291,116 @@ function toRuntimeState(state: ManagedSessionState): SessionRuntimeState {
     return "idle";
 }
 
+function extractUserMessageText(content: string | readonly { type: string; text?: string }[]): string | null {
+    if (typeof content === "string") {
+        return content.length > 0 ? content : null;
+    }
+    const text = content
+        .filter(
+            (block): block is { type: "text"; text: string } => block.type === "text" && typeof block.text === "string",
+        )
+        .map((block) => block.text)
+        .join(" ");
+    return text.length > 0 ? text : null;
+}
+
 /** First user message text, matching the SDK session list placeholder rules. */
 function firstUserMessageText(entries: readonly FileEntry[]): string | null {
     for (const entry of entries) {
         if (entry.type !== "message" || entry.message.role !== "user") {
             continue;
         }
-        const content = entry.message.content;
-        if (typeof content === "string") {
-            if (content.length > 0) {
-                return content;
-            }
-            continue;
-        }
-        const text = content
-            .filter((block) => block.type === "text")
-            .map((block) => block.text)
-            .join(" ");
-        if (text.length > 0) {
+        const text = extractUserMessageText(entry.message.content);
+        if (text !== null) {
             return text;
         }
     }
     return null;
 }
 
+function diffSessionSummary(previous: SessionSummary, next: SessionSummary): SessionSummaryPatch | null {
+    const patch: {
+        name?: string | null;
+        firstMessage?: string;
+        messageCount?: number;
+        modifiedAtMs?: number;
+        runtimeState?: SessionRuntimeState;
+        attachedClients?: number;
+    } = {};
+    let changed = false;
+
+    if (previous.name !== next.name) {
+        patch.name = next.name;
+        changed = true;
+    }
+    if (previous.firstMessage !== next.firstMessage) {
+        patch.firstMessage = next.firstMessage;
+        changed = true;
+    }
+    if (previous.messageCount !== next.messageCount) {
+        patch.messageCount = next.messageCount;
+        changed = true;
+    }
+    if (previous.modifiedAtMs !== next.modifiedAtMs) {
+        patch.modifiedAtMs = next.modifiedAtMs;
+        changed = true;
+    }
+    if (previous.runtimeState !== next.runtimeState) {
+        patch.runtimeState = next.runtimeState;
+        changed = true;
+    }
+    if (previous.attachedClients !== next.attachedClients) {
+        patch.attachedClients = next.attachedClients;
+        changed = true;
+    }
+
+    return changed ? patch : null;
+}
+
 function errorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
 }
 
+function isEnoentError(error: unknown): boolean {
+    return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+}
+
 /** Resolve and validate a working directory for a new session. */
-async function resolveSessionCwd(cwd: string): Promise<string> {
+async function resolveSessionCwd(
+    cwd: string,
+    createDirectory: boolean,
+    logger: SessionRegistryLogger,
+): Promise<string> {
     if (cwd.trim() === "" || !isAbsolute(cwd)) {
         throw new SessionRegistryError("invalid_request", "Session cwd must be an absolute directory path.");
     }
     let realCwd: string;
     try {
         realCwd = await realpath(cwd);
-    } catch {
-        throw new SessionRegistryError("invalid_request", "Session cwd does not exist.");
+    } catch (error) {
+        if (isEnoentError(error)) {
+            if (!createDirectory) {
+                throw new SessionRegistryError("directory_not_found", "Session cwd does not exist.");
+            }
+            try {
+                await mkdir(cwd, { recursive: true });
+                realCwd = await realpath(cwd);
+            } catch (mkdirError) {
+                logger.warn({ err: mkdirError, cwd }, "failed to create session cwd");
+                throw new SessionRegistryError("invalid_request", "Failed to create session cwd.");
+            }
+        } else {
+            logger.warn({ err: error, cwd }, "session cwd is not accessible");
+            throw new SessionRegistryError("invalid_request", "Session cwd is not accessible.");
+        }
     }
-    const stats = await stat(realCwd);
+    let stats: Stats;
+    try {
+        stats = await stat(realCwd);
+    } catch (error) {
+        logger.warn({ err: error, cwd: realCwd }, "failed to stat session cwd");
+        throw new SessionRegistryError("invalid_request", "Session cwd is not accessible.");
+    }
     if (!stats.isDirectory()) {
         throw new SessionRegistryError("invalid_request", "Session cwd is not a directory.");
     }
@@ -329,6 +427,9 @@ export class SessionRegistry {
     private readonly active = new Map<SessionId, ActiveSession>();
     private readonly opening = new Map<SessionId, Promise<ActiveSessionHandle>>();
     private readonly pendingRegistrations = new Set<Promise<unknown>>();
+    private readonly catalogListeners = new Set<WorkspaceCatalogListener>();
+    private readonly catalogEpoch: CatalogEpoch;
+    private catalogSeq: CatalogSeq = INITIAL_CATALOG_SEQ;
     private disposed = false;
 
     constructor(options: SessionRegistryOptions) {
@@ -336,6 +437,11 @@ export class SessionRegistry {
         this.agentDir = options.agentDir ?? getAgentDir();
         this.logger = options.logger ?? createLogger();
         this.nowMs = options.nowMs ?? (() => Date.now());
+        const catalogEpoch = parseCatalogEpoch(randomUUID());
+        if (catalogEpoch === null) {
+            throw new Error("Generated invalid catalog epoch.");
+        }
+        this.catalogEpoch = catalogEpoch;
 
         const idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
         if (!Number.isFinite(idleTimeoutMs) || idleTimeoutMs < 0) {
@@ -429,9 +535,9 @@ export class SessionRegistry {
      * @throws SessionRegistryError with code `"invalid_request"` when `cwd` is not an existing
      * directory with an absolute path.
      */
-    async createSession(cwd: string): Promise<ActiveSessionHandle> {
+    async createSession(cwd: string, options: CreateSessionOptions = {}): Promise<ActiveSessionHandle> {
         this.assertUsable();
-        const registration = this.createSessionInternal(cwd);
+        const registration = this.createSessionInternal(cwd, options.createDirectory === true);
         this.pendingRegistrations.add(registration);
         try {
             return await registration;
@@ -440,8 +546,8 @@ export class SessionRegistry {
         }
     }
 
-    private async createSessionInternal(cwd: string): Promise<ActiveSessionHandle> {
-        const realCwd = await resolveSessionCwd(cwd);
+    private async createSessionInternal(cwd: string, createDirectory: boolean): Promise<ActiveSessionHandle> {
+        const realCwd = await resolveSessionCwd(cwd, createDirectory, this.logger);
         const root = this.catalog.resolveRoot();
         const sessionDir = root.isCustom ? root.dir : defaultProjectSessionDir(root.dir, realCwd);
         const sessionManager = SessionManager.create(realCwd, sessionDir);
@@ -489,6 +595,7 @@ export class SessionRegistry {
         const wasStarting = entry.lifecycle.phase === "starting";
         const closing = Promise.withResolvers<void>();
         entry.lifecycle = { phase: "closing", closePromise: closing.promise };
+        this.emitSessionUpdated(entry);
         void this.closeSessionInternal(entry, wasStarting, options.force === true, closeCode, closeReason).then(
             closing.resolve,
             closing.reject,
@@ -546,11 +653,13 @@ export class SessionRegistry {
             if (graceTimer !== undefined) {
                 clearTimeout(graceTimer);
             }
+            const hadDiskFile = entry.diskSizeBytes !== undefined;
             entry.uiBridge.dispose();
             entry.unsubscribe();
             entry.unsubscribeEntries();
             this.closeClients(entry, closeCode, closeReason);
             this.active.delete(entry.sessionId);
+            void this.emitSessionClosed(entry.sessionId, hadDiskFile);
         }
     }
 
@@ -593,7 +702,25 @@ export class SessionRegistry {
         const mergedIds = new Set(merged.map((summary) => summary.id));
         const missing = active.filter((summary) => !mergedIds.has(summary.id));
         const sessions = [...merged, ...missing].sort((left, right) => right.modifiedAtMs - left.modifiedAtMs);
-        return { sessions, scannedAtMs: disk.scannedAtMs };
+        return {
+            sessions,
+            scannedAtMs: disk.scannedAtMs,
+            catalogEpoch: this.catalogEpoch,
+            catalogSeq: this.catalogSeq,
+        };
+    }
+
+    /** Subscribe to incremental catalog changes emitted by open runtimes. */
+    subscribeCatalog(listener: WorkspaceCatalogListener): () => void {
+        this.catalogListeners.add(listener);
+        let active = true;
+        return () => {
+            if (!active) {
+                return;
+            }
+            active = false;
+            this.catalogListeners.delete(listener);
+        };
     }
 
     /** Prefer live runtime entries over the disk copy so an unflushed new session is readable. */
@@ -639,6 +766,7 @@ export class SessionRegistry {
         entry.clients.add(client);
         this.clearIdleTimer(entry);
         this.sendHandshakeWithSizeGuard(entry, client, state, pendingUiRequests, options);
+        this.emitSessionUpdated(entry);
 
         let attached = true;
         return {
@@ -652,6 +780,7 @@ export class SessionRegistry {
                 }
                 attached = false;
                 entry.clients.delete(client);
+                this.emitSessionUpdated(entry);
                 if (entry.clients.size > 0) {
                     return;
                 }
@@ -677,19 +806,31 @@ export class SessionRegistry {
     }
 
     private async openInternal(id: SessionId): Promise<ActiveSessionHandle> {
-        const resolved = await this.catalog.resolveById(id);
-        if (resolved === null) {
-            throw new SessionRegistryError("not_found", "Session not found.");
+        const resolution = await this.catalog.resolveById(id);
+        switch (resolution.kind) {
+            case "found": {
+                const resolved = resolution.session;
+                const sessionDir = resolved.root.isCustom ? resolved.root.dir : undefined;
+                const sessionManager = SessionManager.open(resolved.realPath, sessionDir);
+                const runtime = await this.runtimeFactory({
+                    cwd: sessionManager.getCwd(),
+                    agentDir: this.agentDir,
+                    sessionManager,
+                    sessionDir,
+                });
+                return this.registerRuntime(id, runtime, resolved.sizeBytes);
+            }
+            case "oversized":
+                this.logger.warn(
+                    { sessionId: id, size: resolution.sizeBytes },
+                    "refused to open an oversized session file",
+                );
+                throw new SessionRegistryError("not_found", "Session not found.");
+            case "missing":
+                throw new SessionRegistryError("not_found", "Session not found.");
+            default:
+                return assertNever(resolution);
         }
-        const sessionDir = resolved.root.isCustom ? resolved.root.dir : undefined;
-        const sessionManager = SessionManager.open(resolved.realPath, sessionDir);
-        const runtime = await this.runtimeFactory({
-            cwd: sessionManager.getCwd(),
-            agentDir: this.agentDir,
-            sessionManager,
-            sessionDir,
-        });
-        return this.registerRuntime(id, runtime, resolved.sizeBytes);
     }
 
     private async registerRuntime(
@@ -719,6 +860,10 @@ export class SessionRegistry {
             },
             nowMs: this.nowMs,
         });
+        const now = this.nowMs();
+        const initialEntries = session.getEntries();
+        const header = initialEntries[0]?.type === "session" ? initialEntries[0] : null;
+        const parsedCreatedAtMs = header === null ? Number.NaN : Date.parse(header.timestamp);
         const entry: ActiveSession = {
             sessionId,
             runtimeId: randomUUID(),
@@ -731,18 +876,25 @@ export class SessionRegistry {
             unsubscribe: () => {},
             unsubscribeEntries: () => {},
             lifecycle: { phase: "starting" },
-            lastActivityMs: this.nowMs(),
+            lastActivityMs: now,
             lastClientDetachMs: undefined,
             idleTimer: undefined,
-            lastBroadcastEntryCount: session.getEntryCount(),
+            lastBroadcastEntryCount: initialEntries.length,
             flushScheduled: false,
             liveMessage: null,
             diskSizeBytes,
+            createdAtMs: Number.isFinite(parsedCreatedAtMs) ? parsedCreatedAtMs : now,
+            hasParent: header?.parentSession !== undefined && header.parentSession.length > 0,
+            firstMessage: firstUserMessageText(initialEntries),
+            lastSummary: null,
         };
+        const initialSummary = this.summarizeEntry(entry);
+        entry.lastSummary = initialSummary;
 
         // The entry is visible while extensions bind so clients can answer session_start dialogs.
         // Commands other than extension_ui_response wait for readyPromise in handleCommand().
         this.active.set(sessionId, entry);
+        this.emitSessionUpserted(entry, initialSummary);
         entry.unsubscribe = session.subscribe((event) => {
             this.handleSessionEvent(entry, event);
         });
@@ -805,6 +957,7 @@ export class SessionRegistry {
             entry.lifecycle = { phase: "open" };
             ready.resolve();
             this.touch(entry);
+            this.emitSessionUpdated(entry);
             if (shutdownRequested) {
                 void this.closeSession(entry.sessionId).catch((error: unknown) => {
                     this.logger.warn(
@@ -828,6 +981,7 @@ export class SessionRegistry {
         entry.unsubscribe();
         entry.unsubscribeEntries();
         entry.uiBridge.dispose();
+        const hadDiskFile = entry.diskSizeBytes !== undefined;
         this.closeClients(entry, SESSION_CLOSE_CODE.internalError, "Session failed to initialize");
         this.active.delete(entry.sessionId);
         try {
@@ -838,6 +992,7 @@ export class SessionRegistry {
                 "failed to dispose runtime after bind failure",
             );
         } finally {
+            void this.emitSessionClosed(entry.sessionId, hadDiskFile);
             closing.resolve();
         }
     }
@@ -865,11 +1020,7 @@ export class SessionRegistry {
 
     private summarizeEntry(entry: ActiveSession): SessionSummary {
         const session = entry.runtime.session;
-        const entries = session.getEntries();
-        const header = entries[0]?.type === "session" ? entries[0] : null;
         const state = session.getState();
-        const createdAtMs = header === null ? Number.NaN : Date.parse(header.timestamp);
-        const hasParent = header?.parentSession !== undefined && header.parentSession.length > 0;
         const runtimeState: SessionRuntimeState =
             entry.lifecycle.phase === "starting"
                 ? "starting"
@@ -881,11 +1032,11 @@ export class SessionRegistry {
             id: entry.sessionId,
             cwd: entry.cwd,
             name: session.getName(),
-            firstMessage: firstUserMessageText(entries) ?? "(no messages)",
+            firstMessage: entry.firstMessage ?? "(no messages)",
             messageCount: state.messageCount,
-            createdAtMs: Number.isFinite(createdAtMs) ? createdAtMs : entry.lastActivityMs,
+            createdAtMs: entry.createdAtMs,
             modifiedAtMs: entry.lastActivityMs,
-            hasParent,
+            hasParent: entry.hasParent,
             runtimeState,
             attachedClients: entry.clients.size,
         };
@@ -900,7 +1051,11 @@ export class SessionRegistry {
         };
     }
 
-    private async handleCommand(entry: ActiveSession, client: SessionClient, command: WsClientCommand): Promise<void> {
+    private async handleCommand(
+        entry: ActiveSession,
+        client: SessionClient,
+        command: SessionWsClientCommand,
+    ): Promise<void> {
         if (command.type === "extension_ui_response") {
             const result = entry.uiBridge.handleResponse(command);
             if (!result.ok && result.reason === "mismatched") {
@@ -1013,6 +1168,7 @@ export class SessionRegistry {
                         return;
                     }
                     entry.runtime.session.setSessionName(name);
+                    this.emitSessionUpdated(entry);
                     this.sendSuccess(client, command.id, "set_session_name");
                     return;
                 }
@@ -1030,8 +1186,13 @@ export class SessionRegistry {
         }
     }
 
-    private sendSuccess(client: SessionClient, id: string | undefined, command: WsCommandName, data?: unknown): void {
-        const message: WsResponseMessage = {
+    private sendSuccess(
+        client: SessionClient,
+        id: string | undefined,
+        command: SessionWsCommandName,
+        data?: unknown,
+    ): void {
+        const message: SessionWsResponseMessage = {
             type: "response",
             command,
             success: true,
@@ -1041,7 +1202,12 @@ export class SessionRegistry {
         this.sendClient(client, message);
     }
 
-    private sendFailure(client: SessionClient, id: string | undefined, command: WsCommandName, error: string): void {
+    private sendFailure(
+        client: SessionClient,
+        id: string | undefined,
+        command: SessionWsCommandName,
+        error: string,
+    ): void {
         this.sendClient(client, {
             type: "response",
             command,
@@ -1055,7 +1221,7 @@ export class SessionRegistry {
         this.sendClient(client, { type: "error", code, message, ...(id === undefined ? {} : { id }) });
     }
 
-    private sendClientRaw(client: SessionClient, raw: string, fallbackMessage: WsServerMessage): void {
+    private sendClientRaw(client: SessionClient, raw: string, fallbackMessage: SessionWsServerMessage): void {
         try {
             if (client.sendRaw !== undefined) {
                 client.sendRaw(raw);
@@ -1091,7 +1257,7 @@ export class SessionRegistry {
     private sendHandshakeOrHttpFallback(
         entry: ActiveSession,
         client: SessionClient,
-        message: WsReplayMessage | WsSnapshotMessage,
+        message: SessionWsReplayMessage | SessionWsSnapshotMessage,
         baseEntryCount: number,
         context: HandshakeFallbackContext,
     ): void {
@@ -1107,7 +1273,7 @@ export class SessionRegistry {
         entry: ActiveSession,
         client: SessionClient,
         state: SessionStateSnapshot,
-        pendingUiRequests: readonly WsSnapshotMessage["pendingUiRequests"][number][],
+        pendingUiRequests: readonly SessionWsSnapshotMessage["pendingUiRequests"][number][],
         options: SessionAttachOptions,
     ): void {
         const entriesVersion = this.catalog.entriesVersion;
@@ -1124,7 +1290,7 @@ export class SessionRegistry {
 
         if (options.runtimeId === entry.runtimeId && replay.kind === "replay") {
             if (options.prefixAnchor === undefined) {
-                const replayMsg: WsReplayMessage = {
+                const replayMsg: SessionWsReplayMessage = {
                     type: "replay",
                     sessionId: entry.sessionId,
                     runtimeId: entry.runtimeId,
@@ -1145,7 +1311,7 @@ export class SessionRegistry {
                     this.sendHttpSnapshot(entry, client, sliced.baseEntryCount, fallback);
                     return;
                 }
-                const replayMsg: WsReplayMessage = {
+                const replayMsg: SessionWsReplayMessage = {
                     type: "replay",
                     sessionId: entry.sessionId,
                     runtimeId: entry.runtimeId,
@@ -1178,7 +1344,7 @@ export class SessionRegistry {
             return;
         }
 
-        const inlineSnapshot: WsSnapshotMessage = {
+        const inlineSnapshot: SessionWsSnapshotMessage = {
             type: "snapshot",
             sessionId: entry.sessionId,
             runtimeId: entry.runtimeId,
@@ -1212,6 +1378,9 @@ export class SessionRegistry {
             const baseEntryCount = entry.lastBroadcastEntryCount;
             const appended = allEntries.slice(baseEntryCount);
             entry.lastBroadcastEntryCount = allEntries.length;
+            if (entry.firstMessage === null && appended.length > 0) {
+                entry.firstMessage = firstUserMessageText(appended);
+            }
             if (appended.length === 0 || entry.clients.size === 0) {
                 return;
             }
@@ -1238,7 +1407,7 @@ export class SessionRegistry {
             return;
         }
 
-        const inlineMsg: WsEntriesAppendedMessage = {
+        const inlineMsg: SessionWsEntriesAppendedMessage = {
             type: "entries_appended",
             sessionId: entry.sessionId,
             entriesVersion,
@@ -1264,7 +1433,7 @@ export class SessionRegistry {
         });
     }
 
-    private sendClient(client: SessionClient, message: WsServerMessage): void {
+    private sendClient(client: SessionClient, message: SessionWsServerMessage): void {
         try {
             client.send(message);
         } catch (error) {
@@ -1282,6 +1451,8 @@ export class SessionRegistry {
         } else if (event.type === "message_end") {
             if (event.message.role === "assistant") {
                 entry.liveMessage = null;
+            } else if (event.message.role === "user" && entry.firstMessage === null) {
+                entry.firstMessage = extractUserMessageText(event.message.content);
             }
         } else if (event.type === "agent_settled") {
             entry.liveMessage = null;
@@ -1304,6 +1475,17 @@ export class SessionRegistry {
             event: wire,
         });
 
+        if (
+            event.type === "agent_start" ||
+            event.type === "agent_end" ||
+            event.type === "agent_settled" ||
+            event.type === "message_end" ||
+            event.type === "compaction_start" ||
+            event.type === "compaction_end"
+        ) {
+            this.emitSessionUpdated(entry);
+        }
+
         if (event.type === "agent_settled" || event.type === "compaction_end") {
             this.touch(entry);
         }
@@ -1317,14 +1499,14 @@ export class SessionRegistry {
         }
     }
 
-    private broadcastById(sessionId: SessionId, message: WsServerMessage): void {
+    private broadcastById(sessionId: SessionId, message: SessionWsServerMessage): void {
         const entry = this.active.get(sessionId);
         if (entry !== undefined) {
             this.broadcastSession(entry, message);
         }
     }
 
-    private broadcastSession(entry: ActiveSession, message: WsServerMessage): void {
+    private broadcastSession(entry: ActiveSession, message: SessionWsServerMessage): void {
         for (const client of [...entry.clients]) {
             this.sendClient(client, message);
         }
@@ -1405,6 +1587,114 @@ export class SessionRegistry {
         }
         clearTimeout(entry.idleTimer);
         entry.idleTimer = undefined;
+    }
+
+    private emitCatalogEvent(event: WorkspaceCatalogEvent): void {
+        for (const listener of [...this.catalogListeners]) {
+            try {
+                listener(event);
+            } catch (error) {
+                this.logger.warn({ err: error }, "workspace catalog listener failed");
+            }
+        }
+    }
+
+    private emitSessionUpserted(entry: ActiveSession, session: SessionSummary): void {
+        if (this.active.get(entry.sessionId) !== entry) {
+            return;
+        }
+        this.catalogSeq = nextCatalogSeq(this.catalogSeq);
+        if (this.catalogListeners.size === 0) {
+            return;
+        }
+        this.emitCatalogEvent({
+            type: "session_upserted",
+            catalogEpoch: this.catalogEpoch,
+            seq: this.catalogSeq,
+            session,
+        });
+    }
+
+    private emitSessionUpdated(entry: ActiveSession): void {
+        if (this.active.get(entry.sessionId) !== entry) {
+            return;
+        }
+        const previous = entry.lastSummary;
+        const next = this.summarizeEntry(entry);
+        entry.lastSummary = next;
+        if (previous === null) {
+            return;
+        }
+        const patch = diffSessionSummary(previous, next);
+        if (patch === null) {
+            return;
+        }
+        this.catalogSeq = nextCatalogSeq(this.catalogSeq);
+        if (this.catalogListeners.size === 0) {
+            return;
+        }
+        this.emitCatalogEvent({
+            type: "session_updated",
+            catalogEpoch: this.catalogEpoch,
+            seq: this.catalogSeq,
+            sessionId: entry.sessionId,
+            patch,
+        });
+    }
+
+    private async emitSessionClosed(sessionId: SessionId, hadDiskFile: boolean): Promise<void> {
+        if (this.disposed) {
+            return;
+        }
+        if (this.catalogListeners.size === 0) {
+            if (!this.active.has(sessionId)) {
+                this.catalogSeq = nextCatalogSeq(this.catalogSeq);
+            }
+            return;
+        }
+        let persisted = hadDiskFile;
+        try {
+            const resolution = await this.catalog.resolveById(sessionId);
+            switch (resolution.kind) {
+                case "found":
+                case "oversized":
+                    persisted = true;
+                    break;
+                case "missing":
+                    persisted = false;
+                    break;
+                default:
+                    assertNever(resolution);
+            }
+        } catch (error) {
+            this.logger.warn({ err: error, sessionId }, "failed to check disk session after runtime close");
+        }
+        if (this.disposed || this.active.has(sessionId)) {
+            return;
+        }
+        this.catalogSeq = nextCatalogSeq(this.catalogSeq);
+        if (this.catalogListeners.size === 0) {
+            return;
+        }
+        if (persisted) {
+            this.emitCatalogEvent({
+                type: "session_updated",
+                catalogEpoch: this.catalogEpoch,
+                seq: this.catalogSeq,
+                sessionId,
+                patch: {
+                    runtimeState: "idle",
+                    attachedClients: 0,
+                },
+            });
+            return;
+        }
+        this.emitCatalogEvent({
+            type: "session_removed",
+            catalogEpoch: this.catalogEpoch,
+            seq: this.catalogSeq,
+            sessionId,
+        });
     }
 
     private closeClients(entry: ActiveSession, code: SessionCloseCode, reason: string): void {

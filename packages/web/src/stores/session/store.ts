@@ -7,8 +7,8 @@ import {
     type SessionId,
     type SessionPrefixAnchor,
     type SessionStateSnapshot,
-    type WsResponseMessage,
-    type WsServerMessage,
+    type SessionWsResponseMessage,
+    type SessionWsServerMessage,
 } from "@pivia/protocol";
 import { create } from "zustand";
 
@@ -64,7 +64,7 @@ export interface SessionStoreActions {
     clearCache: () => void;
     /** Manually retries a failed HTTP entry synchronization (`entriesSync.kind === "error"`). */
     retryEntriesSync: () => void;
-    sendCommand: (command: SessionCommand) => Promise<WsResponseMessage>;
+    sendCommand: (command: SessionCommand) => Promise<SessionWsResponseMessage>;
     sendUiResponse: (response: RpcExtensionUIResponse) => Promise<void>;
 }
 
@@ -362,7 +362,7 @@ export function createSessionStore(options: SessionStoreOptions) {
             }, entriesSyncCooldownMs);
         };
 
-        const applyMessage = (message: WsServerMessage): void => {
+        const applyMessage = (message: SessionWsServerMessage): void => {
             switch (message.type) {
                 case "snapshot":
                     reconnectAttempts = 0;
@@ -482,7 +482,7 @@ export function createSessionStore(options: SessionStoreOptions) {
                     }
                     set((state) => reduceSessionState(state, { type: "open" }));
                 },
-                onMessage: (message: WsServerMessage) => {
+                onMessage: (message: SessionWsServerMessage) => {
                     if (generation !== currentGeneration) {
                         return;
                     }

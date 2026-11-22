@@ -1,38 +1,232 @@
-import { useCallback, useState } from "react";
-import { Outlet, useParams } from "react-router";
+import { parseSessionId, type SessionId } from "@pivia/protocol";
+import { useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
+import { Outlet, useNavigate, useParams } from "react-router";
 
-import { Button } from "@components";
-import { showError } from "@/lib/toast";
-import { useAuthStore, useWorkspaceStore } from "@/stores";
+import { Drawer } from "@components";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { useNow } from "@/hooks/useNow";
+import { copyText } from "@/lib/clipboard";
+import { Log } from "@/lib/log";
+import { showError, showWarning } from "@/lib/toast";
+import { ApiClientError, apiClient as defaultApiClient, type ApiClient } from "@/lib/transport/http";
+import type { SessionSocketConstructor } from "@/lib/transport/session-socket";
+import { useAuthStore as defaultAuthStore, useWorkspaceStore as defaultWorkspaceStore } from "@/stores";
+import { buildWorkspaceModel, collectKnownCwds, selectedSession } from "@/stores/workspace/model";
 
+import {
+    CreateSessionDialog,
+    type CreateSessionResult,
+    type CreateSessionSubmitOptions,
+} from "./components/CreateSessionDialog/CreateSessionDialog";
+import { SettingsDialog, type SettingsAuthAction } from "./components/SettingsDialog/SettingsDialog";
+import { Sidebar } from "./components/Sidebar/Sidebar";
+import { Topbar } from "./components/Topbar/Topbar";
+import { useWorkspaceSync } from "./useWorkspaceSync";
 import styles from "./WorkspaceLayout.module.css";
+
+/** Below this width the sidebar becomes a drawer instead of a persistent column. */
+const NARROW_QUERY = "(max-width: 720px)";
+
+/** Subset of {@link ApiClient} used by {@link WorkspaceLayout}. */
+export type WorkspaceApiClient = Pick<
+    ApiClient,
+    "listSessions" | "getAuthStatus" | "listDirectories" | "createSession" | "closeSession"
+>;
+
+/** Optional dependency injection props used by layout tests and Storybook harnesses. */
+export interface WorkspaceLayoutProps {
+    readonly apiClient?: WorkspaceApiClient | undefined;
+    readonly workspaceStore?: typeof defaultWorkspaceStore | undefined;
+    readonly authStore?: typeof defaultAuthStore | undefined;
+    readonly WebSocket?: SessionSocketConstructor | undefined;
+    readonly minRefreshDurationMs?: number | undefined;
+}
 
 /**
  * The workspace shell.
  *
- * It owns the topbar and renders the routed column through its outlet, so the shell stays mounted
- * while the active session changes. The sidebar, session list and settings dialog arrive in the
- * next workspace step; this shell keeps their place and proves the logout path back to the gate.
+ * Owns the sidebar column or drawer, topbar, settings and create-session dialogs, and live
+ * catalog sync, while rendering the active session column through `<Outlet />` so the shell
+ * never remounts when switching sessions.
  */
-export function WorkspaceLayout() {
-    const { sessionId } = useParams<{ sessionId?: string }>();
-    const authRequired = useAuthStore((state) => state.authRequired);
-    const clearError = useAuthStore((state) => state.clearError);
-    const logout = useAuthStore((state) => state.logout);
+export function WorkspaceLayout(props: WorkspaceLayoutProps = {}): ReactElement {
+    const client = props.apiClient ?? defaultApiClient;
+    const workspaceStore = props.workspaceStore ?? defaultWorkspaceStore;
+    const authStore = props.authStore ?? defaultAuthStore;
+
+    const { sessionId: rawSessionId } = useParams<{ sessionId?: string }>();
+    const navigate = useNavigate();
+    const narrow = useMediaQuery(NARROW_QUERY);
+    const nowMs = useNow();
+
+    const [sidebarOpen, setSidebarOpen] = useState(true);
+    const [drawerOpen, setDrawerOpen] = useState(false);
+    const [settingsOpen, setSettingsOpen] = useState(false);
+    const [createOpen, setCreateOpen] = useState(false);
     const [signingOut, setSigningOut] = useState(false);
+    const [closingIds, setClosingIds] = useState<ReadonlySet<SessionId>>(() => new Set());
+
+    const authRequired = authStore((state) => state.authRequired);
+    const clearAuthError = authStore((state) => state.clearError);
+    const logout = authStore((state) => state.logout);
+
+    const sessions = workspaceStore((state) => state.sessions);
+    const updatedAtMs = workspaceStore((state) => state.updatedAtMs);
+    const sync = workspaceStore((state) => state.sync);
+    const query = workspaceStore((state) => state.query);
+    const selectedId = workspaceStore((state) => state.selectedId);
+    const pins = workspaceStore((state) => state.pins);
+    const collapsed = workspaceStore((state) => state.collapsed);
+    const setQuery = workspaceStore((state) => state.setQuery);
+    const select = workspaceStore((state) => state.select);
+    const togglePinned = workspaceStore((state) => state.togglePinned);
+    const toggleFolder = workspaceStore((state) => state.toggleFolder);
+    const upsertSession = workspaceStore((state) => state.upsertSession);
+
+    const routeSessionId = useMemo(
+        () => (rawSessionId === undefined ? null : parseSessionId(rawSessionId)),
+        [rawSessionId],
+    );
+
+    useEffect(() => {
+        select(routeSessionId);
+    }, [routeSessionId, select]);
+
+    useEffect(() => {
+        if (
+            routeSessionId !== null &&
+            sync.kind === "live" &&
+            !sessions.some((session) => session.id === routeSessionId)
+        ) {
+            select(null);
+            void navigate("/workspace", { replace: true });
+        }
+    }, [navigate, routeSessionId, select, sessions, sync.kind]);
+
+    const handleUnauthorized = useCallback(() => {
+        authStore.getState().markUnauthorized();
+    }, [authStore]);
+
+    const { refresh } = useWorkspaceSync({
+        apiClient: client,
+        workspaceStore,
+        WebSocket: props.WebSocket,
+        minRefreshDurationMs: props.minRefreshDurationMs,
+        onUnauthorized: handleUnauthorized,
+    });
+
+    const model = useMemo(
+        () => buildWorkspaceModel({ sessions, pins, query, selectedId, collapsed }),
+        [collapsed, pins, query, selectedId, sessions],
+    );
+    const current = useMemo(() => selectedSession(sessions, selectedId), [selectedId, sessions]);
+    const knownCwds = useMemo(() => collectKnownCwds(sessions), [sessions]);
+
+    const handleCopySessionId = useCallback((id: SessionId) => {
+        void copyText(id).catch((cause: unknown) => {
+            const message = cause instanceof Error ? cause.message : String(cause);
+            Log.warn(`Cannot copy session ID: ${message}`);
+            showError({
+                id: "session-copy-id",
+                title: "Cannot copy session ID",
+                description: message,
+            });
+        });
+    }, []);
+
+    const handleSelect = useCallback(
+        (id: SessionId) => {
+            select(id);
+            void navigate(`/workspace/${encodeURIComponent(id)}`);
+            if (narrow) {
+                setDrawerOpen(false);
+            }
+        },
+        [narrow, navigate, select],
+    );
+
+    const handleCreateSession = useCallback(
+        async (cwd: string, options?: CreateSessionSubmitOptions): Promise<CreateSessionResult> => {
+            try {
+                const response = await client.createSession(cwd, options);
+                upsertSession(response.session);
+                select(response.session.id);
+                void navigate(`/workspace/${encodeURIComponent(response.session.id)}`);
+                if (narrow) {
+                    setDrawerOpen(false);
+                }
+                return { ok: true, session: response.session };
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                if (error instanceof ApiClientError && error.code === "directory_not_found") {
+                    return { ok: false, code: "directory_not_found", message };
+                }
+                return { ok: false, code: "error", message };
+            }
+        },
+        [client, narrow, navigate, select, upsertSession],
+    );
+
+    const handleListDirectories = useCallback((path?: string) => client.listDirectories(path), [client]);
+
+    const handleCloseSession = useCallback(
+        async (id: SessionId) => {
+            if (closingIds.has(id)) {
+                return;
+            }
+            setClosingIds((prev) => new Set(prev).add(id));
+            try {
+                const response = await client.closeSession(id);
+                if (!response.closed) {
+                    showWarning({
+                        id: `session-close-idle-${id}`,
+                        title: "Session is not running",
+                        description: "This session does not have an active runtime to close.",
+                    });
+                    return;
+                }
+                if (id === routeSessionId) {
+                    select(null);
+                    void navigate("/workspace", { replace: true });
+                }
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                Log.warn(`Cannot close session ${id}: ${message}`);
+                showError({
+                    id: `session-close-${id}`,
+                    title: "Cannot close session",
+                    description: message,
+                });
+            } finally {
+                setClosingIds((prev) => {
+                    const next = new Set(prev);
+                    next.delete(id);
+                    return next;
+                });
+            }
+        },
+        [client, closingIds, navigate, routeSessionId, select],
+    );
+
+    const handleCloseSessionClick = useCallback(
+        (id: SessionId) => {
+            void handleCloseSession(id);
+        },
+        [handleCloseSession],
+    );
 
     const handleSignOut = useCallback(async () => {
         if (signingOut) {
             return;
         }
         setSigningOut(true);
-        clearError();
+        clearAuthError();
         await logout();
 
-        const auth = useAuthStore.getState();
+        const auth = authStore.getState();
         if (auth.phase === "unauthenticated") {
-            useWorkspaceStore.getState().reset();
-            // AppLayout replaces this shell with the gate on the same state change.
+            workspaceStore.getState().reset();
+            // AppLayout replaces this shell with AuthGate on the same state change.
             return;
         }
 
@@ -44,30 +238,98 @@ export function WorkspaceLayout() {
                 description: auth.error,
             });
         }
-    }, [clearError, logout, signingOut]);
+    }, [authStore, clearAuthError, logout, signingOut, workspaceStore]);
+
+    const authAction: SettingsAuthAction = authRequired
+        ? {
+              kind: "sign-out",
+              pending: signingOut,
+              onSignOut: () => {
+                  void handleSignOut();
+              },
+          }
+        : { kind: "none" };
+
+    const origin = typeof globalThis.location?.origin === "string" ? globalThis.location.origin : "Single host";
+
+    const sidebar = (
+        <Sidebar
+            model={model}
+            sync={sync}
+            query={query}
+            nowMs={nowMs}
+            closingIds={closingIds}
+            onQueryChange={setQuery}
+            onRefresh={refresh}
+            onNewSession={() => {
+                if (narrow) {
+                    setDrawerOpen(false);
+                }
+                setCreateOpen(true);
+            }}
+            onOpenSettings={() => {
+                setSettingsOpen(true);
+            }}
+            onSelect={handleSelect}
+            onTogglePinned={togglePinned}
+            onToggleFolder={toggleFolder}
+            onCopySessionId={handleCopySessionId}
+            onCloseSession={handleCloseSessionClick}
+        />
+    );
 
     return (
         <div className={styles.window}>
-            <header className={styles.topbar}>
-                <span className={styles.context}>
-                    {sessionId === undefined ? "No session selected" : `Session ${sessionId}`}
-                </span>
-                {authRequired ? (
-                    <Button
-                        type="button"
-                        variant="secondary"
-                        disabled={signingOut}
-                        onClick={() => {
-                            void handleSignOut();
-                        }}
-                    >
-                        {signingOut ? "Signing out..." : "Sign out"}
-                    </Button>
-                ) : null}
-            </header>
-            <div className={styles.body}>
+            {narrow ? (
+                <Drawer open={drawerOpen} onOpenChange={setDrawerOpen} side="left" label="Sessions">
+                    {sidebar}
+                </Drawer>
+            ) : (
+                <aside
+                    className={styles.sidebar}
+                    data-open={sidebarOpen}
+                    aria-label="Sessions"
+                    aria-hidden={sidebarOpen ? undefined : true}
+                    inert={!sidebarOpen}
+                >
+                    {sidebar}
+                </aside>
+            )}
+            <div className={styles.column}>
+                <Topbar
+                    session={current}
+                    sidebarOpen={narrow ? drawerOpen : sidebarOpen}
+                    closing={current !== null && closingIds.has(current.id)}
+                    onToggleSidebar={() => {
+                        if (narrow) {
+                            setDrawerOpen((open) => !open);
+                        } else {
+                            setSidebarOpen((open) => !open);
+                        }
+                    }}
+                    onCopySessionId={handleCopySessionId}
+                    onCloseSession={handleCloseSessionClick}
+                />
                 <Outlet />
             </div>
+            <SettingsDialog
+                open={settingsOpen}
+                onOpenChange={setSettingsOpen}
+                origin={origin}
+                sessionCount={model.total}
+                updatedAtMs={updatedAtMs}
+                sync={sync}
+                onRefresh={refresh}
+                authAction={authAction}
+            />
+            <CreateSessionDialog
+                open={createOpen}
+                onOpenChange={setCreateOpen}
+                knownCwds={knownCwds}
+                narrow={narrow}
+                onListDirectories={handleListDirectories}
+                onCreate={handleCreateSession}
+            />
         </div>
     );
 }

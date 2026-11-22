@@ -1,17 +1,29 @@
 export { assertNever, isRecord } from "./primitives.ts";
 export {
+    INITIAL_CATALOG_SEQ,
+    nextCatalogSeq,
+    parseCatalogEpoch,
+    parseCatalogSeq,
+    type CatalogCursor,
+    type CatalogEpoch,
+    type CatalogSeq,
+} from "./catalog.ts";
+export {
     parseAuthLoginResponse,
     parseAuthLogoutResponse,
     parseAuthStatusResponse,
     parseCloseSessionResponse,
     parseCreateSessionResponse,
+    parseDirectoryListResponse,
     parseHealthResponse,
     parseSessionDetailResponse,
     parseSessionListResponse,
     parseSessionModelInfo,
     parseSessionStateSnapshot,
     parseSessionSummary,
-    parseWsServerMessage,
+    parseSessionSummaryPatch,
+    parseSessionWsServerMessage,
+    parseWorkspaceWsServerMessage,
     isFileEntryRecord,
     type JsonDecoder,
 } from "./server-messages.ts";
@@ -27,8 +39,8 @@ export {
     isThinkingLevel,
     parseAfterSeq,
     parseExtensionUiResponse,
-    parseWsClientCommand,
-    parseWsHandshakeQuery,
+    parseSessionWsClientCommand,
+    parseSessionWsHandshakeQuery,
     type ParsedAfterSeq,
-    type ParsedWsHandshakeQuery,
+    type ParsedSessionWsHandshakeQuery,
 } from "./ws.ts";

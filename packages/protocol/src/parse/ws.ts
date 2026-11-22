@@ -1,10 +1,9 @@
-import type {
-    ImageContent,
-    RpcExtensionUIResponse,
-    SessionPrefixAnchor,
-    ThinkingLevel,
-    WsClientCommand,
-} from "../index.ts";
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { ImageContent } from "@earendil-works/pi-ai";
+import type { RpcExtensionUIResponse } from "@earendil-works/pi-coding-agent";
+
+import type { SessionPrefixAnchor } from "../http.ts";
+import type { SessionWsClientCommand } from "../session-ws.ts";
 import { isRecord } from "./primitives.ts";
 import { parseSessionPrefixAnchor } from "./session.ts";
 
@@ -72,7 +71,7 @@ export function parseExtensionUiResponse(value: unknown): RpcExtensionUIResponse
  * Returns `null` for unknown types, missing fields, and values that do not match the protocol.
  * Extra fields are ignored so older clients keep working after the server adds optional fields.
  */
-export function parseWsClientCommand(value: unknown): WsClientCommand | null {
+export function parseSessionWsClientCommand(value: unknown): SessionWsClientCommand | null {
     if (!isRecord(value) || typeof value.type !== "string") {
         return null;
     }
@@ -180,7 +179,7 @@ export function parseAfterSeq(value: unknown): ParsedAfterSeq {
 }
 
 /** Validated WebSocket handshake anchors parsed at the upgrade boundary. */
-export interface ParsedWsHandshakeQuery {
+export interface ParsedSessionWsHandshakeQuery {
     readonly afterSeq?: number | undefined;
     readonly runtimeId?: string | undefined;
     readonly prefixAnchor?: SessionPrefixAnchor | undefined;
@@ -193,9 +192,11 @@ export interface ParsedWsHandshakeQuery {
  * while malformed or partial cache hints (`runtimeId`, `entriesVersion`, `afterCount`,
  * `afterEntryId`) gracefully degrade to `undefined` so stale clients fall back to Tier 3.
  */
-export function parseWsHandshakeQuery(
+export function parseSessionWsHandshakeQuery(
     query: unknown,
-): { readonly ok: true; readonly value: ParsedWsHandshakeQuery } | { readonly ok: false; readonly message: string } {
+):
+    | { readonly ok: true; readonly value: ParsedSessionWsHandshakeQuery }
+    | { readonly ok: false; readonly message: string } {
     if (!isRecord(query)) {
         return { ok: true, value: {} };
     }

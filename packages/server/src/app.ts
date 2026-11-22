@@ -7,12 +7,14 @@ import type { HealthResponse } from "@pivia/protocol";
 
 import { registerAuthRoutes } from "./auth/routes.ts";
 import { AuthService, type AuthServiceOptions } from "./auth/service.ts";
+import { registerFsRoutes } from "./fs/routes.ts";
 import { sendApiError } from "./http/errors.ts";
 import { createLogger } from "./logger.ts";
 import { SessionCatalog } from "./sessions/catalog.ts";
 import { registerSessionRoutes } from "./sessions/routes.ts";
 import { SessionRegistry } from "./sessions/runtime.ts";
 import { MAX_WS_PAYLOAD_BYTES, registerSessionSocketRoute } from "./ws/session-socket.ts";
+import { registerWorkspaceSocketRoute } from "./ws/workspace-socket.ts";
 
 /** Options for {@link buildApp}. */
 export interface BuildAppOptions {
@@ -105,8 +107,12 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     });
 
     registerAuthRoutes(app, authService);
+    registerFsRoutes(app);
     registerSessionRoutes(app, sessionRegistry);
     registerSessionSocketRoute(app, sessionRegistry, {
+        ...(options.wsHeartbeatIntervalMs === undefined ? {} : { heartbeatIntervalMs: options.wsHeartbeatIntervalMs }),
+    });
+    registerWorkspaceSocketRoute(app, sessionRegistry, {
         ...(options.wsHeartbeatIntervalMs === undefined ? {} : { heartbeatIntervalMs: options.wsHeartbeatIntervalMs }),
     });
 
