@@ -1,53 +1,23 @@
-import {
-    parseCatalogEpoch,
-    parseCatalogSeq,
-    parseSessionId,
-    type CatalogEpoch,
-    type CatalogSeq,
-    type SessionId,
-    type SessionSummary,
-} from "@pivia/protocol";
+import { parseSessionId, type SessionId, type SessionSummary } from "@pivia/protocol";
 import { describe, expect, it } from "vitest";
 
 import {
-    applyCatalogEvent,
     buildWorkspaceModel,
-    canApplyCatalogEvent,
-    canApplyCatalogSnapshot,
     collectKnownCwds,
     compareSessions,
+    createCatalogSyncReducer,
     folderLabel,
     formatRelativeAge,
-    mergeRefreshSnapshot,
-    patchSession,
-    removeSession,
     selectedSession,
     sessionRowStatus,
     sessionTitle,
     sortSessions,
-    upsertSession,
 } from "./model";
 
 function sid(raw: string): SessionId {
     const parsed = parseSessionId(raw);
     if (parsed === null) {
         throw new Error(`Invalid test session id: ${raw}`);
-    }
-    return parsed;
-}
-
-function epoch(raw: string): CatalogEpoch {
-    const parsed = parseCatalogEpoch(raw);
-    if (parsed === null) {
-        throw new Error(`Invalid test catalog epoch: ${raw}`);
-    }
-    return parsed;
-}
-
-function seq(raw: number): CatalogSeq {
-    const parsed = parseCatalogSeq(raw);
-    if (parsed === null) {
-        throw new Error(`Invalid test catalog seq: ${raw}`);
     }
     return parsed;
 }
@@ -129,101 +99,41 @@ describe("session list helpers", () => {
         expect(compareSessions(newer, older)).toBeLessThan(0);
     });
 
-    it("upserts by id without reordering unrelated sessions", () => {
-        const one = summary("one", { name: "One" });
-        const two = summary("two", { name: "Two" });
-        const replacement = summary("one", { name: "Renamed" });
-
-        expect(upsertSession([one, two], replacement)).toEqual([replacement, two]);
-        expect(upsertSession([one], summary("three"))).toEqual([one, summary("three")]);
-        const unchanged = [one, two];
-        expect(upsertSession(unchanged, { ...one })).toBe(unchanged);
-    });
-
-    it("patches mutable session fields and preserves array identity on no-op or missing id", () => {
-        const one = summary("one", { name: "One", firstMessage: "initial", runtimeState: "starting" });
-        const two = summary("two", { name: "Two" });
-        const list = [one, two];
-
-        const patched = patchSession(list, sid("one"), { runtimeState: "idle", attachedClients: 1 });
-        expect(patched).toEqual([{ ...one, runtimeState: "idle", attachedClients: 1 }, two]);
-
-        expect(patchSession(list, sid("one"), { runtimeState: "starting" })).toBe(list);
-        expect(patchSession(list, sid("missing"), { runtimeState: "idle" })).toBe(list);
-    });
-
-    it("removes a session by id", () => {
-        expect(removeSession([summary("a"), summary("b")], sid("a")).map((session) => session.id)).toEqual(["b"]);
-        expect(removeSession([summary("a")], sid("missing"))).toHaveLength(1);
-    });
-
-    it("gates catalog snapshots and events by epoch and monotonic seq", () => {
-        const e1 = epoch("e1");
-        const e2 = epoch("e2");
-        expect(canApplyCatalogSnapshot(null, { epoch: e1, seq: seq(0) })).toBe(true);
-        expect(canApplyCatalogSnapshot({ epoch: e1, seq: seq(5) }, { epoch: e1, seq: seq(4) })).toBe(false);
-        expect(canApplyCatalogSnapshot({ epoch: e1, seq: seq(5) }, { epoch: e1, seq: seq(5) })).toBe(true);
-        expect(canApplyCatalogSnapshot({ epoch: e1, seq: seq(5) }, { epoch: e2, seq: seq(0) })).toBe(true);
-
-        expect(canApplyCatalogEvent(null, { epoch: e1, seq: seq(1) })).toBe(true);
-        expect(canApplyCatalogEvent({ epoch: e1, seq: seq(5) }, { epoch: e1, seq: seq(5) })).toBe(false);
-        expect(canApplyCatalogEvent({ epoch: e1, seq: seq(5) }, { epoch: e1, seq: seq(6) })).toBe(true);
-        expect(canApplyCatalogEvent({ epoch: e1, seq: seq(5) }, { epoch: e2, seq: seq(6) })).toBe(false);
-    });
-
-    it("applies catalog events and folds buffered refresh updates after snapshot seq", () => {
-        const e1 = epoch("e1");
-        const e2 = epoch("e2");
+    it("applies catalog deltas and maintains reference stability in createCatalogSyncReducer", () => {
         const one = summary("one", { runtimeState: "idle" });
         const two = summary("two", { runtimeState: "starting" });
 
-        const afterUpsert = applyCatalogEvent([one], {
-            type: "session_upserted",
-            catalogEpoch: e1,
-            seq: seq(1),
-            session: two,
-        });
-        expect(afterUpsert).toEqual([one, two]);
+        const reducer = createCatalogSyncReducer();
+        const afterSnap = reducer.applySnapshot(
+            { sessions: [], updatedAtMs: null },
+            { sessions: [one], updatedAtMs: 5_000 },
+        );
+        expect(afterSnap).toEqual({ sessions: [one], updatedAtMs: 5_000 });
 
-        const merged = mergeRefreshSnapshot({ sessions: [one], cursor: { epoch: e1, seq: seq(10) } }, [
-            // Stale seq <= 10 and foreign-epoch events must be skipped.
-            {
-                type: "session_updated",
-                catalogEpoch: e1,
-                seq: seq(10),
-                sessionId: sid("one"),
-                patch: { runtimeState: "closing" },
-            },
-            {
-                type: "session_updated",
-                catalogEpoch: e2,
-                seq: seq(11),
-                sessionId: sid("one"),
-                patch: { runtimeState: "closing" },
-            },
-            // Newer events in the same epoch fold in order and advance the resulting cursor.
-            {
-                type: "session_upserted",
-                catalogEpoch: e1,
-                seq: seq(11),
-                session: two,
-            },
-            {
-                type: "session_updated",
-                catalogEpoch: e1,
-                seq: seq(12),
-                sessionId: sid("one"),
-                patch: { runtimeState: "streaming", attachedClients: 1 },
-            },
-            {
-                type: "session_removed",
-                catalogEpoch: e1,
-                seq: seq(13),
-                sessionId: sid("two"),
-            },
-        ]);
-        expect(merged.cursor).toEqual({ epoch: e1, seq: seq(13) });
-        expect(merged.sessions).toEqual([{ ...one, runtimeState: "streaming", attachedClients: 1 }]);
+        const afterSameUpsert = reducer.applyDelta(afterSnap, { op: "upsert", item: { ...one } });
+        expect(afterSameUpsert).toBe(afterSnap);
+
+        const afterTwo = reducer.applyDelta(afterSnap, { op: "upsert", item: two });
+        const afterNoopPatch = reducer.applyDelta(afterTwo, {
+            op: "patch",
+            id: sid("one"),
+            patch: { runtimeState: "idle" },
+        });
+        expect(afterNoopPatch).toBe(afterTwo);
+
+        const afterPatch = reducer.applyDelta(afterTwo, {
+            op: "patch",
+            id: sid("one"),
+            patch: { runtimeState: "streaming", attachedClients: 1 },
+        });
+        const afterRemove = reducer.applyDelta(afterPatch, {
+            op: "remove",
+            id: sid("two"),
+        });
+        expect(afterRemove).toEqual({
+            sessions: [{ ...one, runtimeState: "streaming", attachedClients: 1 }],
+            updatedAtMs: 5_000,
+        });
     });
 });
 

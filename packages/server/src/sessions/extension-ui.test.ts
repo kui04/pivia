@@ -1,23 +1,23 @@
 import type { RpcExtensionUIResponse } from "@earendil-works/pi-coding-agent";
 
-import { parseSessionId, type SessionWsServerMessage } from "@pivia/protocol";
+import { parseSessionId } from "@pivia/protocol";
 import { describe, expect, it } from "vitest";
 
-import { SessionUiBridge } from "./extension-ui.ts";
+import { SessionUiBridge, type SessionUiDelta } from "./extension-ui.ts";
 
-function createBridge(): { bridge: SessionUiBridge; messages: SessionWsServerMessage[] } {
-    const messages: SessionWsServerMessage[] = [];
+function createBridge(): { bridge: SessionUiBridge; deltas: SessionUiDelta[] } {
+    const deltas: SessionUiDelta[] = [];
     const sessionId = parseSessionId("session-1");
     if (sessionId === null) {
         throw new Error("invalid test session id");
     }
-    const bridge = new SessionUiBridge(sessionId, (message) => messages.push(message), { nowMs: () => 1_000 });
-    return { bridge, messages };
+    const bridge = new SessionUiBridge(sessionId, (delta) => deltas.push(delta), { nowMs: () => 1_000 });
+    return { bridge, deltas };
 }
 
 describe("SessionUiBridge", () => {
     it("keeps a mismatched response pending and accepts the matching payload", async () => {
-        const { bridge, messages } = createBridge();
+        const { bridge, deltas } = createBridge();
         const confirmed = bridge.context.confirm("Clear session?", "All messages will be lost.");
         const request = bridge.pendingRequests()[0];
         if (request === undefined) {
@@ -31,7 +31,7 @@ describe("SessionUiBridge", () => {
         };
         expect(bridge.handleResponse(mismatched)).toEqual({ ok: false, reason: "mismatched" });
         expect(bridge.hasPending()).toBe(true);
-        expect(messages.some((message) => message.type === "extension_ui_resolved")).toBe(false);
+        expect(deltas.some((delta) => delta.kind === "ui_resolved")).toBe(false);
 
         expect(bridge.handleResponse({ type: "extension_ui_response", id: request.id, confirmed: true })).toEqual({
             ok: true,
@@ -49,7 +49,7 @@ describe("SessionUiBridge", () => {
     });
 
     it("resolves defaults and stops emitting after dispose", async () => {
-        const { bridge, messages } = createBridge();
+        const { bridge, deltas } = createBridge();
         const selected = bridge.context.select("Pick one", ["yes", "no"]);
         expect(bridge.hasPending()).toBe(true);
 
@@ -58,11 +58,11 @@ describe("SessionUiBridge", () => {
         expect(bridge.hasPending()).toBe(false);
         expect(bridge.pendingRequests()).toEqual([]);
 
-        const messageCount = messages.length;
+        const deltaCount = deltas.length;
         const confirmed = bridge.context.confirm("After dispose", "Must resolve immediately.");
         await expect(confirmed).resolves.toBe(false);
         expect(bridge.hasPending()).toBe(false);
-        expect(messages).toHaveLength(messageCount);
+        expect(deltas).toHaveLength(deltaCount);
         expect(bridge.handleResponse({ type: "extension_ui_response", id: "unknown", cancelled: true })).toEqual({
             ok: false,
             reason: "unknown",
@@ -70,7 +70,7 @@ describe("SessionUiBridge", () => {
     });
 
     it("cancelPending resolves defaults and notifies clients", async () => {
-        const { bridge, messages } = createBridge();
+        const { bridge, deltas } = createBridge();
         const selected = bridge.context.select("Pick one", ["yes", "no"]);
         const request = bridge.pendingRequests()[0];
         if (request === undefined) {
@@ -80,9 +80,8 @@ describe("SessionUiBridge", () => {
         bridge.cancelPending();
         await expect(selected).resolves.toBeUndefined();
         expect(bridge.hasPending()).toBe(false);
-        expect(messages).toContainEqual({
-            type: "extension_ui_resolved",
-            sessionId: "session-1",
+        expect(deltas).toContainEqual({
+            kind: "ui_resolved",
             requestId: request.id,
         });
     });

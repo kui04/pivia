@@ -131,10 +131,10 @@ in step with the file: a new nested rule updates the sketch in the same change.
 ## Workspace sync
 
 - `useWorkspaceSync` hydrates the stale-while-revalidate catalog from IndexedDB on mount, subscribes to
-  `/ws/workspace` for live `catalog_snapshot`, `session_upserted`, `session_updated` and `session_removed` updates, reconnects with
-  exponential backoff (and immediately when the document becomes visible again), probes `/api/auth/status` after
-  repeated close failures so an expired session drops to the auth gate, and provides a single-flight manual
-  refresh via `GET /api/sessions`.
+  `/ws/workspace` for `SyncFrame<"catalog", CatalogSnapshot, CatalogDelta>` updates (`sync:snapshot`, `sync:replay`,
+  `sync:delta`, `sync:resync`), reconnects with exponential backoff (and immediately when the document becomes visible
+  again), probes `/api/auth/status` after repeated close failures so an expired session drops to the auth gate, and
+  provides a single-flight manual refresh via `GET /api/sessions`.
 - `CatalogSyncPhase` is `idle`, `syncing`, `live`, `reconnecting`, or `failed`. While `syncing`, the sidebar shows the
   loading skeleton and disables the refresh button with `focusableWhenDisabled` so focus is preserved. While
   `reconnecting` or `failed`, the last known rows stay visible under a status banner.

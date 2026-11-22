@@ -17,51 +17,54 @@ import {
 
 import {
     assertNever,
-    INITIAL_CATALOG_SEQ,
-    nextCatalogSeq,
-    parseCatalogEpoch,
     parseSessionId,
+    parseSessionWsServerMessage,
+    parseSyncEpoch,
     SESSION_CLOSE_CODE,
 } from "@pivia/protocol";
 import type {
     AssistantMessage,
-    CatalogEpoch,
-    CatalogSeq,
-    EntriesVersion,
+    CatalogDelta,
+    CatalogSnapshot,
     ImageContent,
     SessionCloseCode,
+    SessionDelta,
     SessionDetailResponse,
     SessionId,
     SessionListResponse,
     SessionModelInfo,
     SessionPrefixAnchor,
     SessionQueuedInputDisposition,
+    SessionRpcCommand,
+    SessionRpcServerMessage,
     SessionRuntimeState,
+    SessionSnapshot,
     SessionStateSnapshot,
     SessionSummary,
     SessionSummaryPatch,
-    SessionWsClientCommand,
+    SessionWsClientMessage,
     SessionWsCommandName,
-    SessionWsEntriesAppendedMessage,
-    SessionWsReplayMessage,
-    SessionWsResponseMessage,
     SessionWsServerMessage,
-    SessionWsSnapshotMessage,
+    SyncHandshake,
     ThinkingLevel,
-    WorkspaceWsCatalogEvent,
 } from "@pivia/protocol";
 
 import { SessionUiBridge } from "./extension-ui.ts";
 import { createLogger } from "../logger.ts";
+import {
+    MAX_WS_INLINE_ENTRIES_BYTES,
+    ReplayRingBuffer,
+    shouldOffloadPayload,
+    SyncStreamHost,
+    type SyncSnapshotResult,
+    type SyncTransportClient,
+} from "../sync/index.ts";
 import { createPiRuntimeFactory } from "./pi-runtime.ts";
-import { SessionEventBuffer, toWireSessionEvent } from "./events.ts";
+import { toWireSessionEvent } from "./events.ts";
 import { defaultProjectSessionDir, sliceEntriesForAnchor, type SessionCatalog } from "./catalog.ts";
 
-/** Maximum inline WebSocket payload size before offloading entries to compressed HTTP. */
-export const MAX_WS_INLINE_ENTRIES_BYTES = 512 * 1024;
-
-/** Short-circuit threshold on entry count to avoid serializing huge sessions over WS. */
-export const MAX_WS_INLINE_ENTRY_COUNT = 1000;
+/** Maximum retries for `list()` when a concurrent session close changes `closeVersion` mid-scan. */
+const MAX_LIST_RETRIES = 2;
 
 /** How long an open runtime without clients is kept before it is reclaimed. */
 const DEFAULT_IDLE_TIMEOUT_MS = 15 * 60 * 1000;
@@ -221,27 +224,14 @@ export interface CloseSessionOptions {
 }
 
 /** Options for {@link SessionRegistry.attach}. */
-export interface SessionAttachOptions {
-    /** Replay events after this sequence; omit or send an out-of-range value to skip Tier 1. */
-    readonly afterSeq?: number | undefined;
-    /** Runtime id held by the client; must match the active runtime for Tier 1 replay. */
-    readonly runtimeId?: string | undefined;
-    /** Client's persisted prefix anchor for Tier 1 append slicing and Tier 2 patch matching. */
-    readonly prefixAnchor?: SessionPrefixAnchor | undefined;
-}
+export type SessionAttachOptions = SyncHandshake<"session", SessionPrefixAnchor>;
 
-/** One attached client's command channel. */
+/** One attached client's RPC command channel. */
 export interface SessionAttachment {
     readonly sessionId: SessionId;
-    handleCommand(command: SessionWsClientCommand): Promise<void>;
+    handleMessage(message: SessionWsClientMessage): Promise<void>;
     detach(): void;
 }
-
-/** Incremental catalog events emitted by {@link SessionRegistry.subscribeCatalog}. */
-export type WorkspaceCatalogEvent = WorkspaceWsCatalogEvent;
-
-/** Listener invoked when a session summary changes or an unflushed session is removed. */
-export type WorkspaceCatalogListener = (event: WorkspaceCatalogEvent) => void;
 
 type ActiveSessionLifecycle =
     | { readonly phase: "starting" }
@@ -250,10 +240,9 @@ type ActiveSessionLifecycle =
 
 interface ActiveSession {
     readonly sessionId: SessionId;
-    readonly runtimeId: string;
     readonly cwd: string;
     readonly runtime: ManagedRuntime;
-    readonly buffer: SessionEventBuffer;
+    readonly syncHost: SyncStreamHost<"session", SessionSnapshot, SessionDelta, SessionPrefixAnchor>;
     readonly clients: Set<SessionClient>;
     readonly uiBridge: SessionUiBridge;
     readonly readyPromise: Promise<void>;
@@ -264,6 +253,12 @@ interface ActiveSession {
     lastClientDetachMs: number | undefined;
     idleTimer: NodeJS.Timeout | undefined;
     lastBroadcastEntryCount: number;
+    lastTrackedState: {
+        messageCount: number;
+        steeringMode: SessionStateSnapshot["steeringMode"];
+        followUpMode: SessionStateSnapshot["followUpMode"];
+        autoCompactionEnabled: boolean;
+    };
     flushScheduled: boolean;
     liveMessage: AssistantMessage | null;
     diskSizeBytes: number | undefined;
@@ -271,14 +266,6 @@ interface ActiveSession {
     readonly hasParent: boolean;
     firstMessage: string | null;
     lastSummary: SessionSummary | null;
-}
-
-interface HandshakeFallbackContext {
-    readonly seq: number;
-    readonly entriesVersion: EntriesVersion;
-    readonly entryCount: number;
-    readonly state: SessionStateSnapshot;
-    readonly pendingUiRequests: readonly SessionWsSnapshotMessage["pendingUiRequests"][number][];
 }
 
 function toRuntimeState(state: ManagedSessionState): SessionRuntimeState {
@@ -427,9 +414,9 @@ export class SessionRegistry {
     private readonly active = new Map<SessionId, ActiveSession>();
     private readonly opening = new Map<SessionId, Promise<ActiveSessionHandle>>();
     private readonly pendingRegistrations = new Set<Promise<unknown>>();
-    private readonly catalogListeners = new Set<WorkspaceCatalogListener>();
-    private readonly catalogEpoch: CatalogEpoch;
-    private catalogSeq: CatalogSeq = INITIAL_CATALOG_SEQ;
+    private readonly catalogBuffer: ReplayRingBuffer<"catalog", CatalogDelta>;
+    private readonly catalogHost: SyncStreamHost<"catalog", CatalogSnapshot, CatalogDelta>;
+    private closeVersion = 0;
     private disposed = false;
 
     constructor(options: SessionRegistryOptions) {
@@ -437,11 +424,16 @@ export class SessionRegistry {
         this.agentDir = options.agentDir ?? getAgentDir();
         this.logger = options.logger ?? createLogger();
         this.nowMs = options.nowMs ?? (() => Date.now());
-        const catalogEpoch = parseCatalogEpoch(randomUUID());
+        const catalogEpoch = parseSyncEpoch<"catalog">(randomUUID());
         if (catalogEpoch === null) {
             throw new Error("Generated invalid catalog epoch.");
         }
-        this.catalogEpoch = catalogEpoch;
+        this.catalogBuffer = new ReplayRingBuffer<"catalog", CatalogDelta>({ epoch: catalogEpoch });
+        this.catalogHost = new SyncStreamHost<"catalog", CatalogSnapshot, CatalogDelta>({
+            buffer: this.catalogBuffer,
+            getSnapshot: () => this.getCatalogSnapshot(),
+            logger: this.logger,
+        });
 
         const idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
         if (!Number.isFinite(idleTimeoutMs) || idleTimeoutMs < 0) {
@@ -503,7 +495,11 @@ export class SessionRegistry {
                 if (active.lifecycle.phase !== "closing") {
                     return this.createHandle(active);
                 }
-                await active.lifecycle.closePromise;
+                try {
+                    await active.lifecycle.closePromise;
+                } catch (error) {
+                    this.logger.warn({ err: error, sessionId: id }, "waited on failed session close before reopening");
+                }
                 continue;
             }
 
@@ -586,7 +582,8 @@ export class SessionRegistry {
         if (entry.lifecycle.phase === "closing") {
             if (options.force === true) {
                 entry.uiBridge.dispose();
-                this.closeClients(entry, closeCode, closeReason);
+                entry.syncHost.dispose(closeCode, closeReason);
+                entry.clients.clear();
             }
             await entry.lifecycle.closePromise;
             return true;
@@ -634,7 +631,8 @@ export class SessionRegistry {
         try {
             if (immediate) {
                 entry.uiBridge.dispose();
-                this.closeClients(entry, closeCode, closeReason);
+                entry.syncHost.dispose(closeCode, closeReason);
+                entry.clients.clear();
             } else {
                 // Keep clients and the bridge alive so session_shutdown can still ask the user.
                 // The timeout and a last-client detach both dispose the bridge to unblock dispose().
@@ -653,13 +651,7 @@ export class SessionRegistry {
             if (graceTimer !== undefined) {
                 clearTimeout(graceTimer);
             }
-            const hadDiskFile = entry.diskSizeBytes !== undefined;
-            entry.uiBridge.dispose();
-            entry.unsubscribe();
-            entry.unsubscribeEntries();
-            this.closeClients(entry, closeCode, closeReason);
-            this.active.delete(entry.sessionId);
-            void this.emitSessionClosed(entry.sessionId, hadDiskFile);
+            await this.finalizeClosedEntry(entry, closeCode, closeReason);
         }
     }
 
@@ -669,6 +661,7 @@ export class SessionRegistry {
             return;
         }
         this.disposed = true;
+        this.catalogHost.dispose(SESSION_CLOSE_CODE.goingAway, "Server going away");
 
         // Force-close current entries first so an open() waiting on closePromise cannot keep
         // disposeAll blocked behind a shutdown dialog.
@@ -693,34 +686,50 @@ export class SessionRegistry {
         );
     }
 
+    private async getCatalogSnapshot(): Promise<SyncSnapshotResult<"catalog", CatalogSnapshot>> {
+        for (let attempt = 0; attempt <= MAX_LIST_RETRIES; attempt += 1) {
+            const versionBefore = this.closeVersion;
+            const disk = await this.catalog.list();
+            if (this.closeVersion !== versionBefore && attempt < MAX_LIST_RETRIES) {
+                continue;
+            }
+            if (this.closeVersion !== versionBefore) {
+                this.logger.warn(
+                    { retries: MAX_LIST_RETRIES },
+                    "catalog snapshot observed concurrent session close across max retries",
+                );
+            }
+            const active = [...this.active.values()].map((entry) => this.summarizeEntry(entry));
+            const activeById = new Map(active.map((summary) => [summary.id, summary]));
+            const merged = disk.sessions.map((summary) => activeById.get(summary.id) ?? summary);
+            const mergedIds = new Set(merged.map((summary) => summary.id));
+            const missing = active.filter((summary) => !mergedIds.has(summary.id));
+            const sessions = [...merged, ...missing].sort((left, right) => right.modifiedAtMs - left.modifiedAtMs);
+            return {
+                cursor: this.catalogBuffer.currentCursor,
+                snapshot: {
+                    sessions,
+                    updatedAtMs: disk.scannedAtMs,
+                },
+            };
+        }
+        throw new Error("Unreachable catalog snapshot retry exit.");
+    }
+
     /** Merge disk discovery with live runtimes, including new sessions that have not flushed a file. */
     async list(): Promise<SessionListResponse> {
-        const disk = await this.catalog.list();
-        const active = [...this.active.values()].map((entry) => this.summarizeEntry(entry));
-        const activeById = new Map(active.map((summary) => [summary.id, summary]));
-        const merged = disk.sessions.map((summary) => activeById.get(summary.id) ?? summary);
-        const mergedIds = new Set(merged.map((summary) => summary.id));
-        const missing = active.filter((summary) => !mergedIds.has(summary.id));
-        const sessions = [...merged, ...missing].sort((left, right) => right.modifiedAtMs - left.modifiedAtMs);
+        const { cursor, snapshot } = await this.getCatalogSnapshot();
         return {
-            sessions,
-            scannedAtMs: disk.scannedAtMs,
-            catalogEpoch: this.catalogEpoch,
-            catalogSeq: this.catalogSeq,
+            sessions: snapshot.sessions,
+            scannedAtMs: snapshot.updatedAtMs,
+            catalogEpoch: cursor.epoch,
+            catalogSeq: cursor.seq,
         };
     }
 
-    /** Subscribe to incremental catalog changes emitted by open runtimes. */
-    subscribeCatalog(listener: WorkspaceCatalogListener): () => void {
-        this.catalogListeners.add(listener);
-        let active = true;
-        return () => {
-            if (!active) {
-                return;
-            }
-            active = false;
-            this.catalogListeners.delete(listener);
-        };
+    /** Attach a WebSocket client transport to the workspace catalog stream. */
+    attachCatalog(client: SyncTransportClient, handshake: SyncHandshake<"catalog"> = {}): () => void {
+        return this.catalogHost.attach(client, handshake);
     }
 
     /** Prefer live runtime entries over the disk copy so an unflushed new session is readable. */
@@ -758,27 +767,39 @@ export class SessionRegistry {
             throw new SessionRegistryError("not_found", "Session is closing.");
         }
 
-        // Build the initial payload before adding the client so a failed snapshot cannot leak a
-        // client that no attachment can detach.
-        const state = this.buildState(entry);
-        const pendingUiRequests = entry.uiBridge.pendingRequests();
+        const transport: SyncTransportClient = {
+            sendRaw: (raw) => {
+                if (client.sendRaw !== undefined) {
+                    client.sendRaw(raw);
+                } else {
+                    const parsed = parseSessionWsServerMessage(JSON.parse(raw) as unknown);
+                    if (parsed !== null) {
+                        client.send(parsed);
+                    }
+                }
+            },
+            close: (code, reason) => {
+                client.close?.(code, reason);
+            },
+        };
 
         entry.clients.add(client);
         this.clearIdleTimer(entry);
-        this.sendHandshakeWithSizeGuard(entry, client, state, pendingUiRequests, options);
+        const detachSync = entry.syncHost.attach(transport, options);
         this.emitSessionUpdated(entry);
 
         let attached = true;
         return {
             sessionId,
-            handleCommand: async (command) => {
-                await this.handleCommand(entry, client, command);
+            handleMessage: async (message) => {
+                await this.handleMessage(entry, client, message);
             },
             detach: () => {
                 if (!attached) {
                     return;
                 }
                 attached = false;
+                detachSync();
                 entry.clients.delete(client);
                 this.emitSessionUpdated(entry);
                 if (entry.clients.size > 0) {
@@ -853,8 +874,13 @@ export class SessionRegistry {
             throw new Error(`Session id mismatch: expected ${sessionId}, runtime reported ${session.sessionId}.`);
         }
 
+        const runtimeId = parseSyncEpoch<"session">(randomUUID());
+        if (runtimeId === null) {
+            throw new Error("Generated invalid session runtime id.");
+        }
         const ready = Promise.withResolvers<void>();
-        const uiBridge = new SessionUiBridge(sessionId, (message) => this.broadcastById(sessionId, message), {
+        const buffer = new ReplayRingBuffer<"session", SessionDelta>({ epoch: runtimeId });
+        const uiBridge = new SessionUiBridge(sessionId, (delta) => this.publishSessionDelta(sessionId, delta), {
             onPendingChange: () => {
                 this.handlePendingChange(sessionId);
             },
@@ -862,14 +888,19 @@ export class SessionRegistry {
         });
         const now = this.nowMs();
         const initialEntries = session.getEntries();
+        const initialState = session.getState();
         const header = initialEntries[0]?.type === "session" ? initialEntries[0] : null;
         const parsedCreatedAtMs = header === null ? Number.NaN : Date.parse(header.timestamp);
+        const syncHost = new SyncStreamHost<"session", SessionSnapshot, SessionDelta, SessionPrefixAnchor>({
+            buffer,
+            getSnapshot: (hint) => this.buildSessionSnapshot(sessionId, hint),
+            logger: this.logger,
+        });
         const entry: ActiveSession = {
             sessionId,
-            runtimeId: randomUUID(),
             cwd: session.getCwd(),
             runtime,
-            buffer: new SessionEventBuffer(),
+            syncHost,
             clients: new Set(),
             uiBridge,
             readyPromise: ready.promise,
@@ -880,6 +911,12 @@ export class SessionRegistry {
             lastClientDetachMs: undefined,
             idleTimer: undefined,
             lastBroadcastEntryCount: initialEntries.length,
+            lastTrackedState: {
+                messageCount: initialState.messageCount,
+                steeringMode: initialState.steeringMode,
+                followUpMode: initialState.followUpMode,
+                autoCompactionEnabled: initialState.autoCompactionEnabled,
+            },
             flushScheduled: false,
             liveMessage: null,
             diskSizeBytes,
@@ -938,9 +975,8 @@ export class SessionRegistry {
                         },
                         "extension handler failed",
                     );
-                    this.broadcastById(entry.sessionId, {
-                        type: "extension_error",
-                        sessionId: entry.sessionId,
+                    this.publishSessionDelta(entry.sessionId, {
+                        kind: "extension_error",
                         extensionPath: error.extensionPath,
                         event: error.event,
                         error: error.error,
@@ -978,12 +1014,7 @@ export class SessionRegistry {
         const closing = Promise.withResolvers<void>();
         entry.lifecycle = { phase: "closing", closePromise: closing.promise };
         this.clearIdleTimer(entry);
-        entry.unsubscribe();
-        entry.unsubscribeEntries();
-        entry.uiBridge.dispose();
         const hadDiskFile = entry.diskSizeBytes !== undefined;
-        this.closeClients(entry, SESSION_CLOSE_CODE.internalError, "Session failed to initialize");
-        this.active.delete(entry.sessionId);
         try {
             await entry.runtime.dispose();
         } catch (disposeError) {
@@ -992,8 +1023,52 @@ export class SessionRegistry {
                 "failed to dispose runtime after bind failure",
             );
         } finally {
-            void this.emitSessionClosed(entry.sessionId, hadDiskFile);
+            await this.finalizeClosedEntry(
+                entry,
+                SESSION_CLOSE_CODE.internalError,
+                "Session failed to initialize",
+                hadDiskFile,
+            );
             closing.resolve();
+        }
+    }
+
+    private runSafeTeardownStep(sessionId: SessionId, label: string, fn: () => void): void {
+        try {
+            fn();
+        } catch (error) {
+            this.logger.warn({ err: error, sessionId }, label);
+        }
+    }
+
+    private async finalizeClosedEntry(
+        entry: ActiveSession,
+        closeCode: SessionCloseCode,
+        closeReason: string,
+        hadDiskFile = entry.diskSizeBytes !== undefined,
+    ): Promise<void> {
+        this.runSafeTeardownStep(entry.sessionId, "failed to dispose ui bridge on close", () => {
+            entry.uiBridge.dispose();
+        });
+        this.runSafeTeardownStep(entry.sessionId, "failed to unsubscribe session events on close", () => {
+            entry.unsubscribe();
+        });
+        this.runSafeTeardownStep(entry.sessionId, "failed to unsubscribe entry appends on close", () => {
+            entry.unsubscribeEntries();
+        });
+        this.runSafeTeardownStep(entry.sessionId, "failed to dispose session sync host on close", () => {
+            entry.syncHost.dispose(closeCode, closeReason);
+        });
+        entry.clients.clear();
+        // Keep the closing entry in `this.active` while checking disk persistence so concurrent
+        // open() calls continue waiting on `closePromise`, then delete and publish atomically.
+        const persisted = await this.resolvePersistedOnClose(entry.sessionId, hadDiskFile);
+        if (this.active.get(entry.sessionId) === entry) {
+            this.active.delete(entry.sessionId);
+            this.closeVersion += 1;
+            this.runSafeTeardownStep(entry.sessionId, "failed to publish session close catalog delta", () => {
+                this.publishSessionClosed(entry.sessionId, persisted);
+            });
         }
     }
 
@@ -1005,7 +1080,10 @@ export class SessionRegistry {
             fork: unsupported,
             navigateTree: unsupported,
             switchSession: unsupported,
-            reload: () => entry.runtime.session.reload(),
+            reload: async () => {
+                await entry.runtime.session.reload();
+                this.emitTrackedStateDiff(entry);
+            },
         };
     }
 
@@ -1051,19 +1129,37 @@ export class SessionRegistry {
         };
     }
 
+    private async handleMessage(
+        entry: ActiveSession,
+        client: SessionClient,
+        message: SessionWsClientMessage,
+    ): Promise<void> {
+        switch (message.type) {
+            case "rpc:ui_response": {
+                const result = entry.uiBridge.handleResponse(message.response);
+                if (!result.ok && result.reason === "mismatched") {
+                    this.sendError(
+                        client,
+                        "invalid_request",
+                        `Response does not match pending dialog ${message.response.id}.`,
+                        message.response.id,
+                    );
+                }
+                return;
+            }
+            case "rpc:command":
+                await this.handleCommand(entry, client, message.command);
+                return;
+            default:
+                assertNever(message);
+        }
+    }
+
     private async handleCommand(
         entry: ActiveSession,
         client: SessionClient,
-        command: SessionWsClientCommand,
+        command: SessionRpcCommand,
     ): Promise<void> {
-        if (command.type === "extension_ui_response") {
-            const result = entry.uiBridge.handleResponse(command);
-            if (!result.ok && result.reason === "mismatched") {
-                this.sendError(client, "invalid_request", `Response does not match pending dialog ${command.id}.`);
-            }
-            return;
-        }
-
         if (entry.lifecycle.phase === "closing") {
             this.sendFailure(client, command.id, command.type, "Session is closing.");
             return;
@@ -1139,6 +1235,10 @@ export class SessionRegistry {
                 }
                 case "set_model": {
                     const model = await entry.runtime.session.setModel(command.provider, command.modelId);
+                    this.publishSessionDelta(entry.sessionId, {
+                        kind: "state_patched",
+                        patch: { model },
+                    });
                     this.sendSuccess(client, command.id, "set_model", model);
                     return;
                 }
@@ -1180,6 +1280,8 @@ export class SessionRegistry {
                     this.sendSuccess(client, command.id, "compact", result);
                     return;
                 }
+                default:
+                    return assertNever(command);
             }
         } catch (error) {
             this.sendFailure(client, command.id, command.type, errorMessage(error));
@@ -1192,8 +1294,8 @@ export class SessionRegistry {
         command: SessionWsCommandName,
         data?: unknown,
     ): void {
-        const message: SessionWsResponseMessage = {
-            type: "response",
+        const message: SessionRpcServerMessage = {
+            type: "rpc:response",
             command,
             success: true,
             ...(id === undefined ? {} : { id }),
@@ -1209,7 +1311,7 @@ export class SessionRegistry {
         error: string,
     ): void {
         this.sendClient(client, {
-            type: "response",
+            type: "rpc:response",
             command,
             success: false,
             ...(id === undefined ? {} : { id }),
@@ -1218,146 +1320,70 @@ export class SessionRegistry {
     }
 
     private sendError(client: SessionClient, code: string, message: string, id?: string): void {
-        this.sendClient(client, { type: "error", code, message, ...(id === undefined ? {} : { id }) });
+        this.sendClient(client, { type: "rpc:error", code, message, ...(id === undefined ? {} : { id }) });
     }
 
-    private sendClientRaw(client: SessionClient, raw: string, fallbackMessage: SessionWsServerMessage): void {
-        try {
-            if (client.sendRaw !== undefined) {
-                client.sendRaw(raw);
-            } else {
-                client.send(fallbackMessage);
-            }
-        } catch (error) {
-            this.logger.warn({ err: error }, "failed to send raw websocket message");
+    private buildSessionSnapshot(
+        sessionId: SessionId,
+        hint: SessionPrefixAnchor | undefined,
+    ): SyncSnapshotResult<"session", SessionSnapshot> {
+        const entry = this.active.get(sessionId);
+        if (entry === undefined) {
+            throw new SessionRegistryError("not_found", "Session is not open.");
         }
-    }
-
-    private sendHttpSnapshot(
-        entry: ActiveSession,
-        client: SessionClient,
-        baseEntryCount: number,
-        context: HandshakeFallbackContext,
-    ): void {
-        this.sendClient(client, {
-            type: "snapshot",
-            sessionId: entry.sessionId,
-            runtimeId: entry.runtimeId,
-            seq: context.seq,
-            entriesVersion: context.entriesVersion,
-            baseEntryCount,
-            entriesMode: "http",
-            entryCount: context.entryCount,
-            state: context.state,
-            liveMessage: entry.liveMessage,
-            pendingUiRequests: context.pendingUiRequests,
-        });
-    }
-
-    private sendHandshakeOrHttpFallback(
-        entry: ActiveSession,
-        client: SessionClient,
-        message: SessionWsReplayMessage | SessionWsSnapshotMessage,
-        baseEntryCount: number,
-        context: HandshakeFallbackContext,
-    ): void {
-        const raw = JSON.stringify(message);
-        if (Buffer.byteLength(raw, "utf8") <= MAX_WS_INLINE_ENTRIES_BYTES) {
-            this.sendClientRaw(client, raw, message);
-            return;
-        }
-        this.sendHttpSnapshot(entry, client, baseEntryCount, context);
-    }
-
-    private sendHandshakeWithSizeGuard(
-        entry: ActiveSession,
-        client: SessionClient,
-        state: SessionStateSnapshot,
-        pendingUiRequests: readonly SessionWsSnapshotMessage["pendingUiRequests"][number][],
-        options: SessionAttachOptions,
-    ): void {
         const entriesVersion = this.catalog.entriesVersion;
         const entries = entry.runtime.session.getEntries();
         const totalCount = entries.length;
-        const replay = entry.buffer.since(options.afterSeq);
-        const fallback: HandshakeFallbackContext = {
-            seq: replay.seq,
-            entriesVersion,
-            entryCount: totalCount,
-            state,
-            pendingUiRequests,
-        };
-
-        if (options.runtimeId === entry.runtimeId && replay.kind === "replay") {
-            if (options.prefixAnchor === undefined) {
-                const replayMsg: SessionWsReplayMessage = {
-                    type: "replay",
-                    sessionId: entry.sessionId,
-                    runtimeId: entry.runtimeId,
-                    seq: replay.seq,
-                    entriesVersion,
-                    state,
-                    events: replay.events,
-                    liveMessage: entry.liveMessage,
-                    pendingUiRequests,
-                };
-                this.sendHandshakeOrHttpFallback(entry, client, replayMsg, 0, fallback);
-                return;
-            }
-
-            const sliced = sliceEntriesForAnchor(entry.sessionId, entries, entriesVersion, options.prefixAnchor);
-            if (sliced.prefixMatched) {
-                if (sliced.entries.length > MAX_WS_INLINE_ENTRY_COUNT) {
-                    this.sendHttpSnapshot(entry, client, sliced.baseEntryCount, fallback);
-                    return;
-                }
-                const replayMsg: SessionWsReplayMessage = {
-                    type: "replay",
-                    sessionId: entry.sessionId,
-                    runtimeId: entry.runtimeId,
-                    seq: replay.seq,
-                    entriesVersion,
-                    state,
-                    events: replay.events,
-                    liveMessage: entry.liveMessage,
-                    ...(sliced.entries.length > 0
-                        ? { appendedSlice: { baseEntryCount: sliced.baseEntryCount, entries: sliced.entries } }
-                        : {}),
-                    pendingUiRequests,
-                };
-                this.sendHandshakeOrHttpFallback(entry, client, replayMsg, sliced.baseEntryCount, fallback);
-                return;
-            }
-        }
+        const state = this.buildState(entry);
+        const pendingUiRequests = entry.uiBridge.pendingRequests();
+        const cursor = entry.syncHost.buffer.currentCursor;
 
         const sliced =
-            options.prefixAnchor !== undefined
-                ? sliceEntriesForAnchor(entry.sessionId, entries, entriesVersion, options.prefixAnchor)
+            hint !== undefined
+                ? sliceEntriesForAnchor(entry.sessionId, entries, entriesVersion, hint)
                 : { baseEntryCount: 0, entries, prefixMatched: false };
 
         const overDiskHint =
             sliced.baseEntryCount === 0 &&
             entry.diskSizeBytes !== undefined &&
             entry.diskSizeBytes > MAX_WS_INLINE_ENTRIES_BYTES;
-        if (sliced.entries.length > MAX_WS_INLINE_ENTRY_COUNT || overDiskHint) {
-            this.sendHttpSnapshot(entry, client, sliced.baseEntryCount, fallback);
-            return;
+        if (shouldOffloadPayload({ itemCount: sliced.entries.length }) || overDiskHint) {
+            return {
+                cursor,
+                snapshot: {
+                    entriesVersion,
+                    baseEntryCount: sliced.baseEntryCount,
+                    entries: { mode: "http", meta: { entryCount: totalCount } },
+                    state,
+                    liveMessage: entry.liveMessage,
+                    pendingUiRequests,
+                },
+            };
         }
 
-        const inlineSnapshot: SessionWsSnapshotMessage = {
-            type: "snapshot",
-            sessionId: entry.sessionId,
-            runtimeId: entry.runtimeId,
-            seq: replay.seq,
+        const inlineSnapshot: SessionSnapshot = {
             entriesVersion,
             baseEntryCount: sliced.baseEntryCount,
-            entriesMode: "inline",
-            entries: sliced.entries,
+            entries: { mode: "inline", data: sliced.entries },
             state,
             liveMessage: entry.liveMessage,
             pendingUiRequests,
         };
-        this.sendHandshakeOrHttpFallback(entry, client, inlineSnapshot, sliced.baseEntryCount, fallback);
+        const serializedBytes = Buffer.byteLength(JSON.stringify(inlineSnapshot), "utf8");
+        if (shouldOffloadPayload({ serializedBytes })) {
+            return {
+                cursor,
+                snapshot: {
+                    entriesVersion,
+                    baseEntryCount: sliced.baseEntryCount,
+                    entries: { mode: "http", meta: { entryCount: totalCount } },
+                    state,
+                    liveMessage: entry.liveMessage,
+                    pendingUiRequests,
+                },
+            };
+        }
+        return { cursor, snapshot: inlineSnapshot };
     }
 
     private scheduleFlushAppendedEntries(entry: ActiveSession): void {
@@ -1381,64 +1407,103 @@ export class SessionRegistry {
             if (entry.firstMessage === null && appended.length > 0) {
                 entry.firstMessage = firstUserMessageText(appended);
             }
-            if (appended.length === 0 || entry.clients.size === 0) {
+            if (appended.length === 0) {
                 return;
             }
-            this.sendEntriesAppendedWithSizeGuard(entry, baseEntryCount, appended, allEntries.length);
+            this.publishEntriesAppendedWithSizeGuard(entry, baseEntryCount, appended, allEntries.length);
         });
     }
 
-    private sendEntriesAppendedWithSizeGuard(
+    private publishEntriesAppendedWithSizeGuard(
         entry: ActiveSession,
         baseEntryCount: number,
         appended: readonly FileEntry[],
         totalCount: number,
     ): void {
         const entriesVersion = this.catalog.entriesVersion;
-        if (appended.length > MAX_WS_INLINE_ENTRY_COUNT) {
-            this.broadcastSession(entry, {
-                type: "entries_appended",
-                sessionId: entry.sessionId,
+        if (shouldOffloadPayload({ itemCount: appended.length })) {
+            entry.syncHost.publish({
+                kind: "entries_appended",
                 entriesVersion,
-                entriesMode: "http",
                 baseEntryCount,
-                entryCount: totalCount,
+                entries: { mode: "http", meta: { entryCount: totalCount } },
             });
             return;
         }
 
-        const inlineMsg: SessionWsEntriesAppendedMessage = {
-            type: "entries_appended",
-            sessionId: entry.sessionId,
+        const inlineDelta: SessionDelta = {
+            kind: "entries_appended",
             entriesVersion,
-            entriesMode: "inline",
             baseEntryCount,
-            entries: appended,
+            entries: { mode: "inline", data: appended },
         };
-        const raw = JSON.stringify(inlineMsg);
-        if (Buffer.byteLength(raw, "utf8") <= MAX_WS_INLINE_ENTRIES_BYTES) {
-            for (const client of [...entry.clients]) {
-                this.sendClientRaw(client, raw, inlineMsg);
-            }
+        const serializedBytes = Buffer.byteLength(JSON.stringify(inlineDelta), "utf8");
+        if (!shouldOffloadPayload({ serializedBytes })) {
+            entry.syncHost.publish(inlineDelta, serializedBytes);
             return;
         }
 
-        this.broadcastSession(entry, {
-            type: "entries_appended",
-            sessionId: entry.sessionId,
+        entry.syncHost.publish({
+            kind: "entries_appended",
             entriesVersion,
-            entriesMode: "http",
             baseEntryCount,
-            entryCount: totalCount,
+            entries: { mode: "http", meta: { entryCount: totalCount } },
         });
     }
 
     private sendClient(client: SessionClient, message: SessionWsServerMessage): void {
         try {
-            client.send(message);
+            if (client.sendRaw !== undefined) {
+                client.sendRaw(JSON.stringify(message));
+            } else {
+                client.send(message);
+            }
         } catch (error) {
             this.logger.warn({ err: error }, "failed to send websocket message");
         }
+    }
+
+    private emitTrackedStateDiff(entry: ActiveSession): void {
+        const state = entry.runtime.session.getState();
+        const prev = entry.lastTrackedState;
+        const patch: {
+            messageCount?: number;
+            steeringMode?: SessionStateSnapshot["steeringMode"];
+            followUpMode?: SessionStateSnapshot["followUpMode"];
+            autoCompactionEnabled?: boolean;
+        } = {};
+        let changed = false;
+        if (state.messageCount !== prev.messageCount) {
+            patch.messageCount = state.messageCount;
+            prev.messageCount = state.messageCount;
+            changed = true;
+        }
+        if (state.steeringMode !== prev.steeringMode) {
+            patch.steeringMode = state.steeringMode;
+            prev.steeringMode = state.steeringMode;
+            changed = true;
+        }
+        if (state.followUpMode !== prev.followUpMode) {
+            patch.followUpMode = state.followUpMode;
+            prev.followUpMode = state.followUpMode;
+            changed = true;
+        }
+        if (state.autoCompactionEnabled !== prev.autoCompactionEnabled) {
+            patch.autoCompactionEnabled = state.autoCompactionEnabled;
+            prev.autoCompactionEnabled = state.autoCompactionEnabled;
+            changed = true;
+        }
+        if (changed) {
+            entry.syncHost.publish({ kind: "state_patched", patch });
+        }
+    }
+
+    private publishSessionDelta(sessionId: SessionId, delta: SessionDelta): void {
+        const entry = this.active.get(sessionId);
+        if (entry === undefined) {
+            return;
+        }
+        entry.syncHost.publish(delta);
     }
 
     private handleSessionEvent(entry: ActiveSession, event: AgentSessionEvent): void {
@@ -1466,14 +1531,9 @@ export class SessionRegistry {
             return;
         }
 
-        const sequenced = entry.buffer.push(wire);
+        entry.syncHost.publish({ kind: "agent_event", event: wire });
         entry.lastActivityMs = this.nowMs();
-        this.broadcastSession(entry, {
-            type: "event",
-            sessionId: entry.sessionId,
-            seq: sequenced.seq,
-            event: wire,
-        });
+        this.emitTrackedStateDiff(entry);
 
         if (
             event.type === "agent_start" ||
@@ -1496,19 +1556,6 @@ export class SessionRegistry {
         const entry = this.active.get(sessionId);
         if (entry !== undefined && entry.lifecycle.phase === "open" && entry.clients.size === 0) {
             this.touch(entry);
-        }
-    }
-
-    private broadcastById(sessionId: SessionId, message: SessionWsServerMessage): void {
-        const entry = this.active.get(sessionId);
-        if (entry !== undefined) {
-            this.broadcastSession(entry, message);
-        }
-    }
-
-    private broadcastSession(entry: ActiveSession, message: SessionWsServerMessage): void {
-        for (const client of [...entry.clients]) {
-            this.sendClient(client, message);
         }
     }
 
@@ -1589,29 +1636,13 @@ export class SessionRegistry {
         entry.idleTimer = undefined;
     }
 
-    private emitCatalogEvent(event: WorkspaceCatalogEvent): void {
-        for (const listener of [...this.catalogListeners]) {
-            try {
-                listener(event);
-            } catch (error) {
-                this.logger.warn({ err: error }, "workspace catalog listener failed");
-            }
-        }
-    }
-
     private emitSessionUpserted(entry: ActiveSession, session: SessionSummary): void {
         if (this.active.get(entry.sessionId) !== entry) {
             return;
         }
-        this.catalogSeq = nextCatalogSeq(this.catalogSeq);
-        if (this.catalogListeners.size === 0) {
-            return;
-        }
-        this.emitCatalogEvent({
-            type: "session_upserted",
-            catalogEpoch: this.catalogEpoch,
-            seq: this.catalogSeq,
-            session,
+        this.catalogHost.publish({
+            op: "upsert",
+            item: session,
         });
     }
 
@@ -1629,59 +1660,42 @@ export class SessionRegistry {
         if (patch === null) {
             return;
         }
-        this.catalogSeq = nextCatalogSeq(this.catalogSeq);
-        if (this.catalogListeners.size === 0) {
-            return;
-        }
-        this.emitCatalogEvent({
-            type: "session_updated",
-            catalogEpoch: this.catalogEpoch,
-            seq: this.catalogSeq,
-            sessionId: entry.sessionId,
+        this.catalogHost.publish({
+            op: "patch",
+            id: entry.sessionId,
             patch,
         });
     }
 
-    private async emitSessionClosed(sessionId: SessionId, hadDiskFile: boolean): Promise<void> {
+    private async resolvePersistedOnClose(sessionId: SessionId, hadDiskFile: boolean): Promise<boolean> {
         if (this.disposed) {
-            return;
+            return hadDiskFile;
         }
-        if (this.catalogListeners.size === 0) {
-            if (!this.active.has(sessionId)) {
-                this.catalogSeq = nextCatalogSeq(this.catalogSeq);
-            }
-            return;
-        }
-        let persisted = hadDiskFile;
         try {
             const resolution = await this.catalog.resolveById(sessionId);
             switch (resolution.kind) {
                 case "found":
                 case "oversized":
-                    persisted = true;
-                    break;
+                    return true;
                 case "missing":
-                    persisted = false;
-                    break;
+                    return false;
                 default:
-                    assertNever(resolution);
+                    return assertNever(resolution);
             }
         } catch (error) {
             this.logger.warn({ err: error, sessionId }, "failed to check disk session after runtime close");
+            return hadDiskFile;
         }
-        if (this.disposed || this.active.has(sessionId)) {
-            return;
-        }
-        this.catalogSeq = nextCatalogSeq(this.catalogSeq);
-        if (this.catalogListeners.size === 0) {
+    }
+
+    private publishSessionClosed(sessionId: SessionId, persisted: boolean): void {
+        if (this.disposed) {
             return;
         }
         if (persisted) {
-            this.emitCatalogEvent({
-                type: "session_updated",
-                catalogEpoch: this.catalogEpoch,
-                seq: this.catalogSeq,
-                sessionId,
+            this.catalogHost.publish({
+                op: "patch",
+                id: sessionId,
                 patch: {
                     runtimeState: "idle",
                     attachedClients: 0,
@@ -1689,22 +1703,9 @@ export class SessionRegistry {
             });
             return;
         }
-        this.emitCatalogEvent({
-            type: "session_removed",
-            catalogEpoch: this.catalogEpoch,
-            seq: this.catalogSeq,
-            sessionId,
+        this.catalogHost.publish({
+            op: "remove",
+            id: sessionId,
         });
-    }
-
-    private closeClients(entry: ActiveSession, code: SessionCloseCode, reason: string): void {
-        for (const client of [...entry.clients]) {
-            try {
-                client.close?.(code, reason);
-            } catch (error) {
-                this.logger.warn({ err: error, sessionId: entry.sessionId }, "failed to close websocket client");
-            }
-        }
-        entry.clients.clear();
     }
 }

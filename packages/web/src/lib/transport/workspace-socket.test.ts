@@ -82,11 +82,17 @@ describe("workspace-socket", () => {
         FakeWorkspaceSocket.instances = [];
     });
 
-    it("builds ws and wss URLs from page URL", () => {
+    it("builds ws and wss URLs from page URL and optional cursor", () => {
         expect(buildWorkspaceSocketUrl("http://127.0.0.1:3141/workspace/abc")).toBe("ws://127.0.0.1:3141/ws/workspace");
         expect(buildWorkspaceSocketUrl("https://pivia.example.com/workspace?x=1#top")).toBe(
             "wss://pivia.example.com/ws/workspace",
         );
+        expect(
+            buildWorkspaceSocketUrl("https://pivia.example.com/workspace", {
+                epoch: epoch("epoch-1"),
+                seq: seq(7),
+            }),
+        ).toBe("wss://pivia.example.com/ws/workspace?epoch=epoch-1&afterSeq=7");
     });
 
     it("decodes valid workspace messages and reports protocol errors for malformed frames", () => {
@@ -135,43 +141,80 @@ describe("workspace-socket", () => {
         const catalogEpoch = epoch("epoch-1");
         socket.triggerMessage(
             JSON.stringify({
-                type: "catalog_snapshot",
-                sessions: [summary],
-                updatedAtMs: 3000,
-                catalogEpoch,
-                catalogSeq: 0,
+                type: "sync:snapshot",
+                cursor: { epoch: catalogEpoch, seq: 0 },
+                snapshot: {
+                    sessions: [summary],
+                    updatedAtMs: 3000,
+                },
             }),
         );
-        socket.triggerMessage(JSON.stringify({ type: "session_upserted", catalogEpoch, seq: 1, session: summary }));
         socket.triggerMessage(
             JSON.stringify({
-                type: "session_updated",
-                catalogEpoch,
-                seq: 2,
-                sessionId: summary.id,
-                patch: { runtimeState: "streaming" },
+                type: "sync:delta",
+                cursor: { epoch: catalogEpoch, seq: 1 },
+                delta: { op: "upsert", item: summary },
             }),
         );
-        socket.triggerMessage(JSON.stringify({ type: "session_removed", catalogEpoch, seq: 3, sessionId: summary.id }));
+        socket.triggerMessage(
+            JSON.stringify({
+                type: "sync:delta",
+                cursor: { epoch: catalogEpoch, seq: 2 },
+                delta: { op: "patch", id: summary.id, patch: { runtimeState: "streaming" } },
+            }),
+        );
+        socket.triggerMessage(
+            JSON.stringify({
+                type: "sync:delta",
+                cursor: { epoch: catalogEpoch, seq: 3 },
+                delta: { op: "remove", id: summary.id },
+            }),
+        );
+        socket.triggerMessage(
+            JSON.stringify({
+                type: "sync:replay",
+                cursor: { epoch: catalogEpoch, seq: 4 },
+                fromSeq: 3,
+                deltas: [{ seq: 4, payload: { op: "remove", id: summary.id } }],
+            }),
+        );
+        socket.triggerMessage(JSON.stringify({ type: "sync:resync", reason: "gap" }));
 
         expect(received).toEqual([
-            { type: "catalog_snapshot", sessions: [summary], updatedAtMs: 3000, catalogEpoch, catalogSeq: seq(0) },
-            { type: "session_upserted", catalogEpoch, seq: seq(1), session: summary },
             {
-                type: "session_updated",
-                catalogEpoch,
-                seq: seq(2),
-                sessionId: summary.id,
-                patch: { runtimeState: "streaming" },
+                type: "sync:snapshot",
+                cursor: { epoch: catalogEpoch, seq: seq(0) },
+                snapshot: { sessions: [summary], updatedAtMs: 3000 },
             },
-            { type: "session_removed", catalogEpoch, seq: seq(3), sessionId: summary.id },
+            {
+                type: "sync:delta",
+                cursor: { epoch: catalogEpoch, seq: seq(1) },
+                delta: { op: "upsert", item: summary },
+            },
+            {
+                type: "sync:delta",
+                cursor: { epoch: catalogEpoch, seq: seq(2) },
+                delta: { op: "patch", id: summary.id, patch: { runtimeState: "streaming" } },
+            },
+            {
+                type: "sync:delta",
+                cursor: { epoch: catalogEpoch, seq: seq(3) },
+                delta: { op: "remove", id: summary.id },
+            },
+            {
+                type: "sync:replay",
+                cursor: { epoch: catalogEpoch, seq: seq(4) },
+                fromSeq: seq(3),
+                deltas: [{ seq: seq(4), payload: { op: "remove", id: summary.id } }],
+            },
+            { type: "sync:resync", reason: "gap" },
         ]);
 
         socket.triggerMessage(new ArrayBuffer(4));
         socket.triggerMessage("{bad json");
         socket.triggerMessage(JSON.stringify({ type: "session_removed", sessionId: "../invalid" }));
 
-        expect(received).toHaveLength(4);
+        expect(received).toHaveLength(6);
         expect(protocolErrors).toHaveLength(3);
 
         socket.triggerClose(1006, "Lost", false);

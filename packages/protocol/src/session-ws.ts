@@ -12,6 +12,16 @@ import type {
 
 import type { SessionModelInfo } from "./http.ts";
 import type { EntriesVersion, SessionId } from "./parse/session.ts";
+import type { Delivery, SyncCursor, SyncEpoch, SyncFrame, SyncSeq } from "./sync/index.ts";
+
+/** Domain epoch identifier for one live session runtime. */
+export type SessionRuntimeId = SyncEpoch<"session">;
+
+/** Domain sequence number strictly monotonic within one {@link SessionRuntimeId}. */
+export type SessionSeq = SyncSeq<"session">;
+
+/** Logical clock cursor for one session stream. */
+export type SessionCursor = SyncCursor<"session">;
 
 /** WebSocket close codes shared by the session server and the browser client. */
 export const SESSION_CLOSE_CODE = {
@@ -83,182 +93,112 @@ export interface SessionStateSnapshot {
     readonly followUpMessages: readonly string[];
 }
 
-/**
- * Commands a client sends over `/ws/sessions/:id`.
- *
- * Every command may carry an `id`; the matching `response` repeats it so clients can correlate
- * concurrent commands. `extension_ui_response` answers an `extension_ui_request` and uses the
- * request id.
- */
-export type SessionWsClientCommand =
-    | Extract<
-          RpcCommand,
-          {
-              type:
-                  | "prompt"
-                  | "steer"
-                  | "follow_up"
-                  | "abort"
-                  | "clear_queue"
-                  | "get_state"
-                  | "set_model"
-                  | "get_available_models"
-                  | "set_thinking_level"
-                  | "get_available_thinking_levels"
-                  | "set_session_name"
-                  | "compact";
-          }
-      >
-    | RpcExtensionUIResponse;
-
-/** Discriminant names of client control commands that produce a {@link SessionWsResponseMessage}. */
-export type SessionWsCommandName = Exclude<SessionWsClientCommand, RpcExtensionUIResponse>["type"];
-
-/** One session event with its monotonic replay sequence number. */
-export interface SequencedSessionEvent {
-    readonly seq: number;
-    readonly event: JsonAgentSessionEvent;
+/** HTTP offload metadata for session entry slices (`baseEntryCount` lives on the enclosing payload). */
+export interface SessionEntriesHttpMeta {
+    readonly entryCount: number;
 }
 
-/** Initial or Tier 2 incremental state sent when a connection cannot use hot event replay. */
-export type SessionWsSnapshotMessage =
-    | {
-          readonly type: "snapshot";
-          readonly sessionId: SessionId;
-          readonly runtimeId: string;
-          readonly seq: number;
-          readonly entriesVersion: EntriesVersion;
-          /** Starting index of `entries` (`0` for full snapshot, `> 0` for Tier 2 slice). */
-          readonly baseEntryCount: number;
-          readonly entriesMode: "inline";
-          readonly entries: readonly FileEntry[];
-          readonly state: SessionStateSnapshot;
-          readonly liveMessage: AssistantMessage | null;
-          /** Dialog requests that are still waiting for a response. */
-          readonly pendingUiRequests: readonly RpcExtensionUIRequest[];
-      }
-    | {
-          readonly type: "snapshot";
-          readonly sessionId: SessionId;
-          readonly runtimeId: string;
-          readonly seq: number;
-          readonly entriesVersion: EntriesVersion;
-          /** Anchor count for HTTP slice (`0` for full download, `> 0` for incremental slice). */
-          readonly baseEntryCount: number;
-          readonly entriesMode: "http";
-          /** Authoritative total entry count (including header) on the server at handshake time. */
-          readonly entryCount: number;
-          readonly state: SessionStateSnapshot;
-          readonly liveMessage: AssistantMessage | null;
-          /** Dialog requests that are still waiting for a response. */
-          readonly pendingUiRequests: readonly RpcExtensionUIRequest[];
-      };
-
-/** Appended entries slice carried by a Tier 1 hot replay when new entries persisted after the client's prefix anchor. */
-export interface SessionWsReplayAppendedSlice {
-    readonly baseEntryCount: number;
-    readonly entries: readonly FileEntry[];
-}
-
-/** Tier 1 hot replay after a reconnect that asks for events after `afterSeq`. */
-export interface SessionWsReplayMessage {
-    readonly type: "replay";
-    readonly sessionId: SessionId;
-    readonly runtimeId: string;
-    readonly seq: number;
+/** Full or prefix-anchored session snapshot replicated over the Sync lane. */
+export interface SessionSnapshot {
     readonly entriesVersion: EntriesVersion;
+    readonly baseEntryCount: number;
+    readonly entries: Delivery<readonly FileEntry[], SessionEntriesHttpMeta>;
     readonly state: SessionStateSnapshot;
-    readonly events: readonly SequencedSessionEvent[];
-    /** Authoritative streaming assistant message at `seq`, or `null` when none is streaming. */
     readonly liveMessage: AssistantMessage | null;
-    readonly appendedSlice?: SessionWsReplayAppendedSlice;
+    /** Dialog requests that are still waiting for a response. */
     readonly pendingUiRequests: readonly RpcExtensionUIRequest[];
 }
 
-/** Orthogonal persisted-entry notification; carries no `seq` and never enters `EventBuffer`. */
-export type SessionWsEntriesAppendedMessage =
+/**
+ * Incremental patch for {@link SessionStateSnapshot} fields mutated outside `AgentSessionEvent`
+ * (such as `set_model` or message count updates).
+ */
+export interface SessionStatePatch {
+    readonly model?: SessionModelInfo | null | undefined;
+    readonly messageCount?: number | undefined;
+    readonly autoCompactionEnabled?: boolean | undefined;
+    readonly steeringMode?: QueueMode | undefined;
+    readonly followUpMode?: QueueMode | undefined;
+}
+
+/** Causal session state mutations replicated on the unified `SessionSeq` clock. */
+export type SessionDelta =
+    | { readonly kind: "agent_event"; readonly event: JsonAgentSessionEvent }
     | {
-          readonly type: "entries_appended";
-          readonly sessionId: SessionId;
+          readonly kind: "entries_appended";
           readonly entriesVersion: EntriesVersion;
-          readonly entriesMode: "inline";
           readonly baseEntryCount: number;
-          readonly entries: readonly FileEntry[];
+          readonly entries: Delivery<readonly FileEntry[], SessionEntriesHttpMeta>;
       }
+    | { readonly kind: "state_patched"; readonly patch: SessionStatePatch }
+    | { readonly kind: "ui_request"; readonly request: RpcExtensionUIRequest }
+    | { readonly kind: "ui_resolved"; readonly requestId: string }
     | {
-          readonly type: "entries_appended";
-          readonly sessionId: SessionId;
-          readonly entriesVersion: EntriesVersion;
-          readonly entriesMode: "http";
-          readonly baseEntryCount: number;
-          readonly entryCount: number;
+          readonly kind: "extension_error";
+          readonly extensionPath: string;
+          readonly event: string;
+          readonly error: string;
       };
 
-/** One live session event. */
-export interface SessionWsEventMessage {
-    readonly type: "event";
-    readonly sessionId: SessionId;
-    readonly seq: number;
-    readonly event: JsonAgentSessionEvent;
-}
+/** Server-to-client Sync lane frames for `/ws/sessions/:id`. */
+export type SessionSyncFrame = SyncFrame<"session", SessionSnapshot, SessionDelta>;
 
-/** A dialog or fire-and-forget notification from an extension. */
-export interface SessionWsExtensionUiRequestMessage {
-    readonly type: "extension_ui_request";
-    readonly sessionId: SessionId;
-    readonly request: RpcExtensionUIRequest;
-}
+/**
+ * Control command payload sent inside `rpc:command`.
+ *
+ * Every command may carry an `id`; the matching `rpc:response` repeats it so clients can correlate
+ * concurrent commands.
+ */
+export type SessionRpcCommand = Extract<
+    RpcCommand,
+    {
+        type:
+            | "prompt"
+            | "steer"
+            | "follow_up"
+            | "abort"
+            | "clear_queue"
+            | "get_state"
+            | "set_model"
+            | "get_available_models"
+            | "set_thinking_level"
+            | "get_available_thinking_levels"
+            | "set_session_name"
+            | "compact";
+    }
+>;
 
-/** Tells every client to dismiss a dialog that another client already answered. */
-export interface SessionWsExtensionUiResolvedMessage {
-    readonly type: "extension_ui_resolved";
-    readonly sessionId: SessionId;
-    readonly requestId: string;
-}
+/** Discriminant names of client control commands that produce a {@link SessionRpcServerMessage}. */
+export type SessionWsCommandName = SessionRpcCommand["type"];
 
-/** An extension handler failed; the session continues running. */
-export interface SessionWsExtensionErrorMessage {
-    readonly type: "extension_error";
-    readonly sessionId: SessionId;
-    readonly extensionPath: string;
-    readonly event: string;
-    readonly error: string;
-}
+/** Orthogonal client-to-server RPC lane messages sent over `/ws/sessions/:id`. */
+export type SessionWsClientMessage =
+    | { readonly type: "rpc:command"; readonly command: SessionRpcCommand }
+    | { readonly type: "rpc:ui_response"; readonly response: RpcExtensionUIResponse };
 
-/** Success or failure result for one client command, discriminated by `success`. */
-export type SessionWsResponseMessage =
+/** Orthogonal server-to-client RPC lane responses and protocol errors. */
+export type SessionRpcServerMessage =
     | {
-          readonly type: "response";
-          readonly id?: string;
+          readonly type: "rpc:response";
+          readonly id?: string | undefined;
           readonly command: SessionWsCommandName;
           readonly success: true;
           readonly data?: unknown;
       }
     | {
-          readonly type: "response";
-          readonly id?: string;
+          readonly type: "rpc:response";
+          readonly id?: string | undefined;
           readonly command: SessionWsCommandName;
           readonly success: false;
           readonly error: string;
+      }
+    | {
+          readonly type: "rpc:error";
+          readonly code?: string | undefined;
+          readonly message: string;
+          /** Present when the rejected input carried a command or request id. */
+          readonly id?: string | undefined;
       };
 
-/** Protocol-level error, such as malformed JSON or an unknown command. */
-export interface SessionWsErrorMessage {
-    readonly type: "error";
-    readonly code?: string;
-    readonly message: string;
-    /** Present when the rejected input carried a command id. */
-    readonly id?: string;
-}
-
-/** Messages the server sends over `/ws/sessions/:id`. */
-export type SessionWsServerMessage =
-    | SessionWsSnapshotMessage
-    | SessionWsReplayMessage
-    | SessionWsEntriesAppendedMessage
-    | SessionWsEventMessage
-    | SessionWsExtensionUiRequestMessage
-    | SessionWsExtensionUiResolvedMessage
-    | SessionWsExtensionErrorMessage
-    | SessionWsResponseMessage
-    | SessionWsErrorMessage;
+/** Messages the server sends over `/ws/sessions/:id` (Sync lane + orthogonal RPC lane). */
+export type SessionWsServerMessage = SessionSyncFrame | SessionRpcServerMessage;

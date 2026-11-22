@@ -3,8 +3,12 @@ import {
     parseCatalogEpoch,
     parseEntriesVersion,
     parseSessionId,
+    parseSyncEpoch,
+    parseSyncSeq,
     type EntriesVersion,
     type SessionId,
+    type SessionRuntimeId,
+    type SessionSeq,
     type SessionStateSnapshot,
     type SessionSummary,
     type SessionWsServerMessage,
@@ -30,6 +34,22 @@ function ev(raw: string): EntriesVersion {
     const parsed = parseEntriesVersion(raw);
     if (parsed === null) {
         throw new Error(`Invalid test entries version: ${raw}`);
+    }
+    return parsed;
+}
+
+function rt(raw: string): SessionRuntimeId {
+    const parsed = parseSyncEpoch<"session">(raw);
+    if (parsed === null) {
+        throw new Error(`Invalid test runtime id: ${raw}`);
+    }
+    return parsed;
+}
+
+function seq(raw: number): SessionSeq {
+    const parsed = parseSyncSeq<"session">(raw);
+    if (parsed === null) {
+        throw new Error(`Invalid test session seq: ${raw}`);
     }
     return parsed;
 }
@@ -171,17 +191,16 @@ describe("createAppStores", () => {
         }
         sock.open();
         sock.receive({
-            type: "snapshot",
-            sessionId: SESSION_1,
-            runtimeId: "rt-1",
-            seq: 1,
-            entriesVersion: V152,
-            baseEntryCount: 0,
-            entriesMode: "inline",
-            entries: [],
-            state: stateSnapshot(SESSION_1),
-            liveMessage: null,
-            pendingUiRequests: [],
+            type: "sync:snapshot",
+            cursor: { epoch: rt("rt-1"), seq: seq(1) },
+            snapshot: {
+                entriesVersion: V152,
+                baseEntryCount: 0,
+                entries: { mode: "inline", data: [] },
+                state: stateSnapshot(SESSION_1),
+                liveMessage: null,
+                pendingUiRequests: [],
+            },
         });
         expect(useSessionStore.getState().sessionId).toBe(SESSION_1);
 
@@ -246,9 +265,14 @@ describe("createAppStores", () => {
         if (catalogEpoch === null) {
             throw new Error("Invalid test catalog epoch");
         }
-        useWorkspaceStore.getState().applyCatalog([summary(SESSION_1), summary(SESSION_2)], 5_000, {
-            epoch: catalogEpoch,
-            seq: INITIAL_CATALOG_SEQ,
+        useWorkspaceStore.getState().commitSyncedCatalog({
+            sessions: [summary(SESSION_1), summary(SESSION_2)],
+            updatedAtMs: 5_000,
+            cursor: {
+                epoch: catalogEpoch,
+                seq: INITIAL_CATALOG_SEQ,
+            },
+            sync: { kind: "live" },
         });
         useWorkspaceStore.getState().togglePinned(SESSION_1);
         useWorkspaceStore.getState().select(SESSION_1);
@@ -263,17 +287,16 @@ describe("createAppStores", () => {
         }
         sock.open();
         sock.receive({
-            type: "snapshot",
-            sessionId: SESSION_1,
-            runtimeId: "rt-missing",
-            seq: 1,
-            entriesVersion: V152,
-            baseEntryCount: 0,
-            entriesMode: "http",
-            entryCount: 1,
-            state: stateSnapshot(SESSION_1),
-            liveMessage: null,
-            pendingUiRequests: [],
+            type: "sync:snapshot",
+            cursor: { epoch: rt("rt-missing"), seq: seq(1) },
+            snapshot: {
+                entriesVersion: V152,
+                baseEntryCount: 0,
+                entries: { mode: "http", meta: { entryCount: 1 } },
+                state: stateSnapshot(SESSION_1),
+                liveMessage: null,
+                pendingUiRequests: [],
+            },
         });
 
         await vi.waitFor(() => {

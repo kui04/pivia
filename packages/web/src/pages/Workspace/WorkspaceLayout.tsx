@@ -81,7 +81,7 @@ export function WorkspaceLayout(props: WorkspaceLayoutProps = {}): ReactElement 
     const select = workspaceStore((state) => state.select);
     const togglePinned = workspaceStore((state) => state.togglePinned);
     const toggleFolder = workspaceStore((state) => state.toggleFolder);
-    const upsertSession = workspaceStore((state) => state.upsertSession);
+    const applyCatalogDelta = workspaceStore((state) => state.applyCatalogDelta);
 
     const routeSessionId = useMemo(
         () => (rawSessionId === undefined ? null : parseSessionId(rawSessionId)),
@@ -149,7 +149,7 @@ export function WorkspaceLayout(props: WorkspaceLayoutProps = {}): ReactElement 
         async (cwd: string, options?: CreateSessionSubmitOptions): Promise<CreateSessionResult> => {
             try {
                 const response = await client.createSession(cwd, options);
-                upsertSession(response.session);
+                applyCatalogDelta({ op: "upsert", item: response.session });
                 select(response.session.id);
                 void navigate(`/workspace/${encodeURIComponent(response.session.id)}`);
                 if (narrow) {
@@ -164,7 +164,7 @@ export function WorkspaceLayout(props: WorkspaceLayoutProps = {}): ReactElement 
                 return { ok: false, code: "error", message };
             }
         },
-        [client, narrow, navigate, select, upsertSession],
+        [applyCatalogDelta, client, narrow, navigate, select],
     );
 
     const handleListDirectories = useCallback((path?: string) => client.listDirectories(path), [client]);

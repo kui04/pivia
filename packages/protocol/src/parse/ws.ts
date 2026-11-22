@@ -3,7 +3,8 @@ import type { ImageContent } from "@earendil-works/pi-ai";
 import type { RpcExtensionUIResponse } from "@earendil-works/pi-coding-agent";
 
 import type { SessionPrefixAnchor } from "../http.ts";
-import type { SessionWsClientCommand } from "../session-ws.ts";
+import type { SessionRpcCommand, SessionWsClientMessage } from "../session-ws.ts";
+import { parseSyncHandshakeQuery, type SyncHandshake } from "../sync/index.ts";
 import { isRecord } from "./primitives.ts";
 import { parseSessionPrefixAnchor } from "./session.ts";
 
@@ -43,9 +44,18 @@ function withId(fields: Record<string, unknown>): { readonly id?: string } {
     return typeof fields.id === "string" ? { id: fields.id } : {};
 }
 
-/** Read a command id from unvalidated input so protocol errors can still be correlated. */
+/** Read a command or UI request id from unvalidated input so protocol errors can still be correlated. */
 export function commandIdOf(value: unknown): string | undefined {
-    return isRecord(value) && typeof value.id === "string" ? value.id : undefined;
+    if (!isRecord(value)) {
+        return undefined;
+    }
+    if (value.type === "rpc:command" && isRecord(value.command) && typeof value.command.id === "string") {
+        return value.command.id;
+    }
+    if (value.type === "rpc:ui_response" && isRecord(value.response) && typeof value.response.id === "string") {
+        return value.response.id;
+    }
+    return typeof value.id === "string" ? value.id : undefined;
 }
 
 /** Parse one `extension_ui_response` payload, or return `null` when the shape is invalid. */
@@ -65,18 +75,10 @@ export function parseExtensionUiResponse(value: unknown): RpcExtensionUIResponse
     return null;
 }
 
-/**
- * Validate and normalize one client command from parsed JSON.
- *
- * Returns `null` for unknown types, missing fields, and values that do not match the protocol.
- * Extra fields are ignored so older clients keep working after the server adds optional fields.
- */
-export function parseSessionWsClientCommand(value: unknown): SessionWsClientCommand | null {
+/** Parse one control command payload for `rpc:command`, or return `null` when invalid. */
+export function parseSessionRpcCommand(value: unknown): SessionRpcCommand | null {
     if (!isRecord(value) || typeof value.type !== "string") {
         return null;
-    }
-    if (value.type === "extension_ui_response") {
-        return parseExtensionUiResponse(value);
     }
     if (value.id !== undefined && typeof value.id !== "string") {
         return null;
@@ -158,62 +160,31 @@ export function parseSessionWsClientCommand(value: unknown): SessionWsClientComm
     }
 }
 
-/** Explicit parse result for the optional `afterSeq` query parameter. */
-export type ParsedAfterSeq = { readonly ok: true; readonly afterSeq: number | undefined } | { readonly ok: false };
-
 /**
- * Parse the optional `afterSeq` query parameter.
+ * Validate and normalize one client RPC frame (`rpc:command` or `rpc:ui_response`) from parsed JSON.
  *
- * Returns `{ ok: true, afterSeq: undefined }` when absent, `{ ok: true, afterSeq }` for a
- * non-negative safe integer, and `{ ok: false }` when malformed.
+ * Returns `null` for unknown types, missing fields, and invalid payloads.
  */
-export function parseAfterSeq(value: unknown): ParsedAfterSeq {
-    if (value === undefined) {
-        return { ok: true, afterSeq: undefined };
+export function parseSessionWsClientMessage(value: unknown): SessionWsClientMessage | null {
+    if (!isRecord(value) || typeof value.type !== "string") {
+        return null;
     }
-    if (typeof value !== "string" || !/^\d+$/.test(value)) {
-        return { ok: false };
+    if (value.type === "rpc:command") {
+        const command = parseSessionRpcCommand(value.command);
+        return command === null ? null : { type: "rpc:command", command };
     }
-    const parsed = Number(value);
-    return Number.isSafeInteger(parsed) ? { ok: true, afterSeq: parsed } : { ok: false };
-}
-
-/** Validated WebSocket handshake anchors parsed at the upgrade boundary. */
-export interface ParsedSessionWsHandshakeQuery {
-    readonly afterSeq?: number | undefined;
-    readonly runtimeId?: string | undefined;
-    readonly prefixAnchor?: SessionPrefixAnchor | undefined;
+    if (value.type === "rpc:ui_response") {
+        const response = parseExtensionUiResponse(value.response);
+        return response === null ? null : { type: "rpc:ui_response", response };
+    }
+    return null;
 }
 
 /**
- * Parse `/ws/sessions/:id` handshake query parameters.
- *
- * Rejects malformed `afterSeq` with an explicit error (preserving HTTP 400 upgrade checks),
- * while malformed or partial cache hints (`runtimeId`, `entriesVersion`, `afterCount`,
- * `afterEntryId`) gracefully degrade to `undefined` so stale clients fall back to Tier 3.
+ * Parse `/ws/sessions/:id` handshake query parameters (`epoch`, `afterSeq`, and optional
+ * `SessionPrefixAnchor`). Missing or malformed fields degrade cleanly so the server falls back to
+ * a full snapshot.
  */
-export function parseSessionWsHandshakeQuery(
-    query: unknown,
-):
-    | { readonly ok: true; readonly value: ParsedSessionWsHandshakeQuery }
-    | { readonly ok: false; readonly message: string } {
-    if (!isRecord(query)) {
-        return { ok: true, value: {} };
-    }
-    const parsedAfterSeq = parseAfterSeq(query.afterSeq);
-    if (!parsedAfterSeq.ok) {
-        return { ok: false, message: "Invalid afterSeq parameter." };
-    }
-
-    const runtimeId = typeof query.runtimeId === "string" && query.runtimeId.length > 0 ? query.runtimeId : undefined;
-    const prefixAnchor = parseSessionPrefixAnchor(query);
-
-    return {
-        ok: true,
-        value: {
-            ...(parsedAfterSeq.afterSeq === undefined ? {} : { afterSeq: parsedAfterSeq.afterSeq }),
-            ...(runtimeId === undefined ? {} : { runtimeId }),
-            ...(prefixAnchor === undefined ? {} : { prefixAnchor }),
-        },
-    };
+export function parseSessionWsHandshakeQuery(query: unknown): SyncHandshake<"session", SessionPrefixAnchor> {
+    return parseSyncHandshakeQuery<"session", SessionPrefixAnchor>(query, parseSessionPrefixAnchor);
 }

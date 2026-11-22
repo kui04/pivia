@@ -8,7 +8,7 @@ import {
     type Theme,
 } from "@earendil-works/pi-coding-agent";
 
-import type { SessionId, SessionWsServerMessage } from "@pivia/protocol";
+import type { SessionDelta, SessionId } from "@pivia/protocol";
 
 /**
  * Text-preserving theme for the headless bridge.
@@ -93,8 +93,11 @@ function isWidgetLines(content: unknown): content is string[] | undefined {
     return content === undefined || Array.isArray(content);
 }
 
+/** Delta variants emitted by {@link SessionUiBridge} onto the unified session sync clock. */
+export type SessionUiDelta = Extract<SessionDelta, { readonly kind: "ui_request" | "ui_resolved" }>;
+
 /**
- * Bridge between the SDK extension UI context and the WebSocket protocol.
+ * Bridge between the SDK extension UI context and the WebSocket Sync lane.
  *
  * Dialog methods register a pending promise before announcing the request, so a fast client
  * response and a reconnect snapshot both observe the same request. Timeouts, aborts, and session
@@ -102,20 +105,14 @@ function isWidgetLines(content: unknown): content is string[] | undefined {
  */
 export class SessionUiBridge {
     readonly context: ExtensionUIContext;
-    private readonly sessionId: SessionId;
-    private readonly broadcast: (message: SessionWsServerMessage) => void;
+    private readonly publish: (delta: SessionUiDelta) => void;
     private readonly onPendingChange: (() => void) | undefined;
     private readonly nowMs: () => number;
     private readonly pending = new Map<string, PendingDialog>();
     private disposed = false;
 
-    constructor(
-        sessionId: SessionId,
-        broadcast: (message: SessionWsServerMessage) => void,
-        options: SessionUiBridgeOptions = {},
-    ) {
-        this.sessionId = sessionId;
-        this.broadcast = broadcast;
+    constructor(_sessionId: SessionId, publish: (delta: SessionUiDelta) => void, options: SessionUiBridgeOptions = {}) {
+        this.publish = publish;
         this.onPendingChange = options.onPendingChange;
         this.nowMs = options.nowMs ?? (() => Date.now());
         this.context = createExtensionUIContext(this);
@@ -158,7 +155,7 @@ export class SessionUiBridge {
             return { ok: false, reason: "mismatched" };
         }
         dialog.respond(response);
-        this.broadcast({ type: "extension_ui_resolved", sessionId: this.sessionId, requestId: response.id });
+        this.publish({ kind: "ui_resolved", requestId: response.id });
         return { ok: true };
     }
 
@@ -187,12 +184,12 @@ export class SessionUiBridge {
         this.pending.clear();
     }
 
-    /** Emit a dialog or notification request to every attached client. No-op after dispose. */
+    /** Emit a dialog or notification request onto the session sync stream. No-op after dispose. */
     emit(request: RpcExtensionUIRequest): void {
         if (this.disposed) {
             return;
         }
-        this.broadcast({ type: "extension_ui_request", sessionId: this.sessionId, request });
+        this.publish({ kind: "ui_request", request });
     }
 
     requestDialog<T>(
@@ -226,7 +223,7 @@ export class SessionUiBridge {
                 this.pending.delete(id);
                 resolve(value);
                 if (notifyClients) {
-                    this.broadcast({ type: "extension_ui_resolved", sessionId: this.sessionId, requestId: id });
+                    this.publish({ kind: "ui_resolved", requestId: id });
                 }
                 this.onPendingChange?.();
             };

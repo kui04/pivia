@@ -6,9 +6,14 @@ import type { SessionManager } from "@earendil-works/pi-coding-agent";
 
 import {
     parseSessionId,
+    parseSyncSeq,
+    type RpcExtensionUIResponse,
     type SessionId,
-    type SessionWsResponseMessage,
+    type SessionRpcCommand,
+    type SessionRpcServerMessage,
     type SessionWsServerMessage,
+    type SyncSeq,
+    type WorkspaceWsServerMessage,
 } from "@pivia/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -22,7 +27,6 @@ import {
     type SessionAttachment,
     type SessionClient,
     type SessionRegistryLogger,
-    type WorkspaceCatalogEvent,
 } from "./runtime.ts";
 import { SessionCatalog } from "./catalog.ts";
 import {
@@ -179,22 +183,63 @@ async function waitForMessage<T extends SessionWsServerMessage>(
     throw new Error(`Timed out waiting for message. Received: ${JSON.stringify(messages)}`);
 }
 
-function responseFor(messages: readonly SessionWsServerMessage[], id: string): Promise<SessionWsResponseMessage> {
-    return waitForMessage(messages, (message): message is SessionWsResponseMessage => {
-        return message.type === "response" && message.id === id;
-    });
+function responseFor(
+    messages: readonly SessionWsServerMessage[],
+    id: string,
+): Promise<Extract<SessionRpcServerMessage, { type: "rpc:response" }>> {
+    return waitForMessage(
+        messages,
+        (message): message is Extract<SessionRpcServerMessage, { type: "rpc:response" }> => {
+            return message.type === "rpc:response" && message.id === id;
+        },
+    );
 }
 
 async function successResponseFor(
     messages: readonly SessionWsServerMessage[],
     id: string,
-): Promise<Extract<SessionWsResponseMessage, { success: true }>> {
+): Promise<Extract<SessionRpcServerMessage, { type: "rpc:response"; success: true }>> {
     const response = await responseFor(messages, id);
     expect(response.success).toBe(true);
     if (!response.success) {
         throw new Error(`Expected successful response for ${id}, got: ${response.error}`);
     }
     return response;
+}
+
+function sendCommand(attachment: SessionAttachment, command: SessionRpcCommand): Promise<void> {
+    return attachment.handleMessage({ type: "rpc:command", command });
+}
+
+function sendUiResponse(attachment: SessionAttachment, response: RpcExtensionUIResponse): Promise<void> {
+    return attachment.handleMessage({
+        type: "rpc:ui_response",
+        response,
+    });
+}
+
+function sessionSeq(raw: number): SyncSeq<"session"> {
+    const parsed = parseSyncSeq<"session">(raw);
+    if (parsed === null) {
+        throw new Error(`Invalid session seq: ${raw}`);
+    }
+    return parsed;
+}
+
+function attachCatalogCollector(registry: SessionRegistry) {
+    const frames: WorkspaceWsServerMessage[] = [];
+    const snapshotReady = Promise.withResolvers<void>();
+    const detach = registry.attachCatalog({
+        sendRaw(raw) {
+            const frame = JSON.parse(raw) as WorkspaceWsServerMessage;
+            frames.push(frame);
+            if (frame.type === "sync:snapshot") {
+                snapshotReady.resolve();
+            }
+        },
+        close() {},
+    });
+    return { frames, ready: snapshotReady.promise, detach };
 }
 
 function findSessionFiles(dir: string): string[] {
@@ -281,16 +326,16 @@ describe("SessionRegistry", () => {
         const collector = createCollector();
         const attachment = fixture.registry.attach(handle.sessionId, collector.client);
         const snapshot = collector.messages[0];
-        if (snapshot?.type !== "snapshot") {
+        if (snapshot?.type !== "sync:snapshot") {
             throw new Error("expected a snapshot");
         }
-        const request = snapshot.pendingUiRequests[0];
+        const request = snapshot.snapshot.pendingUiRequests[0];
         if (request === undefined) {
             throw new Error("expected the startup dialog in the snapshot");
         }
         expect(request.method).toBe("select");
 
-        await attachment.handleCommand({ type: "extension_ui_response", id: request.id, value: "safe" });
+        await sendUiResponse(attachment, { type: "extension_ui_response", id: request.id, value: "safe" });
         if (startupDialog === undefined) {
             throw new Error("expected the startup dialog");
         }
@@ -360,23 +405,28 @@ describe("SessionRegistry", () => {
         const closePromise = fixture.registry.closeSession(handle.sessionId);
         const request = await waitForMessage(
             collector.messages,
-            (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_request" }> =>
-                message.type === "extension_ui_request" && message.request.method === "confirm",
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:delta" }> =>
+                message.type === "sync:delta" &&
+                message.delta.kind === "ui_request" &&
+                message.delta.request.method === "confirm",
         );
+        if (request.delta.kind !== "ui_request") {
+            throw new Error("expected ui_request delta");
+        }
         expect((await fixture.registry.getById(handle.sessionId))?.session.runtimeState).toBe("closing");
         expect(() => fixture.registry.attach(handle.sessionId, createCollector().client)).toThrow(SessionRegistryError);
 
-        await attachment.handleCommand({ type: "get_state", id: "closing-state" });
+        await sendCommand(attachment, { type: "get_state", id: "closing-state" });
         const closingResponse = await waitForMessage(
             collector.messages,
-            (message): message is Extract<SessionWsServerMessage, { type: "response" }> =>
-                message.type === "response" && message.id === "closing-state",
+            (message): message is Extract<SessionWsServerMessage, { type: "rpc:response" }> =>
+                message.type === "rpc:response" && message.id === "closing-state",
         );
         expect(closingResponse).toMatchObject({ success: false, error: "Session is closing." });
 
-        await attachment.handleCommand({
+        await sendUiResponse(attachment, {
             type: "extension_ui_response",
-            id: request.request.id,
+            id: request.delta.request.id,
             confirmed: true,
         });
         if (shutdownDialog === undefined) {
@@ -470,8 +520,10 @@ describe("SessionRegistry", () => {
         const closePromise = fixture.registry.closeSession(handle.sessionId);
         await waitForMessage(
             collector.messages,
-            (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_request" }> =>
-                message.type === "extension_ui_request" && message.request.method === "confirm",
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:delta" }> =>
+                message.type === "sync:delta" &&
+                message.delta.kind === "ui_request" &&
+                message.delta.request.method === "confirm",
         );
         attachment.detach();
         await expect(closePromise).resolves.toBe(true);
@@ -520,22 +572,27 @@ describe("SessionRegistry", () => {
         const dialog = bindings.uiContext.select("Still there?", ["yes", "no"]);
         const request = await waitForMessage(
             collector.messages,
-            (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_request" }> =>
-                message.type === "extension_ui_request" && message.request.method === "select",
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:delta" }> =>
+                message.type === "sync:delta" &&
+                message.delta.kind === "ui_request" &&
+                message.delta.request.method === "select",
         );
+        if (request.delta.kind !== "ui_request") {
+            throw new Error("expected ui_request");
+        }
         attachment.detach();
         await new Promise((resolve) => setTimeout(resolve, 80));
         expect(fixture.registry.activeSessionCount).toBe(1);
 
         const late = attach(fixture.registry, handle.sessionId);
         const snapshot = late.collector.messages[0];
-        if (snapshot?.type !== "snapshot") {
+        if (snapshot?.type !== "sync:snapshot") {
             throw new Error("expected a snapshot");
         }
-        expect(snapshot.pendingUiRequests.map((pending) => pending.id)).toContain(request.request.id);
-        await late.attachment.handleCommand({
+        expect(snapshot.snapshot.pendingUiRequests.map((pending) => pending.id)).toContain(request.delta.request.id);
+        await sendUiResponse(late.attachment, {
             type: "extension_ui_response",
-            id: request.request.id,
+            id: request.delta.request.id,
             value: "yes",
         });
         await expect(dialog).resolves.toBe("yes");
@@ -556,8 +613,10 @@ describe("SessionRegistry", () => {
         const dialog = bindings.uiContext.select("Timeout?", ["yes", "no"]);
         await waitForMessage(
             collector.messages,
-            (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_request" }> =>
-                message.type === "extension_ui_request" && message.request.method === "select",
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:delta" }> =>
+                message.type === "sync:delta" &&
+                message.delta.kind === "ui_request" &&
+                message.delta.request.method === "select",
         );
         attachment.detach();
         await waitUntil(() => fixture.registry.activeSessionCount === 0);
@@ -579,8 +638,10 @@ describe("SessionRegistry", () => {
         const dialog = bindings.uiContext.confirm("Tool confirmation", "Proceed while streaming?");
         await waitForMessage(
             collector.messages,
-            (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_request" }> =>
-                message.type === "extension_ui_request" && message.request.method === "confirm",
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:delta" }> =>
+                message.type === "sync:delta" &&
+                message.delta.kind === "ui_request" &&
+                message.delta.request.method === "confirm",
         );
         attachment.detach();
         await waitUntil(() => fixture.registry.activeSessionCount === 0);
@@ -604,10 +665,10 @@ describe("SessionRegistry", () => {
         await waitUntil(() => startupDialog !== undefined);
         const { collector, attachment } = attach(fixture.registry, handle.sessionId);
         const snapshot = collector.messages[0];
-        if (snapshot?.type !== "snapshot") {
+        if (snapshot?.type !== "sync:snapshot") {
             throw new Error("expected a snapshot");
         }
-        const startupRequest = snapshot.pendingUiRequests[0];
+        const startupRequest = snapshot.snapshot.pendingUiRequests[0];
         if (startupRequest === undefined) {
             throw new Error("expected the startup dialog in the snapshot");
         }
@@ -627,8 +688,10 @@ describe("SessionRegistry", () => {
         const closePromise = fixture.registry.closeSession(handle.sessionId);
         await waitForMessage(
             collector.messages,
-            (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_resolved" }> =>
-                message.type === "extension_ui_resolved" && message.requestId === startupRequest.id,
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:delta" }> =>
+                message.type === "sync:delta" &&
+                message.delta.kind === "ui_resolved" &&
+                message.delta.requestId === startupRequest.id,
         );
         if (startupDialog === undefined) {
             throw new Error("expected the startup dialog");
@@ -637,12 +700,17 @@ describe("SessionRegistry", () => {
 
         const shutdownRequest = await waitForMessage(
             collector.messages,
-            (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_request" }> =>
-                message.type === "extension_ui_request" && message.request.method === "confirm",
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:delta" }> =>
+                message.type === "sync:delta" &&
+                message.delta.kind === "ui_request" &&
+                message.delta.request.method === "confirm",
         );
-        await attachment.handleCommand({
+        if (shutdownRequest.delta.kind !== "ui_request") {
+            throw new Error("expected ui_request");
+        }
+        await sendUiResponse(attachment, {
             type: "extension_ui_response",
-            id: shutdownRequest.request.id,
+            id: shutdownRequest.delta.request.id,
             confirmed: true,
         });
         if (shutdownDialog === undefined) {
@@ -738,7 +806,11 @@ describe("SessionRegistry", () => {
         expect(detail?.entries[0]).toMatchObject({ type: "session", id: handle.sessionId, cwd: realProjectDir });
 
         attachment.detach();
-        expect(collector.messages[0]).toMatchObject({ type: "snapshot", sessionId: handle.sessionId, seq: 0 });
+        expect(collector.messages[0]).toMatchObject({
+            type: "sync:snapshot",
+            cursor: { seq: 0 },
+            snapshot: { state: { sessionId: handle.sessionId } },
+        });
     });
 
     it("reports idle, streaming, and compacting runtime states", async () => {
@@ -793,10 +865,10 @@ describe("SessionRegistry", () => {
             await gate;
         };
 
-        await attachment.handleCommand({ type: "prompt", id: "prompt-1", message: "hello" });
+        await sendCommand(attachment, { type: "prompt", id: "prompt-1", message: "hello" });
         const accepted = await responseFor(collector.messages, "prompt-1");
         expect(accepted).toMatchObject({
-            type: "response",
+            type: "rpc:response",
             command: "prompt",
             success: true,
             data: { disposition: "started" },
@@ -805,13 +877,13 @@ describe("SessionRegistry", () => {
 
         release?.();
         await new Promise((resolve) => setTimeout(resolve, 10));
-        expect(collector.messages.filter((message) => message.type === "response")).toHaveLength(1);
+        expect(collector.messages.filter((message) => message.type === "rpc:response")).toHaveLength(1);
 
         session.promptHandler = () => Promise.reject(new Error("Session is already streaming."));
-        await attachment.handleCommand({ type: "prompt", id: "prompt-2", message: "again" });
+        await sendCommand(attachment, { type: "prompt", id: "prompt-2", message: "again" });
         const rejected = await responseFor(collector.messages, "prompt-2");
         expect(rejected).toMatchObject({
-            type: "response",
+            type: "rpc:response",
             command: "prompt",
             success: false,
             error: "Session is already streaming.",
@@ -830,7 +902,7 @@ describe("SessionRegistry", () => {
             return Promise.reject(new Error("provider failed"));
         };
 
-        await attachment.handleCommand({ type: "prompt", id: "prompt-late", message: "hello" });
+        await sendCommand(attachment, { type: "prompt", id: "prompt-late", message: "hello" });
         const accepted = await responseFor(collector.messages, "prompt-late");
         expect(accepted).toMatchObject({ success: true, data: { disposition: "queued" } });
 
@@ -838,7 +910,7 @@ describe("SessionRegistry", () => {
             recording.warnings.some((warning) => warning.message === "prompt failed after it was accepted"),
         );
         expect(
-            collector.messages.filter((message) => message.type === "response" && message.id === "prompt-late"),
+            collector.messages.filter((message) => message.type === "rpc:response" && message.id === "prompt-late"),
         ).toHaveLength(1);
     });
 
@@ -854,7 +926,7 @@ describe("SessionRegistry", () => {
             messageCount: 4,
         });
 
-        await attachment.handleCommand({ type: "get_state", id: "state" });
+        await sendCommand(attachment, { type: "get_state", id: "state" });
         expect((await successResponseFor(collector.messages, "state")).data).toMatchObject({
             sessionId: handle.sessionId,
             name: null,
@@ -866,55 +938,63 @@ describe("SessionRegistry", () => {
             messageCount: 4,
         });
 
-        await attachment.handleCommand({ type: "set_session_name", id: "name", name: "  Named Session  " });
+        await sendCommand(attachment, { type: "set_session_name", id: "name", name: "  Named Session  " });
         expect((await responseFor(collector.messages, "name")).success).toBe(true);
         expect(session.getName()).toBe("Named Session");
 
-        await attachment.handleCommand({ type: "set_session_name", id: "empty-name", name: "   " });
+        await sendCommand(attachment, { type: "set_session_name", id: "empty-name", name: "   " });
         expect(await responseFor(collector.messages, "empty-name")).toMatchObject({
             success: false,
             error: "Session name cannot be empty.",
         });
 
-        await attachment.handleCommand({ type: "set_model", id: "model", provider: "fake", modelId: "model-2" });
+        await sendCommand(attachment, { type: "set_model", id: "model", provider: "fake", modelId: "model-2" });
         expect((await successResponseFor(collector.messages, "model")).data).toEqual({
             provider: "fake",
             id: "model-2",
             name: "fake/model-2",
         });
+        expect(
+            collector.messages.some(
+                (message) =>
+                    message.type === "sync:delta" &&
+                    message.delta.kind === "state_patched" &&
+                    message.delta.patch.model?.id === "model-2",
+            ),
+        ).toBe(true);
 
-        await attachment.handleCommand({ type: "get_available_models", id: "models" });
+        await sendCommand(attachment, { type: "get_available_models", id: "models" });
         expect((await successResponseFor(collector.messages, "models")).data).toEqual({
             models: [{ provider: "fake", id: "model-2", name: "fake/model-2" }],
         });
 
-        await attachment.handleCommand({ type: "set_thinking_level", id: "thinking", level: "high" });
+        await sendCommand(attachment, { type: "set_thinking_level", id: "thinking", level: "high" });
         expect((await successResponseFor(collector.messages, "thinking")).data).toEqual({ level: "high" });
 
-        await attachment.handleCommand({ type: "get_available_thinking_levels", id: "levels" });
+        await sendCommand(attachment, { type: "get_available_thinking_levels", id: "levels" });
         expect((await successResponseFor(collector.messages, "levels")).data).toEqual({
             levels: ["off", "minimal", "low", "medium", "high"],
         });
 
-        await attachment.handleCommand({ type: "steer", id: "steer", message: "steer text" });
+        await sendCommand(attachment, { type: "steer", id: "steer", message: "steer text" });
         expect((await successResponseFor(collector.messages, "steer")).data).toEqual({ disposition: "queued" });
         expect(session.steerCalls).toEqual([{ text: "steer text", images: undefined }]);
 
-        await attachment.handleCommand({ type: "follow_up", id: "follow", message: "follow text" });
+        await sendCommand(attachment, { type: "follow_up", id: "follow", message: "follow text" });
         expect((await successResponseFor(collector.messages, "follow")).data).toEqual({ disposition: "handled" });
         expect(session.followUpCalls).toEqual([{ text: "follow text", images: undefined }]);
 
-        await attachment.handleCommand({ type: "abort", id: "abort" });
+        await sendCommand(attachment, { type: "abort", id: "abort" });
         expect((await responseFor(collector.messages, "abort")).success).toBe(true);
         expect(session.abortCalls).toBe(1);
 
-        await attachment.handleCommand({ type: "clear_queue", id: "clear" });
+        await sendCommand(attachment, { type: "clear_queue", id: "clear" });
         expect((await successResponseFor(collector.messages, "clear")).data).toEqual({
             steering: ["steer-a"],
             followUp: ["follow-b"],
         });
 
-        await attachment.handleCommand({ type: "compact", id: "compact", customInstructions: "summarize" });
+        await sendCommand(attachment, { type: "compact", id: "compact", customInstructions: "summarize" });
         expect((await successResponseFor(collector.messages, "compact")).data).toMatchObject({
             summary: "fake compaction",
         });
@@ -932,19 +1012,25 @@ describe("SessionRegistry", () => {
 
         const event = await waitForMessage(
             collector.messages,
-            (message): message is Extract<SessionWsServerMessage, { type: "event" }> => message.type === "event",
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:delta" }> =>
+                message.type === "sync:delta" && message.delta.kind === "agent_event",
         );
-        expect(event.seq).toBe(1);
-        expect(event.event.type).toBe("message_update");
+        expect(event.cursor.seq).toBe(1);
+        if (event.delta.kind !== "agent_event") {
+            throw new Error("expected agent_event");
+        }
+        expect(event.delta.event.type).toBe("message_update");
         expect(JSON.stringify(event)).not.toContain('"partial"');
         expect(JSON.stringify(event)).not.toContain('"message"');
 
         const settled = await waitForMessage(
             collector.messages,
-            (message): message is Extract<SessionWsServerMessage, { type: "event" }> =>
-                message.type === "event" && message.event.type === "agent_settled",
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:delta" }> =>
+                message.type === "sync:delta" &&
+                message.delta.kind === "agent_event" &&
+                message.delta.event.type === "agent_settled",
         );
-        expect(settled.seq).toBe(2);
+        expect(settled.cursor.seq).toBe(2);
         attachment.detach();
     });
 
@@ -962,11 +1048,11 @@ describe("SessionRegistry", () => {
 
         const broadcast = await waitForMessage(
             collector.messages,
-            (message): message is Extract<SessionWsServerMessage, { type: "extension_error" }> =>
-                message.type === "extension_error",
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:delta" }> =>
+                message.type === "sync:delta" && message.delta.kind === "extension_error",
         );
-        expect(broadcast).toMatchObject({
-            sessionId: handle.sessionId,
+        expect(broadcast.delta).toMatchObject({
+            kind: "extension_error",
             extensionPath: "/ext/demo.ts",
             event: "tool_call",
             error: "boom",
@@ -989,43 +1075,59 @@ describe("SessionRegistry", () => {
         const confirmed = ui.confirm("Clear session?", "All messages will be lost.");
         const request = await waitForMessage(
             first.collector.messages,
-            (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_request" }> =>
-                message.type === "extension_ui_request" &&
-                message.request.method === "confirm" &&
-                message.request.title === "Clear session?",
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:delta" }> =>
+                message.type === "sync:delta" &&
+                message.delta.kind === "ui_request" &&
+                message.delta.request.method === "confirm" &&
+                message.delta.request.title === "Clear session?",
         );
+        if (request.delta.kind !== "ui_request") {
+            throw new Error("expected ui_request");
+        }
+        const confirmId = request.delta.request.id;
         await waitForMessage(
             second.collector.messages,
-            (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_request" }> =>
-                message.type === "extension_ui_request" && message.request.id === request.request.id,
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:delta" }> =>
+                message.type === "sync:delta" &&
+                message.delta.kind === "ui_request" &&
+                message.delta.request.id === confirmId,
         );
 
-        await first.attachment.handleCommand({
+        await sendUiResponse(first.attachment, {
             type: "extension_ui_response",
-            id: request.request.id,
+            id: confirmId,
             confirmed: true,
         });
         await expect(confirmed).resolves.toBe(true);
         await waitForMessage(
             first.collector.messages,
-            (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_resolved" }> =>
-                message.type === "extension_ui_resolved" && message.requestId === request.request.id,
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:delta" }> =>
+                message.type === "sync:delta" &&
+                message.delta.kind === "ui_resolved" &&
+                message.delta.requestId === confirmId,
         );
         await waitForMessage(
             second.collector.messages,
-            (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_resolved" }> =>
-                message.type === "extension_ui_resolved" && message.requestId === request.request.id,
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:delta" }> =>
+                message.type === "sync:delta" &&
+                message.delta.kind === "ui_resolved" &&
+                message.delta.requestId === confirmId,
         );
 
         const selected = ui.select("Allow command?", ["Allow", "Block"]);
         const selectRequest = await waitForMessage(
             first.collector.messages,
-            (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_request" }> =>
-                message.type === "extension_ui_request" && message.request.method === "select",
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:delta" }> =>
+                message.type === "sync:delta" &&
+                message.delta.kind === "ui_request" &&
+                message.delta.request.method === "select",
         );
-        await second.attachment.handleCommand({
+        if (selectRequest.delta.kind !== "ui_request") {
+            throw new Error("expected ui_request");
+        }
+        await sendUiResponse(second.attachment, {
             type: "extension_ui_response",
-            id: selectRequest.request.id,
+            id: selectRequest.delta.request.id,
             value: "Allow",
         });
         await expect(selected).resolves.toBe("Allow");
@@ -1033,12 +1135,17 @@ describe("SessionRegistry", () => {
         const input = ui.input("Enter a value", "placeholder");
         const inputRequest = await waitForMessage(
             first.collector.messages,
-            (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_request" }> =>
-                message.type === "extension_ui_request" && message.request.method === "input",
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:delta" }> =>
+                message.type === "sync:delta" &&
+                message.delta.kind === "ui_request" &&
+                message.delta.request.method === "input",
         );
-        await first.attachment.handleCommand({
+        if (inputRequest.delta.kind !== "ui_request") {
+            throw new Error("expected ui_request");
+        }
+        await sendUiResponse(first.attachment, {
             type: "extension_ui_response",
-            id: inputRequest.request.id,
+            id: inputRequest.delta.request.id,
             cancelled: true,
         });
         await expect(input).resolves.toBeUndefined();
@@ -1046,12 +1153,17 @@ describe("SessionRegistry", () => {
         const edited = ui.editor("Edit text", "prefill");
         const editorRequest = await waitForMessage(
             first.collector.messages,
-            (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_request" }> =>
-                message.type === "extension_ui_request" && message.request.method === "editor",
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:delta" }> =>
+                message.type === "sync:delta" &&
+                message.delta.kind === "ui_request" &&
+                message.delta.request.method === "editor",
         );
-        await first.attachment.handleCommand({
+        if (editorRequest.delta.kind !== "ui_request") {
+            throw new Error("expected ui_request");
+        }
+        await sendUiResponse(first.attachment, {
             type: "extension_ui_response",
-            id: editorRequest.request.id,
+            id: editorRequest.delta.request.id,
             value: "edited",
         });
         await expect(edited).resolves.toBe("edited");
@@ -1059,9 +1171,10 @@ describe("SessionRegistry", () => {
         const late = attach(fixture.registry, handle.sessionId);
         const snapshot = await waitForMessage(
             late.collector.messages,
-            (message): message is Extract<SessionWsServerMessage, { type: "snapshot" }> => message.type === "snapshot",
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:snapshot" }> =>
+                message.type === "sync:snapshot",
         );
-        expect(snapshot.pendingUiRequests).toEqual([]);
+        expect(snapshot.snapshot.pendingUiRequests).toEqual([]);
     });
 
     it("forwards fire-and-forget extension UI methods and ignores component factories", async () => {
@@ -1087,18 +1200,25 @@ describe("SessionRegistry", () => {
         for (const method of methods) {
             await waitForMessage(
                 collector.messages,
-                (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_request" }> =>
-                    message.type === "extension_ui_request" && message.request.method === method,
+                (message): message is Extract<SessionWsServerMessage, { type: "sync:delta" }> =>
+                    message.type === "sync:delta" &&
+                    message.delta.kind === "ui_request" &&
+                    message.delta.request.method === method,
             );
         }
         const widgetRequests = collector.messages.filter(
             (message) =>
-                message.type === "extension_ui_request" &&
-                message.request.method === "setWidget" &&
-                message.request.widgetKey === "ignored",
+                message.type === "sync:delta" &&
+                message.delta.kind === "ui_request" &&
+                message.delta.request.method === "setWidget" &&
+                message.delta.request.widgetKey === "ignored",
         );
         expect(widgetRequests).toEqual([]);
-        expect(collector.messages.filter((message) => message.type === "extension_ui_request")).toHaveLength(5);
+        expect(
+            collector.messages.filter(
+                (message) => message.type === "sync:delta" && message.delta.kind === "ui_request",
+            ),
+        ).toHaveLength(5);
     });
 
     it("resolves dialogs on timeout, abort, and session close", async () => {
@@ -1115,8 +1235,8 @@ describe("SessionRegistry", () => {
         await expect(timedOut).resolves.toBe(false);
         await waitForMessage(
             collector.messages,
-            (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_resolved" }> =>
-                message.type === "extension_ui_resolved",
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:delta" }> =>
+                message.type === "sync:delta" && message.delta.kind === "ui_resolved",
         );
 
         const controller = new AbortController();
@@ -1127,16 +1247,24 @@ describe("SessionRegistry", () => {
         const pending = ui.select("Close?", ["one", "two"]);
         const selectRequest = await waitForMessage(
             collector.messages,
-            (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_request" }> =>
-                message.type === "extension_ui_request" && message.request.method === "select",
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:delta" }> =>
+                message.type === "sync:delta" &&
+                message.delta.kind === "ui_request" &&
+                message.delta.request.method === "select",
         );
+        if (selectRequest.delta.kind !== "ui_request") {
+            throw new Error("expected ui_request");
+        }
         const late = createCollector();
         fixture.registry.attach(handle.sessionId, late.client);
         const lateSnapshot = await waitForMessage(
             late.messages,
-            (message): message is Extract<SessionWsServerMessage, { type: "snapshot" }> => message.type === "snapshot",
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:snapshot" }> =>
+                message.type === "sync:snapshot",
         );
-        expect(lateSnapshot.pendingUiRequests.map((request) => request.id)).toContain(selectRequest.request.id);
+        expect(lateSnapshot.snapshot.pendingUiRequests.map((request) => request.id)).toContain(
+            selectRequest.delta.request.id,
+        );
 
         expect(await fixture.registry.closeSession(handle.sessionId)).toBe(true);
         await expect(pending).resolves.toBeUndefined();
@@ -1160,7 +1288,10 @@ describe("SessionRegistry", () => {
         expect(fakeSession(fixture, beta).bindings).toBeDefined();
 
         const { collector } = attach(fixture.registry, sid("session-beta"));
-        expect(collector.messages[0]).toMatchObject({ type: "snapshot", sessionId: "session-beta" });
+        expect(collector.messages[0]).toMatchObject({
+            type: "sync:snapshot",
+            snapshot: { state: { sessionId: "session-beta" } },
+        });
     });
 
     it("reclaims idle runtimes only while no client is attached", async () => {
@@ -1224,10 +1355,10 @@ describe("SessionRegistry", () => {
         const realProjectDir = realpathSync(projectDir);
         const { collector, attachment } = attach(registry, handle.sessionId);
 
-        await attachment.handleCommand({ type: "set_session_name", id: "name", name: "Integration Session" });
+        await sendCommand(attachment, { type: "set_session_name", id: "name", name: "Integration Session" });
         expect(await responseFor(collector.messages, "name")).toMatchObject({ success: true });
 
-        await attachment.handleCommand({ type: "get_state", id: "state" });
+        await sendCommand(attachment, { type: "get_state", id: "state" });
         expect((await successResponseFor(collector.messages, "state")).data).toMatchObject({
             sessionId: handle.sessionId,
             cwd: realProjectDir,
@@ -1270,22 +1401,22 @@ describe("SessionRegistry", () => {
         ).toBe(true);
     });
 
-    it("supports Tier 1/2/3 handshake fallbacks, 512 KB HTTP offloading, and microtask entries_appended broadcasts", async () => {
+    it("supports Tier 1/2/3 handshake fallbacks, 512 KB HTTP offloading, and causal entries_appended deltas", async () => {
         const fixture = createFixture();
         const handle = await fixture.registry.createSession(fixture.projectDir);
         const session = fakeSession(fixture, handle);
 
         const first = attach(fixture.registry, handle.sessionId);
         const initialSnap = first.collector.messages[0];
-        if (initialSnap?.type !== "snapshot" || initialSnap.entriesMode !== "inline") {
-            throw new Error("expected inline snapshot");
+        if (initialSnap?.type !== "sync:snapshot" || initialSnap.snapshot.entries.mode !== "inline") {
+            throw new Error("expected inline sync:snapshot");
         }
-        const runtimeId = initialSnap.runtimeId;
-        const entriesVersion = initialSnap.entriesVersion;
-        expect(initialSnap.baseEntryCount).toBe(0);
-        expect(initialSnap.entries).toHaveLength(1);
+        const runtimeId = initialSnap.cursor.epoch;
+        const entriesVersion = initialSnap.snapshot.entriesVersion;
+        expect(initialSnap.snapshot.baseEntryCount).toBe(0);
+        expect(initialSnap.snapshot.entries.data).toHaveLength(1);
 
-        // Appending multiple entries synchronously coalesces into one microtask entries_appended broadcast.
+        // Appending multiple entries synchronously coalesces into one microtask entries_appended delta.
         const e1 = session.appendUserMessage("hello");
         const e2 = session.appendUserMessage("world");
         expect(e1).not.toBe(e2);
@@ -1294,79 +1425,107 @@ describe("SessionRegistry", () => {
 
         const appendedMsg = await waitForMessage(
             first.collector.messages,
-            (message): message is Extract<SessionWsServerMessage, { type: "entries_appended" }> =>
-                message.type === "entries_appended",
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:delta" }> =>
+                message.type === "sync:delta" && message.delta.kind === "entries_appended",
         );
-        expect(appendedMsg.entriesMode).toBe("inline");
-        if (appendedMsg.entriesMode === "inline") {
-            expect(appendedMsg.baseEntryCount).toBe(1);
-            expect(appendedMsg.entries).toHaveLength(2);
+        if (appendedMsg.delta.kind !== "entries_appended" || appendedMsg.delta.entries.mode !== "inline") {
+            throw new Error("expected inline entries_appended delta");
         }
+        expect(appendedMsg.delta.baseEntryCount).toBe(1);
+        expect(appendedMsg.delta.entries.data).toHaveLength(2);
 
-        // Tier 1 with matching runtimeId + prefixAnchor appends missed entries & includes liveMessage.
+        // Tier 1 replays agent_event + entries_appended in exact causal order on the unified clock.
         const e3 = session.appendUserMessage("missed while offline");
         await Promise.resolve();
         const tier1 = attach(fixture.registry, handle.sessionId, {
-            afterSeq: 0,
-            runtimeId,
-            prefixAnchor: { entriesVersion, afterCount: 3, afterEntryId: e2 },
+            cursor: { epoch: runtimeId, seq: sessionSeq(0) },
+            hint: { entriesVersion, afterCount: 3, afterEntryId: e2 },
         });
         const replayMsg = tier1.collector.messages[0];
-        expect(replayMsg?.type).toBe("replay");
-        if (replayMsg?.type === "replay") {
-            expect(replayMsg.appendedSlice?.baseEntryCount).toBe(3);
-            expect(replayMsg.appendedSlice?.entries).toHaveLength(1);
-            expect(replayMsg.liveMessage?.content[0]).toEqual({ type: "text", text: "Hi" });
+        expect(replayMsg?.type).toBe("sync:replay");
+        if (replayMsg?.type === "sync:replay") {
+            expect(replayMsg.deltas.some((item) => item.payload.kind === "agent_event")).toBe(true);
+            expect(
+                replayMsg.deltas.some(
+                    (item) =>
+                        item.payload.kind === "entries_appended" &&
+                        item.payload.baseEntryCount === 3 &&
+                        item.payload.entries.mode === "inline" &&
+                        item.payload.entries.data.length === 1,
+                ),
+            ).toBe(true);
         }
 
-        // Tier 2 when runtimeId mismatches but prefixAnchor matches returns incremental inline snapshot.
+        // Tier 2 when epoch mismatches but prefixAnchor matches returns incremental inline snapshot.
         const tier2 = attach(fixture.registry, handle.sessionId, {
-            afterSeq: 0,
-            runtimeId: "old-runtime",
-            prefixAnchor: { entriesVersion, afterCount: 3, afterEntryId: e2 },
+            hint: { entriesVersion, afterCount: 3, afterEntryId: e2 },
         });
         const patchSnap = tier2.collector.messages[0];
-        expect(patchSnap?.type).toBe("snapshot");
-        if (patchSnap?.type === "snapshot" && patchSnap.entriesMode === "inline") {
-            expect(patchSnap.baseEntryCount).toBe(3);
-            expect(patchSnap.entries).toHaveLength(1);
-            expect(patchSnap.liveMessage?.content[0]).toEqual({ type: "text", text: "Hi" });
+        expect(patchSnap?.type).toBe("sync:snapshot");
+        if (patchSnap?.type === "sync:snapshot" && patchSnap.snapshot.entries.mode === "inline") {
+            expect(patchSnap.snapshot.baseEntryCount).toBe(3);
+            expect(patchSnap.snapshot.entries.data).toHaveLength(1);
+            expect(patchSnap.snapshot.liveMessage?.content[0]).toEqual({ type: "text", text: "Hi" });
         }
 
-        // Oversized (> 512 KB) payload offloads to entriesMode: "http" across Tier 1, Tier 2, Tier 3, and live entries_appended.
+        // Oversized (> 512 KB) payload offloads to mode: "http" in live entries_appended, Tier 1 replay, and Tier 2/3 snapshots.
         const huge = "z".repeat(600 * 1024);
         session.appendUserMessage(huge);
         const hugeBroadcast = await waitForMessage(
             first.collector.messages,
-            (message): message is Extract<SessionWsServerMessage, { type: "entries_appended" }> =>
-                message.type === "entries_appended" && message.entriesMode === "http",
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:delta" }> =>
+                message.type === "sync:delta" &&
+                message.delta.kind === "entries_appended" &&
+                message.delta.entries.mode === "http",
         );
-        expect(hugeBroadcast).toMatchObject({ entriesMode: "http", baseEntryCount: 4, entryCount: 5 });
-
-        const tier1Offload = attach(fixture.registry, handle.sessionId, {
-            afterSeq: 0,
-            runtimeId,
-            prefixAnchor: { entriesVersion, afterCount: 4, afterEntryId: e3 },
-        });
-        expect(tier1Offload.collector.messages[0]).toMatchObject({
-            type: "snapshot",
-            entriesMode: "http",
+        expect(hugeBroadcast.delta).toMatchObject({
+            kind: "entries_appended",
             baseEntryCount: 4,
-            entryCount: 5,
+            entries: { mode: "http", meta: { entryCount: 5 } },
+        });
+
+        // Tier 1 replay retains compact { mode: "http" } descriptor in causal order.
+        const tier1ReplayOffload = attach(fixture.registry, handle.sessionId, {
+            cursor: { epoch: runtimeId, seq: sessionSeq(2) },
+        });
+        const replayWithOffload = tier1ReplayOffload.collector.messages[0];
+        expect(replayWithOffload?.type).toBe("sync:replay");
+        if (replayWithOffload?.type === "sync:replay") {
+            expect(
+                replayWithOffload.deltas.some(
+                    (item) =>
+                        item.payload.kind === "entries_appended" &&
+                        item.payload.entries.mode === "http" &&
+                        item.payload.entries.meta.entryCount === 5,
+                ),
+            ).toBe(true);
+        }
+
+        const tier2Offload = attach(fixture.registry, handle.sessionId, {
+            hint: { entriesVersion, afterCount: 4, afterEntryId: e3 },
+        });
+        expect(tier2Offload.collector.messages[0]).toMatchObject({
+            type: "sync:snapshot",
+            snapshot: {
+                baseEntryCount: 4,
+                entries: { mode: "http", meta: { entryCount: 5 } },
+            },
         });
 
         const tier3Offload = attach(fixture.registry, handle.sessionId);
         expect(tier3Offload.collector.messages[0]).toMatchObject({
-            type: "snapshot",
-            entriesMode: "http",
-            baseEntryCount: 0,
-            entryCount: 5,
+            type: "sync:snapshot",
+            snapshot: {
+                baseEntryCount: 0,
+                entries: { mode: "http", meta: { entryCount: 5 } },
+            },
         });
 
         first.attachment.detach();
         tier1.attachment.detach();
         tier2.attachment.detach();
-        tier1Offload.attachment.detach();
+        tier1ReplayOffload.attachment.detach();
+        tier2Offload.attachment.detach();
         tier3Offload.attachment.detach();
     });
 
@@ -1383,155 +1542,154 @@ describe("SessionRegistry", () => {
             },
         });
 
-        const events: WorkspaceCatalogEvent[] = [];
-        const secondaryEvents: WorkspaceCatalogEvent[] = [];
-        const unsubscribeThrowing = fixture.registry.subscribeCatalog(() => {
-            throw new Error("boom");
-        });
-        const unsubscribe = fixture.registry.subscribeCatalog((event) => {
-            events.push(event);
-        });
-        const unsubscribeSecondary = fixture.registry.subscribeCatalog((event) => {
-            secondaryEvents.push(event);
-        });
+        const primary = attachCatalogCollector(fixture.registry);
+        const secondary = attachCatalogCollector(fixture.registry);
+        await Promise.all([primary.ready, secondary.ready]);
+        const events = () =>
+            primary.frames.filter(
+                (frame): frame is Extract<WorkspaceWsServerMessage, { type: "sync:delta" }> =>
+                    frame.type === "sync:delta",
+            );
 
-        const handle = await fixture.registry.createSession(fixture.projectDir);
-        const session = fakeSession(fixture, handle);
+        try {
+            const handle = await fixture.registry.createSession(fixture.projectDir);
+            const session = fakeSession(fixture, handle);
 
-        expect(events.at(-1)).toMatchObject({
-            type: "session_upserted",
-            session: { id: handle.sessionId, runtimeState: "starting", attachedClients: 0 },
-        });
-        expect(secondaryEvents).toHaveLength(events.length);
+            expect(events().at(-1)?.delta).toMatchObject({
+                op: "upsert",
+                item: { id: handle.sessionId, runtimeState: "starting", attachedClients: 0 },
+            });
+            expect(secondary.frames).toHaveLength(primary.frames.length);
 
-        releaseBind?.();
-        await waitUntil(() =>
-            events.some(
-                (event) =>
-                    event.type === "session_updated" &&
-                    event.sessionId === handle.sessionId &&
-                    event.patch.runtimeState === "idle",
-            ),
-        );
-
-        const { attachment } = attach(fixture.registry, handle.sessionId);
-        expect(events.at(-1)).toMatchObject({
-            type: "session_updated",
-            sessionId: handle.sessionId,
-            patch: { attachedClients: 1 },
-        });
-
-        await attachment.handleCommand({ type: "set_session_name", id: "rename-1", name: "Live Rename" });
-        expect(events.at(-1)).toMatchObject({
-            type: "session_updated",
-            sessionId: handle.sessionId,
-            patch: { name: "Live Rename" },
-        });
-
-        session.setState({ isStreaming: true });
-        session.emit({ type: "agent_start" });
-        expect(events.at(-1)).toMatchObject({
-            type: "session_updated",
-            sessionId: handle.sessionId,
-            patch: { runtimeState: "streaming" },
-        });
-
-        const countBeforeDeltas = events.length;
-        session.emit(createTextDeltaEvent("Hel", "Hel"));
-        session.emit(createTextDeltaEvent("lo", "Hello"));
-        expect(events).toHaveLength(countBeforeDeltas);
-
-        session.setState({ isStreaming: false });
-        session.emit({ type: "agent_settled", aborted: false });
-        expect(events.at(-1)).toMatchObject({
-            type: "session_updated",
-            sessionId: handle.sessionId,
-            patch: { runtimeState: "idle" },
-        });
-
-        attachment.detach();
-        expect(events.at(-1)).toMatchObject({
-            type: "session_updated",
-            sessionId: handle.sessionId,
-            patch: { attachedClients: 0 },
-        });
-
-        await fixture.registry.closeSession(handle.sessionId);
-        await waitUntil(() =>
-            events.some((event) => event.type === "session_removed" && event.sessionId === handle.sessionId),
-        );
-        expect(events.at(-2)).toMatchObject({
-            type: "session_updated",
-            sessionId: handle.sessionId,
-            patch: { runtimeState: "closing" },
-        });
-        expect(events.at(-1)).toMatchObject({
-            type: "session_removed",
-            sessionId: handle.sessionId,
-        });
-
-        // Unsubscribing stops further notifications, and persisted disk sessions fall back to idle on close.
-        unsubscribeThrowing();
-        unsubscribeSecondary();
-        const countBeforePersisted = events.length;
-        const persistedPath = join(fixture.sessionDir, "persisted.jsonl");
-        writeSessionFixture(persistedPath, "session-persisted");
-        const persistedId = parseSessionId("session-persisted");
-        if (persistedId === null) {
-            throw new Error("expected valid test session id");
-        }
-        await fixture.registry.open(persistedId);
-        const countBeforeClose = events.length;
-        await fixture.registry.closeSession(persistedId);
-
-        await waitUntil(() =>
-            events
-                .slice(countBeforeClose)
-                .some(
-                    (event) =>
-                        event.type === "session_updated" &&
-                        event.sessionId === persistedId &&
-                        event.patch.runtimeState === "idle" &&
-                        event.patch.attachedClients === 0,
+            releaseBind?.();
+            await waitUntil(() =>
+                events().some(
+                    (frame) =>
+                        frame.delta.op === "patch" &&
+                        frame.delta.id === handle.sessionId &&
+                        frame.delta.patch.runtimeState === "idle",
                 ),
-        );
-        expect(secondaryEvents).toHaveLength(countBeforePersisted);
-        expect(events.at(-1)).toMatchObject({
-            type: "session_updated",
-            sessionId: persistedId,
-            patch: { runtimeState: "idle", attachedClients: 0 },
-        });
+            );
 
-        // All catalog events share one catalogEpoch and strictly increasing seq matching list().
-        const listAfterEvents = await fixture.registry.list();
-        expect(events.length).toBeGreaterThan(0);
-        for (let index = 0; index < events.length; index += 1) {
-            const event = events[index];
-            expect(event?.catalogEpoch).toBe(listAfterEvents.catalogEpoch);
-            if (index > 0) {
-                const prev = events[index - 1];
-                if (prev !== undefined && event !== undefined) {
-                    expect(event.seq).toBeGreaterThan(prev.seq);
+            const { attachment } = attach(fixture.registry, handle.sessionId);
+            expect(events().at(-1)?.delta).toMatchObject({
+                op: "patch",
+                id: handle.sessionId,
+                patch: { attachedClients: 1 },
+            });
+
+            await sendCommand(attachment, { type: "set_session_name", id: "rename-1", name: "Live Rename" });
+            expect(events().at(-1)?.delta).toMatchObject({
+                op: "patch",
+                id: handle.sessionId,
+                patch: { name: "Live Rename" },
+            });
+
+            session.setState({ isStreaming: true });
+            session.emit({ type: "agent_start" });
+            expect(events().at(-1)?.delta).toMatchObject({
+                op: "patch",
+                id: handle.sessionId,
+                patch: { runtimeState: "streaming" },
+            });
+
+            const countBeforeDeltas = events().length;
+            session.emit(createTextDeltaEvent("Hel", "Hel"));
+            session.emit(createTextDeltaEvent("lo", "Hello"));
+            expect(events()).toHaveLength(countBeforeDeltas);
+
+            session.setState({ isStreaming: false });
+            session.emit({ type: "agent_settled", aborted: false });
+            expect(events().at(-1)?.delta).toMatchObject({
+                op: "patch",
+                id: handle.sessionId,
+                patch: { runtimeState: "idle" },
+            });
+
+            attachment.detach();
+            expect(events().at(-1)?.delta).toMatchObject({
+                op: "patch",
+                id: handle.sessionId,
+                patch: { attachedClients: 0 },
+            });
+
+            await fixture.registry.closeSession(handle.sessionId);
+            expect(events().some((frame) => frame.delta.op === "remove" && frame.delta.id === handle.sessionId)).toBe(
+                true,
+            );
+            expect(events().at(-2)?.delta).toMatchObject({
+                op: "patch",
+                id: handle.sessionId,
+                patch: { runtimeState: "closing" },
+            });
+            expect(events().at(-1)?.delta).toMatchObject({
+                op: "remove",
+                id: handle.sessionId,
+            });
+
+            // Detaching stops further notifications, and persisted disk sessions fall back to idle on close.
+            secondary.detach();
+            const countBeforePersisted = primary.frames.length;
+            const persistedPath = join(fixture.sessionDir, "persisted.jsonl");
+            writeSessionFixture(persistedPath, "session-persisted");
+            const persistedId = parseSessionId("session-persisted");
+            if (persistedId === null) {
+                throw new Error("expected valid test session id");
+            }
+            await fixture.registry.open(persistedId);
+            const countBeforeClose = events().length;
+            await fixture.registry.closeSession(persistedId);
+
+            expect(
+                events()
+                    .slice(countBeforeClose)
+                    .some(
+                        (frame) =>
+                            frame.delta.op === "patch" &&
+                            frame.delta.id === persistedId &&
+                            frame.delta.patch.runtimeState === "idle" &&
+                            frame.delta.patch.attachedClients === 0,
+                    ),
+            ).toBe(true);
+            expect(secondary.frames.length).toBeLessThan(countBeforePersisted + 2);
+            expect(events().at(-1)?.delta).toMatchObject({
+                op: "patch",
+                id: persistedId,
+                patch: { runtimeState: "idle", attachedClients: 0 },
+            });
+
+            // All catalog events share one catalogEpoch and strictly increasing seq matching list().
+            const listAfterEvents = await fixture.registry.list();
+            const allDeltas = events();
+            expect(allDeltas.length).toBeGreaterThan(0);
+            for (let index = 0; index < allDeltas.length; index += 1) {
+                const frame = allDeltas[index];
+                expect(frame?.cursor.epoch).toBe(listAfterEvents.catalogEpoch);
+                if (index > 0) {
+                    const prev = allDeltas[index - 1];
+                    if (prev !== undefined && frame !== undefined) {
+                        expect(frame.cursor.seq).toBe(prev.cursor.seq + 1);
+                    }
                 }
             }
-        }
-        expect(events.at(-1)?.seq).toBe(listAfterEvents.catalogSeq);
+            expect(allDeltas.at(-1)?.cursor.seq).toBe(listAfterEvents.catalogSeq);
 
-        unsubscribe();
-        const countAfterUnsubscribe = events.length;
-        await fixture.registry.createSession(fixture.projectDir);
-        expect(events).toHaveLength(countAfterUnsubscribe);
-        expect((await fixture.registry.list()).catalogSeq).toBeGreaterThan(listAfterEvents.catalogSeq);
+            primary.detach();
+            const countAfterDetach = allDeltas.length;
+            await fixture.registry.createSession(fixture.projectDir);
+            expect(events()).toHaveLength(countAfterDetach);
+            expect((await fixture.registry.list()).catalogSeq).toBeGreaterThan(listAfterEvents.catalogSeq);
+        } finally {
+            releaseBind?.();
+        }
     });
 
     it("preserves full firstMessage and sends it once instead of repeating it on later patches", async () => {
         const fixture = createFixture();
         const handle = await fixture.registry.createSession(fixture.projectDir);
         const session = fakeSession(fixture, handle);
-        const events: WorkspaceCatalogEvent[] = [];
-        fixture.registry.subscribeCatalog((event) => {
-            events.push(event);
-        });
+        const catalog = attachCatalogCollector(fixture.registry);
+        await catalog.ready;
         const longMessage = "x".repeat(2_000);
 
         session.appendUserMessage(longMessage);
@@ -1540,11 +1698,14 @@ describe("SessionRegistry", () => {
             message: { role: "user", content: longMessage, timestamp: Date.now() },
         });
 
+        const deltas = catalog.frames.filter(
+            (frame): frame is Extract<WorkspaceWsServerMessage, { type: "sync:delta" }> => frame.type === "sync:delta",
+        );
         expect(handle.summarize().firstMessage).toBe(longMessage);
-        expect(events).toHaveLength(1);
-        expect(events[0]).toMatchObject({
-            type: "session_updated",
-            sessionId: handle.sessionId,
+        expect(deltas).toHaveLength(1);
+        expect(deltas[0]?.delta).toMatchObject({
+            op: "patch",
+            id: handle.sessionId,
             patch: { firstMessage: longMessage },
         });
 
@@ -1562,26 +1723,28 @@ describe("SessionRegistry", () => {
         session.emit({ type: "agent_end", messages: [], willRetry: false });
         session.emit({ type: "agent_settled", aborted: false });
 
-        const laterPatches = events
-            .slice(1)
+        const laterPatches = catalog.frames
             .filter(
-                (event): event is Extract<WorkspaceCatalogEvent, { type: "session_updated" }> =>
-                    event.type === "session_updated",
-            );
+                (frame): frame is Extract<WorkspaceWsServerMessage, { type: "sync:delta" }> =>
+                    frame.type === "sync:delta",
+            )
+            .slice(1)
+            .filter((frame) => frame.delta.op === "patch");
         expect(laterPatches.length).toBeGreaterThan(0);
         for (const update of laterPatches) {
-            expect("firstMessage" in update.patch).toBe(false);
+            if (update.delta.op === "patch") {
+                expect("firstMessage" in update.delta.patch).toBe(false);
+            }
         }
+        catalog.detach();
     });
 
     it("ignores late detach after close and caches header-derived summary fields", async () => {
         const fixture = createFixture();
         const handle = await fixture.registry.createSession(fixture.projectDir);
         const session = fakeSession(fixture, handle);
-        const events: WorkspaceCatalogEvent[] = [];
-        fixture.registry.subscribeCatalog((event) => {
-            events.push(event);
-        });
+        const catalog = attachCatalogCollector(fixture.registry);
+        await catalog.ready;
 
         const { attachment } = attach(fixture.registry, handle.sessionId);
         session.appendUserMessage("Cached prompt");
@@ -1590,7 +1753,6 @@ describe("SessionRegistry", () => {
             message: { role: "user", content: "Cached prompt", timestamp: Date.now() },
         });
 
-        // After initialization and caching, summarize() should not invoke session.getEntries().
         const originalGetEntries = session.getEntries.bind(session);
         let getEntriesCalls = 0;
         session.getEntries = () => {
@@ -1601,65 +1763,178 @@ describe("SessionRegistry", () => {
         expect(summary.firstMessage).toBe("Cached prompt");
         expect(getEntriesCalls).toBe(0);
 
-        const countBeforeClose = events.length;
+        const countBeforeClose = catalog.frames.length;
         await fixture.registry.closeSession(handle.sessionId);
-        await waitUntil(() =>
-            events
-                .slice(countBeforeClose)
-                .some(
-                    (event) =>
-                        event.type === "session_updated" &&
-                        event.sessionId === handle.sessionId &&
-                        event.patch.runtimeState === "idle" &&
-                        event.patch.attachedClients === 0,
-                ),
-        );
-        const countAfterTerminal = events.length;
+        const closedFrames = catalog.frames.slice(countBeforeClose);
+        expect(
+            closedFrames.some(
+                (frame) =>
+                    frame.type === "sync:delta" &&
+                    frame.delta.op === "patch" &&
+                    frame.delta.id === handle.sessionId &&
+                    frame.delta.patch.runtimeState === "idle" &&
+                    frame.delta.patch.attachedClients === 0,
+            ),
+        ).toBe(true);
+        const countAfterTerminal = catalog.frames.length;
 
         // A late detach arriving after closeSession removed the entry must not re-publish "closing".
         attachment.detach();
-        expect(events).toHaveLength(countAfterTerminal);
+        expect(catalog.frames).toHaveLength(countAfterTerminal);
+        catalog.detach();
     });
 
     it("emits a terminal fallback catalog event even when resolveById rejects after close", async () => {
         const fixture = createFixture();
         const handle = await fixture.registry.createSession(fixture.projectDir);
-        const events: WorkspaceCatalogEvent[] = [];
-        fixture.registry.subscribeCatalog((event) => {
-            events.push(event);
-        });
+        const catalog = attachCatalogCollector(fixture.registry);
+        await catalog.ready;
 
         fixture.catalog.resolveById = () => Promise.reject(new Error("disk read error"));
         await fixture.registry.closeSession(handle.sessionId);
-        await waitUntil(() =>
-            events.some((event) => event.type === "session_removed" && event.sessionId === handle.sessionId),
-        );
-        expect(events.at(-1)).toMatchObject({ type: "session_removed", sessionId: handle.sessionId });
+        expect(catalog.frames.at(-1)).toMatchObject({
+            type: "sync:delta",
+            delta: { op: "remove", id: handle.sessionId },
+        });
+        catalog.detach();
     });
 
-    it("keeps an oversized persisted session in the catalog on close instead of emitting session_removed", async () => {
+    it("keeps an oversized persisted session in the catalog on close instead of emitting remove", async () => {
         const fixture = createFixture({ maxSessionFileBytes: 100 });
         const handle = await fixture.registry.createSession(fixture.projectDir);
-        const events: WorkspaceCatalogEvent[] = [];
-        fixture.registry.subscribeCatalog((event) => {
-            events.push(event);
-        });
+        const catalog = attachCatalogCollector(fixture.registry);
+        await catalog.ready;
 
-        // Simulate a live session that flushed a >64 MiB transcript before closing.
         writeSessionFixture(join(fixture.sessionDir, "oversized.jsonl"), handle.sessionId, {
             messages: [{ role: "user", text: "x".repeat(500) }],
         });
 
         await fixture.registry.closeSession(handle.sessionId);
-        await waitUntil(() =>
-            events.some(
-                (event) =>
-                    event.type === "session_updated" &&
-                    event.sessionId === handle.sessionId &&
-                    event.patch.runtimeState === "idle" &&
-                    event.patch.attachedClients === 0,
+        expect(
+            catalog.frames.some(
+                (frame) =>
+                    frame.type === "sync:delta" &&
+                    frame.delta.op === "patch" &&
+                    frame.delta.id === handle.sessionId &&
+                    frame.delta.patch.runtimeState === "idle" &&
+                    frame.delta.patch.attachedClients === 0,
             ),
-        );
-        expect(events.some((event) => event.type === "session_removed")).toBe(false);
+        ).toBe(true);
+        expect(catalog.frames.some((frame) => frame.type === "sync:delta" && frame.delta.op === "remove")).toBe(false);
+        catalog.detach();
+    });
+
+    it("retries list() when a session closes mid-scan so snapshots stay linearized", async () => {
+        const fixture = createFixture();
+        const handle = await fixture.registry.createSession(fixture.projectDir);
+        const originalList = fixture.catalog.list.bind(fixture.catalog);
+        let listCalls = 0;
+        const firstScanStarted = Promise.withResolvers<void>();
+        const releaseFirstScan = Promise.withResolvers<void>();
+
+        fixture.catalog.list = async () => {
+            listCalls += 1;
+            const res = await originalList();
+            if (listCalls === 1) {
+                firstScanStarted.resolve();
+                await releaseFirstScan.promise;
+            }
+            return res;
+        };
+
+        const listPromise = fixture.registry.list();
+        await firstScanStarted.promise;
+        await fixture.registry.closeSession(handle.sessionId);
+        releaseFirstScan.resolve();
+
+        const result = await listPromise;
+        expect(listCalls).toBe(2);
+        expect(result.sessions.some((session) => session.id === handle.sessionId)).toBe(false);
+    });
+
+    it("emits state_patched for queue modes and auto-compaction changes after extension reload()", async () => {
+        const fixture = createFixture();
+        const handle = await fixture.registry.createSession(fixture.projectDir);
+        const session = fixture.harness.sessions[0];
+        if (session === undefined) {
+            throw new Error("expected fake session");
+        }
+        session.reload = () => {
+            session.reloadCalls += 1;
+            session.setState({
+                steeringMode: "all",
+                followUpMode: "all",
+                autoCompactionEnabled: false,
+            });
+            return Promise.resolve();
+        };
+
+        const c1 = createCollector();
+        const attach1 = fixture.registry.attach(handle.sessionId, c1.client);
+        const snap = c1.messages[0];
+        if (snap?.type !== "sync:snapshot") {
+            throw new Error("expected initial snapshot");
+        }
+        const s1 = parseSyncSeq<"session">(1);
+        if (s1 === null) {
+            throw new Error("invalid seq");
+        }
+
+        await session.bindings?.commandContextActions.reload();
+        expect(c1.messages.slice(1)).toEqual([
+            {
+                type: "sync:delta",
+                cursor: { epoch: snap.cursor.epoch, seq: s1 },
+                delta: {
+                    kind: "state_patched",
+                    patch: {
+                        steeringMode: "all",
+                        followUpMode: "all",
+                        autoCompactionEnabled: false,
+                    },
+                },
+            },
+        ]);
+
+        // Tier 1 replay for a reconnecting client includes that state_patched delta cleanly.
+        const c2 = createCollector();
+        const attach2 = fixture.registry.attach(handle.sessionId, c2.client, { cursor: snap.cursor });
+        expect(c2.messages).toEqual([
+            {
+                type: "sync:replay",
+                cursor: { epoch: snap.cursor.epoch, seq: s1 },
+                fromSeq: snap.cursor.seq,
+                deltas: [
+                    {
+                        seq: s1,
+                        payload: {
+                            kind: "state_patched",
+                            patch: {
+                                steeringMode: "all",
+                                followUpMode: "all",
+                                autoCompactionEnabled: false,
+                            },
+                        },
+                    },
+                ],
+            },
+        ]);
+
+        attach1.detach();
+        attach2.detach();
+    });
+
+    it("completes close cleanup and allows reopening even if an unsubscribe callback throws", async () => {
+        const fixture = createFixture({
+            onCreate: (session) => {
+                session.subscribe = () => () => {
+                    throw new Error("unsubscribe failure");
+                };
+            },
+        });
+        const handle = await fixture.registry.createSession(fixture.projectDir);
+        await expect(fixture.registry.closeSession(handle.sessionId)).resolves.toBe(true);
+        const listAfterClose = await fixture.registry.list();
+        expect(listAfterClose.sessions.some((s) => s.id === handle.sessionId)).toBe(false);
     });
 });

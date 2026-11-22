@@ -1,8 +1,8 @@
-import type { AgentSessionEvent, JsonAgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
 import { describe, expect, it } from "vitest";
 
-import { SessionEventBuffer, toWireSessionEvent } from "./events.ts";
+import { toWireSessionEvent } from "./events.ts";
 
 const USAGE = {
     input: 12,
@@ -130,84 +130,5 @@ describe("toWireSessionEvent", () => {
         });
 
         expect(() => toWireSessionEvent(event)).toThrow("is not a tool call");
-    });
-});
-
-function event(type: "agent_start" | "agent_settled"): JsonAgentSessionEvent {
-    if (type === "agent_start") {
-        return { type: "agent_start" };
-    }
-    return { type: "agent_settled", aborted: false };
-}
-
-describe("SessionEventBuffer", () => {
-    it("assigns monotonic sequence numbers starting at 1", () => {
-        const buffer = new SessionEventBuffer();
-        expect(buffer.currentSeq).toBe(0);
-        expect(buffer.push(event("agent_start")).seq).toBe(1);
-        expect(buffer.push(event("agent_settled")).seq).toBe(2);
-        expect(buffer.currentSeq).toBe(2);
-        expect(buffer.earliestSeq).toBe(1);
-    });
-
-    it("replays all events after 0 and an empty replay after the current sequence", () => {
-        const buffer = new SessionEventBuffer();
-        const first = buffer.push(event("agent_start"));
-        const second = buffer.push(event("agent_settled"));
-
-        const fromZero = buffer.since(0);
-        expect(fromZero.kind).toBe("replay");
-        if (fromZero.kind !== "replay") {
-            throw new Error("expected a replay");
-        }
-        expect(fromZero.seq).toBe(2);
-        expect(fromZero.events).toEqual([first, second]);
-
-        const fromCurrent = buffer.since(2);
-        expect(fromCurrent).toEqual({ kind: "replay", events: [], seq: 2 });
-
-        const fromFirst = buffer.since(1);
-        expect(fromFirst).toEqual({ kind: "replay", events: [second], seq: 2 });
-    });
-
-    it("requires a snapshot when no afterSeq is provided", () => {
-        const buffer = new SessionEventBuffer();
-        buffer.push(event("agent_start"));
-        expect(buffer.since()).toEqual({ kind: "snapshot_required", seq: 1 });
-    });
-
-    it("falls back to a snapshot after the ring buffer evicted missing events", () => {
-        const buffer = new SessionEventBuffer({ capacity: 2 });
-        buffer.push(event("agent_start"));
-        buffer.push(event("agent_settled"));
-        buffer.push(event("agent_start"));
-
-        expect(buffer.currentSeq).toBe(3);
-        expect(buffer.earliestSeq).toBe(2);
-        const replay = buffer.since(1);
-        expect(replay.kind).toBe("replay");
-        if (replay.kind === "replay") {
-            expect(replay.events.map((entry) => entry.seq)).toEqual([2, 3]);
-        }
-        expect(buffer.since(0)).toEqual({ kind: "snapshot_required", seq: 3 });
-    });
-
-    it("requires a snapshot when a client sends a sequence newer than the server", () => {
-        const restarted = new SessionEventBuffer();
-        expect(restarted.since(5)).toEqual({ kind: "snapshot_required", seq: 0 });
-        expect(restarted.since(0)).toEqual({ kind: "replay", events: [], seq: 0 });
-    });
-
-    it("treats negative and non-integer sequences as snapshot requests", () => {
-        const buffer = new SessionEventBuffer();
-        buffer.push(event("agent_start"));
-        expect(buffer.since(-1)).toEqual({ kind: "snapshot_required", seq: 1 });
-        expect(buffer.since(1.5)).toEqual({ kind: "snapshot_required", seq: 1 });
-        expect(buffer.since(Number.NaN)).toEqual({ kind: "snapshot_required", seq: 1 });
-    });
-
-    it("rejects a capacity below one", () => {
-        expect(() => new SessionEventBuffer({ capacity: 0 })).toThrow("positive integer");
-        expect(() => new SessionEventBuffer({ capacity: 1.5 })).toThrow("positive integer");
     });
 });

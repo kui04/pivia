@@ -6,7 +6,6 @@ import {
     INITIAL_CATALOG_SEQ,
     isRecord,
     nextCatalogSeq,
-    parseAfterSeq,
     parseAuthLoginResponse,
     parseAuthLogoutResponse,
     parseAuthStatusResponse,
@@ -22,10 +21,11 @@ import {
     parseSessionId,
     parseSessionListResponse,
     parseSessionPrefixAnchor,
+    parseSessionRpcCommand,
     parseSessionStateSnapshot,
     parseSessionSummary,
     parseSessionSummaryPatch,
-    parseSessionWsClientCommand,
+    parseSessionWsClientMessage,
     parseSessionWsHandshakeQuery,
     parseSessionWsServerMessage,
     parseWorkspaceWsServerMessage,
@@ -91,48 +91,36 @@ describe("protocol parse helpers", () => {
         expect(parseSessionPrefixAnchor(null)).toBeUndefined();
     });
 
-    it("parseAfterSeq distinguishes absent, valid, and invalid values", () => {
-        expect(parseAfterSeq(undefined)).toEqual({ ok: true, afterSeq: undefined });
-        expect(parseAfterSeq("0")).toEqual({ ok: true, afterSeq: 0 });
-        expect(parseAfterSeq("42")).toEqual({ ok: true, afterSeq: 42 });
-        expect(parseAfterSeq("-1")).toEqual({ ok: false });
-        expect(parseAfterSeq("abc")).toEqual({ ok: false });
-        expect(parseAfterSeq(5)).toEqual({ ok: false });
-    });
-
-    it("parseSessionWsHandshakeQuery parses afterSeq strictly and degrades invalid cache hints", () => {
+    it("parseSessionWsHandshakeQuery parses cursor and prefixAnchor and degrades malformed cursors", () => {
         expect(
             parseSessionWsHandshakeQuery({
+                epoch: "rt-1",
                 afterSeq: "10",
-                runtimeId: "rt-1",
                 entriesVersion: "3:1.5.2",
                 afterCount: "3",
                 afterEntryId: "e3",
             }),
         ).toEqual({
-            ok: true,
-            value: {
-                afterSeq: 10,
-                runtimeId: "rt-1",
-                prefixAnchor: { entriesVersion: "3:1.5.2", afterCount: 3, afterEntryId: "e3" },
-            },
+            cursor: { epoch: "rt-1", seq: 10 },
+            hint: { entriesVersion: "3:1.5.2", afterCount: 3, afterEntryId: "e3" },
         });
 
-        expect(parseSessionWsHandshakeQuery({ afterSeq: "nope" })).toEqual({
-            ok: false,
-            message: "Invalid afterSeq parameter.",
+        expect(parseSessionWsHandshakeQuery({ epoch: "rt-1", afterSeq: "nope" })).toEqual({});
+
+        expect(
+            parseSessionWsHandshakeQuery({ epoch: "rt-1", afterSeq: "2", entriesVersion: "bad", afterCount: "0" }),
+        ).toEqual({
+            cursor: { epoch: "rt-1", seq: 2 },
         });
 
-        expect(parseSessionWsHandshakeQuery({ afterSeq: "2", entriesVersion: "bad", afterCount: "0" })).toEqual({
-            ok: true,
-            value: { afterSeq: 2 },
-        });
-
-        expect(parseSessionWsHandshakeQuery(undefined)).toEqual({ ok: true, value: {} });
+        expect(parseSessionWsHandshakeQuery(undefined)).toEqual({});
     });
 
-    it("parses valid WS client commands and extension UI responses", () => {
-        expect(commandIdOf({ id: "cmd-1" })).toBe("cmd-1");
+    it("parses valid RPC client frames, commands, and extension UI responses", () => {
+        expect(commandIdOf({ type: "rpc:command", command: { type: "abort", id: "cmd-1" } })).toBe("cmd-1");
+        expect(commandIdOf({ type: "rpc:ui_response", response: { type: "extension_ui_response", id: "req-1" } })).toBe(
+            "req-1",
+        );
         expect(commandIdOf("not-a-record")).toBeUndefined();
 
         expect(parseExtensionUiResponse({ type: "extension_ui_response", id: "req-1", confirmed: true })).toEqual({
@@ -142,7 +130,7 @@ describe("protocol parse helpers", () => {
         });
 
         expect(
-            parseSessionWsClientCommand({ type: "prompt", id: "p1", message: "hello", streamingBehavior: "steer" }),
+            parseSessionRpcCommand({ type: "prompt", id: "p1", message: "hello", streamingBehavior: "steer" }),
         ).toEqual({
             type: "prompt",
             id: "p1",
@@ -150,8 +138,28 @@ describe("protocol parse helpers", () => {
             streamingBehavior: "steer",
         });
 
-        expect(parseSessionWsClientCommand({ type: "set_thinking_level", level: "invalid" })).toBeNull();
-        expect(parseSessionWsClientCommand({ type: "unknown_command" })).toBeNull();
+        expect(
+            parseSessionWsClientMessage({
+                type: "rpc:command",
+                command: { type: "prompt", id: "p1", message: "hello", streamingBehavior: "steer" },
+            }),
+        ).toEqual({
+            type: "rpc:command",
+            command: { type: "prompt", id: "p1", message: "hello", streamingBehavior: "steer" },
+        });
+
+        expect(
+            parseSessionWsClientMessage({
+                type: "rpc:ui_response",
+                response: { type: "extension_ui_response", id: "req-1", confirmed: true },
+            }),
+        ).toEqual({
+            type: "rpc:ui_response",
+            response: { type: "extension_ui_response", id: "req-1", confirmed: true },
+        });
+
+        expect(parseSessionRpcCommand({ type: "set_thinking_level", level: "invalid" })).toBeNull();
+        expect(parseSessionWsClientMessage({ type: "unknown_command" })).toBeNull();
     });
 
     it("parses HTTP response payloads and rejects malformed shapes", () => {
@@ -251,7 +259,7 @@ describe("protocol parse helpers", () => {
         ).toBeNull();
     });
 
-    it("parses WS server messages and rejects malformed or unknown frames", () => {
+    it("parses session sync and rpc server messages and rejects malformed or unknown frames", () => {
         const stateSnapshot = {
             sessionId: "session-1",
             cwd: "/tmp/project",
@@ -274,46 +282,80 @@ describe("protocol parse helpers", () => {
 
         expect(
             parseSessionWsServerMessage({
-                type: "snapshot",
-                sessionId: "session-1",
-                runtimeId: "rt-1",
-                seq: 0,
-                entriesVersion: "3:1.5.2",
-                baseEntryCount: 0,
-                entriesMode: "inline",
-                entries: [],
-                state: stateSnapshot,
-                liveMessage: null,
-                pendingUiRequests: [],
+                type: "sync:snapshot",
+                cursor: { epoch: "rt-1", seq: 0 },
+                snapshot: {
+                    entriesVersion: "3:1.5.2",
+                    baseEntryCount: 0,
+                    entries: { mode: "inline", data: [] },
+                    state: stateSnapshot,
+                    liveMessage: null,
+                    pendingUiRequests: [],
+                },
             }),
-        ).toMatchObject({ type: "snapshot", entriesMode: "inline" });
+        ).toMatchObject({ type: "sync:snapshot", cursor: { epoch: "rt-1", seq: 0 } });
 
         expect(
             parseSessionWsServerMessage({
-                type: "replay",
-                sessionId: "session-1",
-                runtimeId: "rt-1",
-                seq: 2,
-                entriesVersion: "3:1.5.2",
-                state: stateSnapshot,
-                events: [{ seq: 2, event: { type: "agent_start" } }],
-                liveMessage: { role: "assistant", content: [{ type: "text", text: "streaming" }] },
-                appendedSlice: { baseEntryCount: 1, entries: [{ type: "message" }] },
-                pendingUiRequests: [],
+                type: "sync:snapshot",
+                cursor: { epoch: "rt-1", seq: 3 },
+                snapshot: {
+                    entriesVersion: "3:1.5.2",
+                    baseEntryCount: 2,
+                    entries: { mode: "http", meta: { entryCount: 10 } },
+                    state: stateSnapshot,
+                    liveMessage: null,
+                    pendingUiRequests: [],
+                },
             }),
         ).toMatchObject({
-            type: "replay",
-            liveMessage: { role: "assistant", content: [{ type: "text", text: "streaming" }] },
-            appendedSlice: { baseEntryCount: 1 },
+            type: "sync:snapshot",
+            snapshot: { entries: { mode: "http", meta: { entryCount: 10 } } },
         });
 
-        expect(parseSessionWsServerMessage({ type: "response", command: "abort", success: true })).toEqual({
-            type: "response",
+        expect(
+            parseSessionWsServerMessage({
+                type: "sync:replay",
+                cursor: { epoch: "rt-1", seq: 3 },
+                fromSeq: 1,
+                deltas: [
+                    { seq: 2, payload: { kind: "agent_event", event: { type: "agent_start" } } },
+                    {
+                        seq: 3,
+                        payload: {
+                            kind: "entries_appended",
+                            entriesVersion: "3:1.5.2",
+                            baseEntryCount: 1,
+                            entries: { mode: "inline", data: [{ type: "message" }] },
+                        },
+                    },
+                ],
+            }),
+        ).toMatchObject({ type: "sync:replay", fromSeq: 1, cursor: { epoch: "rt-1", seq: 3 } });
+
+        expect(
+            parseSessionWsServerMessage({
+                type: "sync:delta",
+                cursor: { epoch: "rt-1", seq: 4 },
+                delta: {
+                    kind: "state_patched",
+                    patch: { model: { provider: "openai", id: "gpt-5", name: "GPT-5" }, messageCount: 4 },
+                },
+            }),
+        ).toMatchObject({ type: "sync:delta", cursor: { epoch: "rt-1", seq: 4 } });
+
+        expect(parseSessionWsServerMessage({ type: "rpc:response", command: "abort", success: true })).toEqual({
+            type: "rpc:response",
             command: "abort",
             success: true,
         });
-        expect(parseSessionWsServerMessage({ type: "response", command: "abort", success: false })).toBeNull();
-        expect(parseSessionWsServerMessage({ type: "response", command: "made_up", success: true })).toBeNull();
+        expect(parseSessionWsServerMessage({ type: "rpc:response", command: "abort", success: false })).toBeNull();
+        expect(parseSessionWsServerMessage({ type: "rpc:response", command: "made_up", success: true })).toBeNull();
+        expect(parseSessionWsServerMessage({ type: "rpc:error", code: "invalid_json", message: "Bad JSON" })).toEqual({
+            type: "rpc:error",
+            code: "invalid_json",
+            message: "Bad JSON",
+        });
         expect(parseSessionWsServerMessage({ type: "unknown_type" })).toBeNull();
     });
 
@@ -345,7 +387,7 @@ describe("protocol parse helpers", () => {
         expect(parseDirectoryListResponse({ path: "/", parent: null, directories: [] })).toBeNull();
     });
 
-    it("parses workspace WebSocket messages and rejects malformed payloads", () => {
+    it("parses workspace SyncFrame messages and rejects malformed payloads", () => {
         const sessionSummary = {
             id: "session-1",
             cwd: "/workspace/repo",
@@ -368,40 +410,51 @@ describe("protocol parse helpers", () => {
 
         expect(
             parseWorkspaceWsServerMessage({
-                type: "catalog_snapshot",
-                sessions: [sessionSummary],
-                updatedAtMs: 3000,
-                catalogEpoch: "epoch-1",
-                catalogSeq: 0,
+                type: "sync:snapshot",
+                cursor: { epoch: "epoch-1", seq: 0 },
+                snapshot: { sessions: [sessionSummary], updatedAtMs: 3000 },
             }),
         ).toEqual({
-            type: "catalog_snapshot",
-            sessions: [sessionSummary],
-            updatedAtMs: 3000,
-            catalogEpoch: "epoch-1",
-            catalogSeq: 0,
+            type: "sync:snapshot",
+            cursor: { epoch: "epoch-1", seq: 0 },
+            snapshot: { sessions: [sessionSummary], updatedAtMs: 3000 },
         });
 
         expect(
             parseWorkspaceWsServerMessage({
-                type: "session_upserted",
-                catalogEpoch: "epoch-1",
-                seq: 1,
-                session: sessionSummary,
+                type: "sync:delta",
+                cursor: { epoch: "epoch-1", seq: 1 },
+                delta: { op: "upsert", item: sessionSummary },
             }),
         ).toEqual({
-            type: "session_upserted",
-            catalogEpoch: "epoch-1",
-            seq: 1,
-            session: sessionSummary,
+            type: "sync:delta",
+            cursor: { epoch: "epoch-1", seq: 1 },
+            delta: { op: "upsert", item: sessionSummary },
         });
 
         expect(
             parseWorkspaceWsServerMessage({
-                type: "session_updated",
-                catalogEpoch: "epoch-1",
-                seq: 2,
-                sessionId: "session-1",
+                type: "sync:delta",
+                cursor: { epoch: "epoch-1", seq: 2 },
+                delta: {
+                    op: "patch",
+                    id: "session-1",
+                    patch: {
+                        name: null,
+                        firstMessage: "full message",
+                        messageCount: 3,
+                        modifiedAtMs: 2500,
+                        runtimeState: "streaming",
+                        attachedClients: 2,
+                    },
+                },
+            }),
+        ).toEqual({
+            type: "sync:delta",
+            cursor: { epoch: "epoch-1", seq: 2 },
+            delta: {
+                op: "patch",
+                id: "session-1",
                 patch: {
                     name: null,
                     firstMessage: "full message",
@@ -410,105 +463,77 @@ describe("protocol parse helpers", () => {
                     runtimeState: "streaming",
                     attachedClients: 2,
                 },
-            }),
-        ).toEqual({
-            type: "session_updated",
-            catalogEpoch: "epoch-1",
-            seq: 2,
-            sessionId: "session-1",
-            patch: {
-                name: null,
-                firstMessage: "full message",
-                messageCount: 3,
-                modifiedAtMs: 2500,
-                runtimeState: "streaming",
-                attachedClients: 2,
             },
         });
         expect(parseSessionSummaryPatch({ runtimeState: "idle" })).toEqual({ runtimeState: "idle" });
 
         expect(
             parseWorkspaceWsServerMessage({
-                type: "session_removed",
-                catalogEpoch: "epoch-1",
-                seq: 3,
-                sessionId: "session-1",
+                type: "sync:delta",
+                cursor: { epoch: "epoch-1", seq: 3 },
+                delta: { op: "remove", id: "session-1" },
             }),
         ).toEqual({
-            type: "session_removed",
-            catalogEpoch: "epoch-1",
-            seq: 3,
-            sessionId: "session-1",
+            type: "sync:delta",
+            cursor: { epoch: "epoch-1", seq: 3 },
+            delta: { op: "remove", id: "session-1" },
         });
 
         expect(parseWorkspaceWsServerMessage(null)).toBeNull();
         expect(parseWorkspaceWsServerMessage({ type: "unknown_type" })).toBeNull();
         expect(
             parseWorkspaceWsServerMessage({
-                type: "catalog_snapshot",
-                sessions: [sessionSummary],
-                updatedAtMs: 3000,
+                type: "sync:snapshot",
+                snapshot: { sessions: [sessionSummary], updatedAtMs: 3000 },
             }),
         ).toBeNull();
         expect(
             parseWorkspaceWsServerMessage({
-                type: "catalog_snapshot",
-                sessions: [{ ...sessionSummary, id: "../bad" }],
-                updatedAtMs: 3000,
-                catalogEpoch: "epoch-1",
-                catalogSeq: 0,
+                type: "sync:snapshot",
+                cursor: { epoch: "epoch-1", seq: 0 },
+                snapshot: { sessions: [{ ...sessionSummary, id: "../bad" }], updatedAtMs: 3000 },
             }),
         ).toBeNull();
         expect(
             parseWorkspaceWsServerMessage({
-                type: "catalog_snapshot",
-                sessions: [sessionSummary],
-                updatedAtMs: Number.NaN,
-                catalogEpoch: "epoch-1",
-                catalogSeq: 0,
+                type: "sync:snapshot",
+                cursor: { epoch: "epoch-1", seq: 0 },
+                snapshot: { sessions: [sessionSummary], updatedAtMs: Number.NaN },
             }),
         ).toBeNull();
         expect(
             parseWorkspaceWsServerMessage({
-                type: "session_upserted",
-                catalogEpoch: "epoch-1",
-                seq: 1,
-                session: { ...sessionSummary, runtimeState: "bogus" },
+                type: "sync:delta",
+                cursor: { epoch: "epoch-1", seq: 1 },
+                delta: { op: "upsert", item: { ...sessionSummary, runtimeState: "bogus" } },
             }),
         ).toBeNull();
         expect(
             parseWorkspaceWsServerMessage({
-                type: "session_upserted",
-                catalogEpoch: "",
-                seq: 1,
-                session: sessionSummary,
+                type: "sync:delta",
+                cursor: { epoch: "", seq: 1 },
+                delta: { op: "upsert", item: sessionSummary },
             }),
         ).toBeNull();
         expect(
             parseWorkspaceWsServerMessage({
-                type: "session_updated",
-                catalogEpoch: "epoch-1",
-                seq: 2,
-                sessionId: "../bad",
-                patch: { runtimeState: "idle" },
+                type: "sync:delta",
+                cursor: { epoch: "epoch-1", seq: 2 },
+                delta: { op: "patch", id: "../bad", patch: { runtimeState: "idle" } },
             }),
         ).toBeNull();
         expect(
             parseWorkspaceWsServerMessage({
-                type: "session_updated",
-                catalogEpoch: "epoch-1",
-                seq: 2,
-                sessionId: "session-1",
-                patch: {},
+                type: "sync:delta",
+                cursor: { epoch: "epoch-1", seq: 2 },
+                delta: { op: "patch", id: "session-1", patch: {} },
             }),
         ).toBeNull();
         expect(
             parseWorkspaceWsServerMessage({
-                type: "session_updated",
-                catalogEpoch: "epoch-1",
-                seq: 2,
-                sessionId: "session-1",
-                patch: { runtimeState: "bogus" },
+                type: "sync:delta",
+                cursor: { epoch: "epoch-1", seq: 2 },
+                delta: { op: "patch", id: "session-1", patch: { runtimeState: "bogus" } },
             }),
         ).toBeNull();
         expect(parseSessionSummaryPatch({ messageCount: -1 })).toBeNull();
@@ -518,18 +543,16 @@ describe("protocol parse helpers", () => {
         expect(parseSessionSummaryPatch({ firstMessage: 42 })).toBeNull();
         expect(
             parseWorkspaceWsServerMessage({
-                type: "session_removed",
-                catalogEpoch: "epoch-1",
-                seq: -1,
-                sessionId: "session-1",
+                type: "sync:delta",
+                cursor: { epoch: "epoch-1", seq: -1 },
+                delta: { op: "remove", id: "session-1" },
             }),
         ).toBeNull();
         expect(
             parseWorkspaceWsServerMessage({
-                type: "session_removed",
-                catalogEpoch: "epoch-1",
-                seq: 3,
-                sessionId: "../bad",
+                type: "sync:delta",
+                cursor: { epoch: "epoch-1", seq: 3 },
+                delta: { op: "remove", id: "../bad" },
             }),
         ).toBeNull();
     });

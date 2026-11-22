@@ -5,18 +5,26 @@ import {
     SESSION_CLOSE_CODE,
     type RpcExtensionUIResponse,
     type SessionCloseReason,
+    type SessionCursor,
     type SessionId,
     type SessionPrefixAnchor,
-    type SessionWsClientCommand,
-    type SessionWsErrorMessage,
-    type SessionWsResponseMessage,
+    type SessionRpcCommand,
+    type SessionRpcServerMessage,
+    type SessionSyncFrame,
+    type SessionWsClientMessage,
     type SessionWsServerMessage,
 } from "@pivia/protocol";
 
 import { Log } from "@/lib/log";
 
 /** A control command. UI answers travel through {@link SessionSocket.sendUiResponse}. */
-export type SessionCommand = Exclude<SessionWsClientCommand, RpcExtensionUIResponse>;
+export type SessionCommand = SessionRpcCommand;
+
+/** RPC response envelope returned by {@link SessionSocket.sendCommand}. */
+export type SessionRpcResponseMessage = Extract<SessionRpcServerMessage, { readonly type: "rpc:response" }>;
+
+/** RPC protocol error envelope delivered over `/ws/sessions/:id`. */
+export type SessionRpcErrorMessage = Extract<SessionRpcServerMessage, { readonly type: "rpc:error" }>;
 
 /** Why a session socket closed, from the browser client's point of view. */
 export type SessionSocketCloseReason = SessionCloseReason;
@@ -45,24 +53,23 @@ export type SessionSocketConstructor = new (url: string) => SessionSocketLike;
 
 /** Handshake parameters sent on `/ws/sessions/:id` connect and reconnect. */
 export interface SessionSocketHandshakeParams {
-    readonly afterSeq?: number | undefined;
-    readonly runtimeId?: string | undefined;
+    readonly cursor?: SessionCursor | undefined;
     readonly prefixAnchor?: SessionPrefixAnchor | undefined;
 }
 
 /** Options for {@link SessionSocket}. */
 export interface SessionSocketOptions {
     readonly sessionId: SessionId;
-    /** Last sequence number the client applied; the server replays only newer events. */
-    readonly afterSeq?: number | undefined;
-    /** Optional Tier 1/2 handshake anchors (`runtimeId`, `prefixAnchor`). */
+    /** Optional Tier 1/2 handshake anchors (`cursor`, `prefixAnchor`). */
     readonly handshake?: SessionSocketHandshakeParams | undefined;
     /** Absolute `ws://` or `wss://` URL. Defaults to the current origin and `/ws/sessions/:id`. */
     readonly url?: string | undefined;
     /** WebSocket constructor. Defaults to `globalThis.WebSocket`. */
     readonly WebSocket?: SessionSocketConstructor | undefined;
     readonly onOpen?: (() => void) | undefined;
-    /** Receives protocol messages that are not a response to a command. */
+    /** Receives decoded Sync lane frames (`sync:*`). */
+    readonly onSyncFrame?: ((frame: SessionSyncFrame) => void) | undefined;
+    /** Receives non-command server messages (Sync lane frames and unmatched RPC errors). */
     readonly onMessage?: ((message: SessionWsServerMessage) => void) | undefined;
     readonly onClose?: ((close: SessionSocketClose) => void) | undefined;
     /** Receives transport errors. A close event normally follows. */
@@ -95,7 +102,7 @@ export class SessionCommandError extends Error {
 
 interface PendingCommand {
     readonly command: string;
-    readonly resolve: (message: SessionWsResponseMessage) => void;
+    readonly resolve: (message: SessionRpcResponseMessage) => void;
     readonly reject: (error: Error) => void;
 }
 
@@ -117,11 +124,9 @@ export function buildSessionSocketUrl(
     url.search = "";
     url.hash = "";
     const params = handshake ?? {};
-    if (params.afterSeq !== undefined) {
-        url.searchParams.set("afterSeq", String(params.afterSeq));
-    }
-    if (params.runtimeId !== undefined && params.runtimeId !== "") {
-        url.searchParams.set("runtimeId", params.runtimeId);
+    if (params.cursor !== undefined) {
+        url.searchParams.set("epoch", params.cursor.epoch);
+        url.searchParams.set("afterSeq", String(params.cursor.seq));
     }
     if (params.prefixAnchor !== undefined) {
         url.searchParams.set("entriesVersion", params.prefixAnchor.entriesVersion);
@@ -164,6 +169,7 @@ export class SessionSocket {
     private readonly url: string | undefined;
     private readonly socketConstructor: SessionSocketConstructor | undefined;
     private readonly onOpen: (() => void) | undefined;
+    private readonly onSyncFrame: ((frame: SessionSyncFrame) => void) | undefined;
     private readonly onMessage: ((message: SessionWsServerMessage) => void) | undefined;
     private readonly onClose: ((close: SessionSocketClose) => void) | undefined;
     private readonly onError: ((message: string) => void) | undefined;
@@ -176,13 +182,11 @@ export class SessionSocket {
 
     constructor(options: SessionSocketOptions) {
         this.sessionId = options.sessionId;
-        this.handshake = {
-            ...options.handshake,
-            ...(options.afterSeq === undefined ? {} : { afterSeq: options.afterSeq }),
-        };
+        this.handshake = options.handshake ?? {};
         this.url = options.url;
         this.socketConstructor = options.WebSocket;
         this.onOpen = options.onOpen;
+        this.onSyncFrame = options.onSyncFrame;
         this.onMessage = options.onMessage;
         this.onClose = options.onClose;
         this.onError = options.onError;
@@ -228,7 +232,7 @@ export class SessionSocket {
      * A command without an `id` gets one; a supplied `id` is reused so a caller can correlate a
      * command with its own state. Commands sent before the socket opens are queued in order.
      */
-    sendCommand(command: SessionCommand): Promise<SessionWsResponseMessage> {
+    sendCommand(command: SessionCommand): Promise<SessionRpcResponseMessage> {
         if (this.closed) {
             return Promise.reject(new SessionSocketClosedError(this.closeReason ?? "client"));
         }
@@ -240,12 +244,13 @@ export class SessionSocket {
         }
 
         const payload = { ...command, id } satisfies SessionCommand;
-        const promise = new Promise<SessionWsResponseMessage>((resolve, reject) => {
+        const envelope = { type: "rpc:command", command: payload } satisfies SessionWsClientMessage;
+        const promise = new Promise<SessionRpcResponseMessage>((resolve, reject) => {
             this.pending.set(id, { command: command.type, resolve, reject });
         });
 
         try {
-            this.sendRaw(JSON.stringify(payload));
+            this.sendRaw(JSON.stringify(envelope));
         } catch (error) {
             this.pending.delete(id);
             const message = error instanceof Error ? error.message : String(error);
@@ -264,7 +269,8 @@ export class SessionSocket {
         if (this.closed) {
             throw new SessionSocketClosedError(this.closeReason ?? "client");
         }
-        this.sendRaw(JSON.stringify(response));
+        const envelope = { type: "rpc:ui_response", response } satisfies SessionWsClientMessage;
+        this.sendRaw(JSON.stringify(envelope));
     }
 
     /** Closes the socket from this client and rejects every pending command. */
@@ -339,19 +345,17 @@ export class SessionSocket {
             return;
         }
         switch (message.type) {
-            case "response":
+            case "rpc:response":
                 this.settleResponse(message);
                 return;
-            case "error":
+            case "rpc:error":
                 this.settleError(message);
                 return;
-            case "snapshot":
-            case "replay":
-            case "entries_appended":
-            case "event":
-            case "extension_ui_request":
-            case "extension_ui_resolved":
-            case "extension_error":
+            case "sync:snapshot":
+            case "sync:replay":
+            case "sync:delta":
+            case "sync:resync":
+                this.onSyncFrame?.(message);
                 this.onMessage?.(message);
                 return;
             default:
@@ -359,7 +363,7 @@ export class SessionSocket {
         }
     }
 
-    private settleResponse(message: SessionWsResponseMessage): void {
+    private settleResponse(message: SessionRpcResponseMessage): void {
         const id = message.id;
         if (id === undefined) {
             Log.debug("Ignored a session response without a command id", message.command);
@@ -378,7 +382,7 @@ export class SessionSocket {
         pending.reject(new SessionCommandError(pending.command, message.error));
     }
 
-    private settleError(message: SessionWsErrorMessage): void {
+    private settleError(message: SessionRpcErrorMessage): void {
         const id = message.id;
         if (id !== undefined) {
             const pending = this.pending.get(id);

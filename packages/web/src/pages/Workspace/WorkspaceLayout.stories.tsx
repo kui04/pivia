@@ -95,11 +95,12 @@ function createFakeWorkspaceSocket(initialSessions: readonly SessionSummary[]): 
                 this.onopen?.();
                 this.onmessage?.({
                     data: JSON.stringify({
-                        type: "catalog_snapshot",
-                        sessions: initialSessions,
-                        updatedAtMs: 10_000,
-                        catalogEpoch: STORY_EPOCH,
-                        catalogSeq: INITIAL_CATALOG_SEQ,
+                        type: "sync:snapshot",
+                        cursor: { epoch: STORY_EPOCH, seq: INITIAL_CATALOG_SEQ },
+                        snapshot: {
+                            sessions: initialSessions,
+                            updatedAtMs: 10_000,
+                        },
                     }),
                 } as MessageEvent);
             });
@@ -298,10 +299,9 @@ export const RemovedSessionClearsRoute: Story = {
         await expect(await canvas.findByRole("heading", { level: 1, name: "First task" })).toBeVisible();
 
         removedSocket.emitMessage({
-            type: "session_removed",
-            catalogEpoch: STORY_EPOCH,
-            seq: nextCatalogSeq(INITIAL_CATALOG_SEQ),
-            sessionId: S1,
+            type: "sync:delta",
+            cursor: { epoch: STORY_EPOCH, seq: nextCatalogSeq(INITIAL_CATALOG_SEQ) },
+            delta: { op: "remove", id: S1 },
         });
 
         await expect(await canvas.findByRole("heading", { level: 1, name: "No session selected" })).toBeVisible();

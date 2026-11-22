@@ -3,7 +3,7 @@ import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { CreateSessionResponse, SessionId, SessionWsClientCommand, SessionWsServerMessage } from "@pivia/protocol";
+import type { CreateSessionResponse, SessionId, SessionWsClientMessage, SessionWsServerMessage } from "@pivia/protocol";
 
 import { afterEach, describe, expect, it } from "vitest";
 import WebSocket from "ws";
@@ -21,7 +21,7 @@ import {
 
 interface WsTestClient {
     readonly messages: SessionWsServerMessage[];
-    send(message: SessionWsClientCommand | Record<string, unknown>): void;
+    send(message: SessionWsClientMessage | Record<string, unknown>): void;
     sendRaw(text: string): void;
     waitFor<T extends SessionWsServerMessage>(
         predicate: (message: SessionWsServerMessage) => message is T,
@@ -244,18 +244,12 @@ describe("session websocket route", () => {
         return { id: body.session.id, fake };
     }
 
-    it("rejects websocket upgrades without authentication or with invalid parameters", async () => {
+    it("rejects invalid upgrades and degrades malformed handshake cursors to a snapshot", async () => {
         const fixture = await startAppFixture();
         const { id } = await createSession(fixture);
         const url = new URL(`${fixture.wsBaseUrl}/ws/sessions/${id}`);
 
         expect(await upgradeStatus(url, {})).toEqual({ statusCode: 401, connection: "close" });
-
-        const invalidAfterSeq = new URL(`${fixture.wsBaseUrl}/ws/sessions/${id}?afterSeq=-1`);
-        expect(await upgradeStatus(invalidAfterSeq, fixture.authHeaders)).toEqual({
-            statusCode: 400,
-            connection: "close",
-        });
 
         const unknownSession = new URL(`${fixture.wsBaseUrl}/ws/sessions/session-unknown`);
         expect(await upgradeStatus(unknownSession, fixture.authHeaders)).toEqual({
@@ -269,11 +263,16 @@ describe("session websocket route", () => {
             connection: "close",
         });
 
-        const probe = await connectWebSocket(url.toString(), fixture.authHeaders);
-        await probe.waitFor((message): message is Extract<SessionWsServerMessage, { type: "snapshot" }> => {
-            return message.type === "snapshot";
-        });
-        await probe.close();
+        const malformedCursorClient = await connectWebSocket(
+            `${url.toString()}?epoch=rt&afterSeq=-1`,
+            fixture.authHeaders,
+        );
+        const degradedSnapshot = await malformedCursorClient.waitFor(
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:snapshot" }> =>
+                message.type === "sync:snapshot",
+        );
+        expect(degradedSnapshot.snapshot.state.sessionId).toBe(id);
+        await malformedCursorClient.close();
     });
 
     it("returns 201 while a session_start dialog is pending and answers it out of band", async () => {
@@ -306,20 +305,24 @@ describe("session websocket route", () => {
 
         const client = await connectWebSocket(`${fixture.wsBaseUrl}/ws/sessions/${sessionId}`, fixture.authHeaders);
         const snapshot = await client.waitFor(
-            (message): message is Extract<SessionWsServerMessage, { type: "snapshot" }> => message.type === "snapshot",
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:snapshot" }> =>
+                message.type === "sync:snapshot",
         );
-        const request = snapshot.pendingUiRequests[0];
+        const request = snapshot.snapshot.pendingUiRequests[0];
         if (request === undefined) {
             throw new Error("expected the startup dialog in the snapshot");
         }
 
         // The prompt waits for bindExtensions; the UI answer must bypass the command chain.
-        client.send({ type: "prompt", id: "prompt", message: "hello" });
-        client.send({ type: "extension_ui_response", id: request.id, value: "safe" });
+        client.send({ type: "rpc:command", command: { type: "prompt", id: "prompt", message: "hello" } });
+        client.send({
+            type: "rpc:ui_response",
+            response: { type: "extension_ui_response", id: request.id, value: "safe" },
+        });
 
         const response = await client.waitFor(
-            (message): message is Extract<SessionWsServerMessage, { type: "response" }> =>
-                message.type === "response" && message.id === "prompt",
+            (message): message is Extract<SessionWsServerMessage, { type: "rpc:response" }> =>
+                message.type === "rpc:response" && message.id === "prompt",
         );
         expect(response).toMatchObject({ success: true, data: { disposition: "started" } });
         if (startupDialog === undefined) {
@@ -335,7 +338,8 @@ describe("session websocket route", () => {
         await waitForRuntimeState(fixture.registry, id, "idle");
         const client = await connectWebSocket(`${fixture.wsBaseUrl}/ws/sessions/${id}`, fixture.authHeaders);
         await client.waitFor(
-            (message): message is Extract<SessionWsServerMessage, { type: "snapshot" }> => message.type === "snapshot",
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:snapshot" }> =>
+                message.type === "sync:snapshot",
         );
 
         const runtime = fixture.harness.find(id);
@@ -354,11 +358,19 @@ describe("session websocket route", () => {
             url: `/api/sessions/${id}/close`,
             headers: fixture.authHeaders,
         });
-        const request = await client.waitFor(
-            (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_request" }> =>
-                message.type === "extension_ui_request" && message.request.method === "confirm",
+        const uiDelta = await client.waitFor(
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:delta" }> =>
+                message.type === "sync:delta" &&
+                message.delta.kind === "ui_request" &&
+                message.delta.request.method === "confirm",
         );
-        client.send({ type: "extension_ui_response", id: request.request.id, confirmed: true });
+        if (uiDelta.delta.kind !== "ui_request") {
+            throw new Error("expected ui_request delta");
+        }
+        client.send({
+            type: "rpc:ui_response",
+            response: { type: "extension_ui_response", id: uiDelta.delta.request.id, confirmed: true },
+        });
 
         const closeResponse = await closeResponsePromise;
         expect(closeResponse.statusCode).toBe(200);
@@ -372,7 +384,8 @@ describe("session websocket route", () => {
         const url = `${fixture.wsBaseUrl}/ws/sessions/${id}`;
         const client = await connectWebSocket(url, fixture.authHeaders);
         await client.waitFor(
-            (message): message is Extract<SessionWsServerMessage, { type: "snapshot" }> => message.type === "snapshot",
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:snapshot" }> =>
+                message.type === "sync:snapshot",
         );
 
         // `autoPong: false` models a peer that vanished: the TCP connection still looks open and
@@ -389,10 +402,10 @@ describe("session websocket route", () => {
 
         // The answering client spans several heartbeat intervals and keeps working.
         await new Promise((resolve) => setTimeout(resolve, 120));
-        client.send({ type: "get_state", id: "state-after-heartbeat" });
+        client.send({ type: "rpc:command", command: { type: "get_state", id: "state-after-heartbeat" } });
         await client.waitFor(
-            (message): message is Extract<SessionWsServerMessage, { type: "response" }> =>
-                message.type === "response" && message.id === "state-after-heartbeat",
+            (message): message is Extract<SessionWsServerMessage, { type: "rpc:response" }> =>
+                message.type === "rpc:response" && message.id === "state-after-heartbeat",
         );
         await client.close();
     });
@@ -404,97 +417,109 @@ describe("session websocket route", () => {
         const client = await connectWebSocket(url, { cookie: fixture.cookie });
 
         const snapshot = await client.waitFor(
-            (message): message is Extract<SessionWsServerMessage, { type: "snapshot" }> => message.type === "snapshot",
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:snapshot" }> =>
+                message.type === "sync:snapshot",
         );
-        expect(snapshot).toMatchObject({ sessionId: id, seq: 0 });
-        expect(snapshot.state).toMatchObject({ sessionId: id, cwd: realpathSync(fixture.projectDir) });
-        if (snapshot.entriesMode !== "inline") {
+        expect(snapshot.cursor.seq).toBe(0);
+        expect(snapshot.snapshot.state).toMatchObject({ sessionId: id, cwd: realpathSync(fixture.projectDir) });
+        if (snapshot.snapshot.entries.mode !== "inline") {
             throw new Error("expected inline snapshot entries");
         }
-        expect(snapshot.entries[0]).toMatchObject({ type: "session", id });
+        expect(snapshot.snapshot.entries.data[0]).toMatchObject({ type: "session", id });
 
-        client.send({ type: "get_state", id: "state" });
+        client.send({ type: "rpc:command", command: { type: "get_state", id: "state" } });
         const state = await client.waitFor(
-            (message): message is Extract<SessionWsServerMessage, { type: "response" }> =>
-                message.type === "response" && message.id === "state",
+            (message): message is Extract<SessionWsServerMessage, { type: "rpc:response" }> =>
+                message.type === "rpc:response" && message.id === "state",
         );
         expect(state).toMatchObject({ command: "get_state", success: true });
 
-        client.send({ type: "set_session_name", id: "name", name: "WS Session" });
+        client.send({ type: "rpc:command", command: { type: "set_session_name", id: "name", name: "WS Session" } });
         await client.waitFor(
-            (message): message is Extract<SessionWsServerMessage, { type: "response" }> =>
-                message.type === "response" && message.id === "name",
+            (message): message is Extract<SessionWsServerMessage, { type: "rpc:response" }> =>
+                message.type === "rpc:response" && message.id === "name",
         );
         expect(fake.getName()).toBe("WS Session");
 
-        client.send({ type: "prompt", id: "prompt", message: "hello" });
+        client.send({ type: "rpc:command", command: { type: "prompt", id: "prompt", message: "hello" } });
         const promptResponse = await client.waitFor(
-            (message): message is Extract<SessionWsServerMessage, { type: "response" }> =>
-                message.type === "response" && message.id === "prompt",
+            (message): message is Extract<SessionWsServerMessage, { type: "rpc:response" }> =>
+                message.type === "rpc:response" && message.id === "prompt",
         );
         expect(promptResponse).toMatchObject({ command: "prompt", success: true, data: { disposition: "started" } });
 
         fake.emit(createTextDeltaEvent("Hel", "Hel"));
-        const event = await client.waitFor(
-            (message): message is Extract<SessionWsServerMessage, { type: "event" }> => message.type === "event",
+        const delta = await client.waitFor(
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:delta" }> =>
+                message.type === "sync:delta" && message.delta.kind === "agent_event",
         );
-        expect(event.sessionId).toBe(id);
-        expect(event.seq).toBe(1);
-        expect(JSON.stringify(event)).not.toContain('"partial"');
-        expect(JSON.stringify(event)).not.toContain('"message"');
+        expect(delta.cursor.seq).toBe(1);
+        expect(JSON.stringify(delta)).not.toContain('"partial"');
+        expect(JSON.stringify(delta)).not.toContain('"message"');
 
         client.sendRaw("{not json");
         const invalidJson = await client.waitFor(
-            (message): message is Extract<SessionWsServerMessage, { type: "error" }> => message.type === "error",
+            (message): message is Extract<SessionWsServerMessage, { type: "rpc:error" }> =>
+                message.type === "rpc:error",
         );
         expect(invalidJson).toMatchObject({ code: "invalid_json" });
 
         client.send({ type: "unknown_command" });
         await client.waitFor(
-            (message): message is Extract<SessionWsServerMessage, { type: "error" }> =>
-                message.type === "error" && message.code === "invalid_request",
+            (message): message is Extract<SessionWsServerMessage, { type: "rpc:error" }> =>
+                message.type === "rpc:error" && message.code === "invalid_request",
         );
 
-        client.send({ type: "prompt", id: "invalid-prompt" });
+        client.send({ type: "rpc:command", command: { type: "prompt", id: "invalid-prompt" } });
         await client.waitFor(
-            (message): message is Extract<SessionWsServerMessage, { type: "error" }> =>
-                message.type === "error" && message.id === "invalid-prompt",
+            (message): message is Extract<SessionWsServerMessage, { type: "rpc:error" }> =>
+                message.type === "rpc:error" && message.id === "invalid-prompt",
         );
 
-        const lastSeq = event.seq;
+        const lastSeq = delta.cursor.seq;
         await client.close();
         fake.emit(createTextDeltaEvent("lo", "Hello"));
 
         const replayClient = await connectWebSocket(
-            `${url}?afterSeq=${lastSeq}&runtimeId=${encodeURIComponent(snapshot.runtimeId)}`,
+            `${url}?afterSeq=${lastSeq}&epoch=${encodeURIComponent(snapshot.cursor.epoch)}`,
             fixture.authHeaders,
         );
         const replay = await replayClient.waitFor(
-            (message): message is Extract<SessionWsServerMessage, { type: "replay" }> => message.type === "replay",
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:replay" }> =>
+                message.type === "sync:replay",
         );
-        expect(replay.seq).toBe(lastSeq + 1);
-        expect(replay.events).toHaveLength(1);
-        expect(replay.events[0]).toMatchObject({ seq: lastSeq + 1, event: { type: "message_update" } });
+        expect(replay.cursor.seq).toBe(lastSeq + 1);
+        expect(replay.deltas).toHaveLength(1);
+        expect(replay.deltas[0]).toMatchObject({
+            seq: lastSeq + 1,
+            payload: { kind: "agent_event", event: { type: "message_update" } },
+        });
 
-        const mismatchedRuntimeClient = await connectWebSocket(
-            `${url}?afterSeq=${lastSeq}&runtimeId=stale-runtime`,
+        const mismatchedEpochClient = await connectWebSocket(
+            `${url}?afterSeq=${lastSeq}&epoch=stale-runtime`,
             fixture.authHeaders,
         );
-        const mismatchedSnapshot = await mismatchedRuntimeClient.waitFor(
-            (message): message is Extract<SessionWsServerMessage, { type: "snapshot" }> => message.type === "snapshot",
+        const mismatchedSnapshot = await mismatchedEpochClient.waitFor(
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:snapshot" }> =>
+                message.type === "sync:snapshot",
         );
-        expect(mismatchedSnapshot.runtimeId).toBe(snapshot.runtimeId);
-        await mismatchedRuntimeClient.close();
+        expect(mismatchedSnapshot.cursor.epoch).toBe(snapshot.cursor.epoch);
+        await mismatchedEpochClient.close();
 
-        const staleClient = await connectWebSocket(`${url}?afterSeq=99999`, fixture.authHeaders);
-        const staleSnapshot = await staleClient.waitFor(
-            (message): message is Extract<SessionWsServerMessage, { type: "snapshot" }> => message.type === "snapshot",
+        const staleClient = await connectWebSocket(
+            `${url}?afterSeq=99999&epoch=${encodeURIComponent(snapshot.cursor.epoch)}`,
+            fixture.authHeaders,
         );
-        expect(staleSnapshot.seq).toBe(replay.seq);
+        const staleSnapshot = await staleClient.waitFor(
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:snapshot" }> =>
+                message.type === "sync:snapshot",
+        );
+        expect(staleSnapshot.cursor.seq).toBe(replay.cursor.seq);
 
         const secondClient = await connectWebSocket(url, fixture.authHeaders);
         await secondClient.waitFor(
-            (message): message is Extract<SessionWsServerMessage, { type: "snapshot" }> => message.type === "snapshot",
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:snapshot" }> =>
+                message.type === "sync:snapshot",
         );
 
         const bindings = fake.bindings;
@@ -502,19 +527,32 @@ describe("session websocket route", () => {
             throw new Error("expected extension bindings");
         }
         const confirmed = bindings.uiContext.confirm("Allow command?", "Run a dangerous tool?");
-        const uiRequest = await replayClient.waitFor(
-            (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_request" }> =>
-                message.type === "extension_ui_request" && message.request.method === "confirm",
+        const uiDelta = await replayClient.waitFor(
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:delta" }> =>
+                message.type === "sync:delta" &&
+                message.delta.kind === "ui_request" &&
+                message.delta.request.method === "confirm",
         );
+        if (uiDelta.delta.kind !== "ui_request") {
+            throw new Error("expected ui_request delta");
+        }
+        const requestId = uiDelta.delta.request.id;
         await secondClient.waitFor(
-            (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_request" }> =>
-                message.type === "extension_ui_request" && message.request.id === uiRequest.request.id,
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:delta" }> =>
+                message.type === "sync:delta" &&
+                message.delta.kind === "ui_request" &&
+                message.delta.request.id === requestId,
         );
-        secondClient.send({ type: "extension_ui_response", id: uiRequest.request.id, confirmed: true });
+        secondClient.send({
+            type: "rpc:ui_response",
+            response: { type: "extension_ui_response", id: requestId, confirmed: true },
+        });
         await expect(confirmed).resolves.toBe(true);
         await replayClient.waitFor(
-            (message): message is Extract<SessionWsServerMessage, { type: "extension_ui_resolved" }> =>
-                message.type === "extension_ui_resolved" && message.requestId === uiRequest.request.id,
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:delta" }> =>
+                message.type === "sync:delta" &&
+                message.delta.kind === "ui_resolved" &&
+                message.delta.requestId === requestId,
         );
 
         await fixture.app.close();

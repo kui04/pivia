@@ -1,12 +1,13 @@
 import {
     commandIdOf,
     parseSessionId,
-    parseSessionWsClientCommand,
+    parseSessionWsClientMessage,
     parseSessionWsHandshakeQuery,
     SESSION_CLOSE_CODE,
-    type ParsedSessionWsHandshakeQuery,
     type SessionId,
-    type SessionWsClientCommand,
+    type SessionPrefixAnchor,
+    type SessionWsClientMessage,
+    type SyncHandshake,
 } from "@pivia/protocol";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 
@@ -18,6 +19,7 @@ import {
     type SessionRegistry,
     SessionRegistryError,
 } from "../sessions/runtime.ts";
+import { createBackpressureSender } from "../sync/index.ts";
 import { createHeartbeat, type HeartbeatSocket } from "./heartbeat.ts";
 
 /** Largest WebSocket frame the server accepts. */
@@ -37,19 +39,13 @@ export interface SessionSocketRouteOptions {
     readonly heartbeatIntervalMs?: number | undefined;
 }
 
-/** Close a client whose unsent backlog exceeds this, so a stalled mobile link cannot grow memory. */
-export const MAX_WS_BUFFERED_BYTES = 4 * 1024 * 1024;
-
-/** `ws` readyState value for an open connection. */
-const WS_READY_STATE_OPEN = 1;
-
 interface WsSessionParams {
     readonly id: string;
 }
 
 interface WsSessionQuery {
+    readonly epoch?: string;
     readonly afterSeq?: string;
-    readonly runtimeId?: string;
     readonly entriesVersion?: string;
     readonly afterCount?: string;
     readonly afterEntryId?: string;
@@ -57,7 +53,7 @@ interface WsSessionQuery {
 
 interface OpenedWsSession {
     readonly handle: ActiveSessionHandle;
-    readonly handshake: ParsedSessionWsHandshakeQuery;
+    readonly handshake: SyncHandshake<"session", SessionPrefixAnchor>;
 }
 
 /** Decode one text frame from the `ws` raw data union without `[object Object]` fallbacks. */
@@ -81,8 +77,8 @@ function websocketDataToText(data: unknown): string {
  * Register the `/ws/sessions/:id` WebSocket route.
  *
  * Must be registered after `@fastify/websocket` so its `onRoute` hook converts the route into a
- * WebSocket handler. The route also runs a protocol-level ping/pong heartbeat so a peer that
- * disappears without closing its socket cannot hold its attachment forever.
+ * WebSocket handler. Multiplexes the `sync:*` Sync lane and orthogonal `rpc:*` command lane over
+ * one connection with ping/pong heartbeat and backpressure eviction.
  */
 export function registerSessionSocketRoute(
     app: FastifyInstance,
@@ -117,17 +113,14 @@ export function registerSessionSocketRoute(
                     if (sessionId === null) {
                         return sendWsUpgradeError(reply, 400, "invalid_request", "Invalid session id.");
                     }
-                    const parsedQuery = parseSessionWsHandshakeQuery(request.query);
-                    if (!parsedQuery.ok) {
-                        return sendWsUpgradeError(reply, 400, "invalid_request", parsedQuery.message);
-                    }
+                    const handshake = parseSessionWsHandshakeQuery(request.query);
                     // A plain HTTP request to a WebSocket route falls through to the plugin's 404 handler.
                     if (!request.ws) {
                         return;
                     }
                     try {
                         const handle = await sessionRegistry.open(sessionId);
-                        openedWsSessions.set(request, { handle, handshake: parsedQuery.value });
+                        openedWsSessions.set(request, { handle, handshake });
                     } catch (error) {
                         if (error instanceof SessionRegistryError) {
                             reply.header("Connection", "close");
@@ -148,103 +141,83 @@ export function registerSessionSocketRoute(
                 const { handle, handshake } = opened;
 
                 let socketClosed = false;
-                const closeSocket = (code: number, reason: string): void => {
-                    if (socketClosed) {
-                        return;
-                    }
-                    // Stop further sends before the close handshake finishes.
-                    socketClosed = true;
-                    try {
-                        socket.close(code, reason);
-                    } catch (error) {
-                        request.log.warn({ err: error, sessionId: handle.sessionId }, "failed to close websocket");
-                    }
-                };
-                const sendRawText = (payload: string): void => {
-                    if (socketClosed || socket.readyState !== WS_READY_STATE_OPEN) {
-                        return;
-                    }
-                    if (socket.bufferedAmount > MAX_WS_BUFFERED_BYTES) {
-                        request.log.warn(
-                            { sessionId: handle.sessionId, bufferedAmount: socket.bufferedAmount },
-                            "closing slow websocket consumer",
-                        );
-                        closeSocket(SESSION_CLOSE_CODE.slowConsumer, "Slow consumer");
-                        return;
-                    }
-                    try {
-                        socket.send(payload);
-                    } catch (error) {
-                        request.log.warn(
-                            { err: error, sessionId: handle.sessionId },
-                            "failed to send websocket message",
-                        );
-                    }
-                };
-                const client: SessionClient = {
-                    send(message) {
-                        sendRawText(JSON.stringify(message));
-                    },
-                    sendRaw(raw) {
-                        sendRawText(raw);
-                    },
-                    close(code, reason) {
-                        closeSocket(code, reason);
-                    },
-                };
-
                 let attachment: SessionAttachment | undefined;
-                const bufferedCommands: SessionWsClientCommand[] = [];
+                const bufferedMessages: SessionWsClientMessage[] = [];
                 let commandChain: Promise<void> = Promise.resolve();
 
-                const sendProtocolError = (code: string, message: string, id?: string): void => {
-                    client.send({ type: "error", code, message, ...(id === undefined ? {} : { id }) });
+                const sender = createBackpressureSender(socket, request.log, {
+                    logContext: { sessionId: handle.sessionId },
+                    onClose: () => {
+                        socketClosed = true;
+                        attachment?.detach();
+                        attachment = undefined;
+                    },
+                });
+                const client: SessionClient = {
+                    send(message) {
+                        sender.sendRaw(JSON.stringify(message));
+                    },
+                    sendRaw(raw) {
+                        sender.sendRaw(raw);
+                    },
+                    close(code, reason) {
+                        sender.close(code, reason);
+                    },
                 };
 
-                const executeCommand = async (command: SessionWsClientCommand): Promise<void> => {
+                const sendProtocolError = (code: string, message: string, id?: string): void => {
+                    client.send({ type: "rpc:error", code, message, ...(id === undefined ? {} : { id }) });
+                };
+
+                const executeMessage = async (message: SessionWsClientMessage): Promise<void> => {
                     const current = attachment;
                     if (current === undefined) {
-                        sendProtocolError("internal_error", "Session is not attached.", command.id);
+                        const id = message.type === "rpc:command" ? message.command.id : message.response.id;
+                        sendProtocolError("internal_error", "Session is not attached.", id);
                         return;
                     }
-                    await current.handleCommand(command);
+                    await current.handleMessage(message);
                 };
 
-                const dispatchCommand = (command: SessionWsClientCommand): void => {
-                    if (command.type === "extension_ui_response") {
+                const dispatchMessage = (message: SessionWsClientMessage): void => {
+                    if (message.type === "rpc:ui_response") {
                         // UI answers bypass the command chain. A long prompt/compact on the same
                         // socket must not delay the dialog response that unblocks it.
                         if (attachment === undefined) {
-                            bufferedCommands.push(command);
+                            bufferedMessages.push(message);
                             return;
                         }
-                        void executeCommand(command).catch((error: unknown) => {
+                        void executeMessage(message).catch((error: unknown) => {
                             request.log.warn(
                                 { err: error, sessionId: handle.sessionId },
                                 "failed to process extension UI response",
                             );
-                            sendProtocolError("internal_error", "Failed to process extension UI response.", command.id);
+                            sendProtocolError(
+                                "internal_error",
+                                "Failed to process extension UI response.",
+                                message.response.id,
+                            );
                         });
                         return;
                     }
 
                     if (attachment === undefined) {
-                        bufferedCommands.push(command);
+                        bufferedMessages.push(message);
                         return;
                     }
                     commandChain = commandChain
-                        .then(() => executeCommand(command))
+                        .then(() => executeMessage(message))
                         .catch((error: unknown) => {
                             request.log.warn(
                                 { err: error, sessionId: handle.sessionId },
                                 "failed to process websocket command",
                             );
-                            sendProtocolError("internal_error", "Failed to process command.", command.id);
+                            sendProtocolError("internal_error", "Failed to process command.", message.command.id);
                         });
                 };
 
-                // Attach the listeners synchronously before any asynchronous work so a client that
-                // sends a command during the attach window is buffered instead of dropped.
+                // Attach listeners synchronously before attaching to the registry so messages sent
+                // during the attach window are buffered instead of dropped.
                 socket.on("message", (data: unknown, isBinary: boolean) => {
                     if (socketClosed) {
                         return;
@@ -261,12 +234,12 @@ export function registerSessionSocketRoute(
                         sendProtocolError("invalid_json", "Failed to parse command JSON.");
                         return;
                     }
-                    const command = parseSessionWsClientCommand(parsed);
-                    if (command === null) {
+                    const message = parseSessionWsClientMessage(parsed);
+                    if (message === null) {
                         sendProtocolError("invalid_request", "Invalid command.", commandIdOf(parsed));
                         return;
                     }
-                    dispatchCommand(command);
+                    dispatchMessage(message);
                 });
                 socket.on("close", () => {
                     socketClosed = true;
@@ -274,7 +247,7 @@ export function registerSessionSocketRoute(
                     sessionIds.delete(socket);
                     attachment?.detach();
                     attachment = undefined;
-                    bufferedCommands.length = 0;
+                    bufferedMessages.length = 0;
                 });
                 socket.on("error", (error: Error) => {
                     request.log.warn({ err: error, sessionId: handle.sessionId }, "websocket connection error");
@@ -299,8 +272,8 @@ export function registerSessionSocketRoute(
                     return;
                 }
 
-                for (const command of bufferedCommands.splice(0)) {
-                    dispatchCommand(command);
+                for (const message of bufferedMessages.splice(0)) {
+                    dispatchMessage(message);
                 }
             },
         );

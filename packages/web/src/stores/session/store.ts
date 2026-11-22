@@ -3,71 +3,91 @@ import {
     type EntriesVersion,
     type FileEntry,
     type RpcExtensionUIResponse,
-    type SequencedSessionEvent,
+    type SessionDelta,
+    type SessionDetailResponse,
     type SessionId,
     type SessionPrefixAnchor,
+    type SessionSnapshot,
     type SessionStateSnapshot,
-    type SessionWsResponseMessage,
-    type SessionWsServerMessage,
 } from "@pivia/protocol";
 import { create } from "zustand";
 
 import type { SessionCacheStore } from "@/lib/cache/session-cache";
 import { Log } from "@/lib/log";
+import { createReconnectController, type ReconnectController, SyncStreamClient } from "@/lib/sync";
 import { ApiClientError, type ApiClient } from "@/lib/transport/http";
 import {
     SessionSocket,
     SessionSocketClosedError,
     type SessionCommand,
+    type SessionRpcResponseMessage,
     type SessionSocketClose,
     type SessionSocketConstructor,
     type SessionSocketHandshakeParams,
 } from "@/lib/transport/session-socket";
 
-import { initialSessionState, reduceSessionState, type SessionState } from "./reducer";
+import {
+    applyHydratedEntries,
+    applyLocalSessionHydration,
+    applySessionClosed,
+    buildSessionPrefixAnchor,
+    createSessionSyncReducer,
+    initialSessionState,
+    type SequencedSessionEvent,
+    type SessionHttpHydrationDescriptor,
+    type SessionState,
+} from "./reducer";
 
-/** Snapshot kept in the in-memory LRU cache (1 active + up to 4 off-hand sessions). */
+export { initialSessionState, liveAssistantMessage } from "./reducer";
+export type {
+    EntriesSyncState,
+    LiveMessageState,
+    SequencedSessionEvent,
+    SessionConnectionStatus,
+    SessionState,
+} from "./reducer";
+
+/** Lightweight in-memory snapshot kept for instant UI display and Tier 2 anchors on switch-back. */
 export interface SessionMemoryCacheEntry {
-    readonly sessionId: SessionId;
     readonly entriesVersion: EntriesVersion | null;
     readonly entries: readonly FileEntry[];
-    readonly runtimeId: string | null;
-    readonly seq: number;
     readonly state: SessionStateSnapshot | null;
     readonly liveEvents: readonly SequencedSessionEvent[];
 }
 
-/** Dependencies that let a test replace the socket, cache, HTTP client, and retry timings. */
+/** Options for {@link createSessionStore}. */
 export interface SessionStoreOptions {
     readonly WebSocket?: SessionSocketConstructor | undefined;
-    readonly cache?: SessionCacheStore | undefined;
+    readonly cache?:
+        Pick<SessionCacheStore, "getSession" | "appendEntries" | "replaceEntries" | "deleteSession"> | undefined;
     readonly apiClient: Pick<ApiClient, "getSession">;
     readonly reconnectDelayMs?: number | undefined;
     readonly maxReconnectAttempts?: number | undefined;
+    /** Retry delays (ms) for transient `GET /api/sessions/:id` failures. */
     readonly retryDelaysMs?: readonly number[] | undefined;
     /**
-     * Delay before an automatic retry after the HTTP entry sync exhausted `retryDelaysMs`.
+     * Cooldown (ms) before retrying a failed HTTP entry sync once automatically.
+     *
      * A manual `retryEntriesSync` call skips the delay. Defaults to 5 seconds.
      */
     readonly entriesSyncCooldownMs?: number | undefined;
     readonly maxMemoryCacheEntries?: number | undefined;
+    /** Invoked when a session is evicted after returning 404 or closing with 4404. */
     readonly onSessionMissing?: ((sessionId: SessionId) => void) | undefined;
 }
 
-/** What a caller may do with the active session. */
+/** Actions the UI and session controller invoke against {@link SessionStore}. */
 export interface SessionStoreActions {
-    /** Opens one session, hydrating cached entries immediately and replacing any previous socket. */
-    connect: (sessionId: SessionId, options?: { readonly afterSeq?: number | undefined }) => void;
-    /** Closes the socket and returns the store to its initial state. */
+    connect: (sessionId: SessionId) => void;
     disconnect: () => void;
-    /** Clears in-memory LRU cache and aborts any in-flight HTTP entry fetch (used on logout / 401). */
     clearCache: () => void;
     /** Manually retries a failed HTTP entry synchronization (`entriesSync.kind === "error"`). */
     retryEntriesSync: () => void;
-    sendCommand: (command: SessionCommand) => Promise<SessionWsResponseMessage>;
+    sendCommand: (command: SessionCommand) => Promise<SessionRpcResponseMessage>;
     sendUiResponse: (response: RpcExtensionUIResponse) => Promise<void>;
 }
 
+/** Combined state and actions of the active session store. */
 export type SessionStore = SessionState & SessionStoreActions;
 
 const DEFAULT_RECONNECT_DELAY_MS = 1_000;
@@ -76,88 +96,68 @@ const DEFAULT_HTTP_RETRY_DELAYS_MS = [1_000, 2_000, 4_000] as const;
 const DEFAULT_ENTRIES_SYNC_COOLDOWN_MS = 5_000;
 const DEFAULT_MAX_MEMORY_CACHE_ENTRIES = 5;
 
-function sleepWithSignal(ms: number, signal: AbortSignal): Promise<boolean> {
-    if (signal.aborted) {
-        return Promise.resolve(false);
-    }
+function waitWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
     if (ms <= 0) {
-        return Promise.resolve(true);
+        return signal?.aborted ? Promise.reject(new DOMException("Aborted", "AbortError")) : Promise.resolve();
     }
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
+        if (signal?.aborted) {
+            reject(new DOMException("Aborted", "AbortError"));
+            return;
+        }
         const timer = setTimeout(() => {
-            signal.removeEventListener("abort", onAbort);
-            resolve(true);
+            signal?.removeEventListener("abort", onAbort);
+            resolve();
         }, ms);
         const onAbort = (): void => {
             clearTimeout(timer);
-            resolve(false);
+            reject(new DOMException("Aborted", "AbortError"));
         };
-        signal.addEventListener("abort", onAbort, { once: true });
+        signal?.addEventListener("abort", onAbort, { once: true });
     });
 }
 
-function derivePrefixAnchor(
-    entriesVersion: EntriesVersion | null,
-    entries: readonly FileEntry[],
-    count = entries.length,
-): SessionPrefixAnchor | undefined {
-    if (entriesVersion === null || count < 1) {
-        return undefined;
-    }
-    const anchorEntry = entries[count - 1];
-    if (anchorEntry === undefined) {
-        return undefined;
-    }
-    return {
-        entriesVersion,
-        afterCount: count,
-        afterEntryId: anchorEntry.id,
-    };
+function isAbortError(error: unknown): boolean {
+    return error instanceof DOMException && error.name === "AbortError";
 }
 
-/**
- * Creates the store of the active session runtime.
- *
- * The store owns the single active socket, a 5-session in-memory LRU cache (1 active + 4 off-hand),
- * and the single-flight HTTP synchronization pipeline for `entriesMode: "http"` and gap self-heal.
- */
+function isTransientHttpError(error: unknown): boolean {
+    if (error instanceof ApiClientError) {
+        return error.status === 429 || error.status >= 500;
+    }
+    return error instanceof Error;
+}
+
+/** Creates the session store wired to `/ws/sessions/:id`, HTTP entry hydration, and dual caches. */
 export function createSessionStore(options: SessionStoreOptions) {
-    if (options?.apiClient === undefined) {
+    if (options === undefined || options.apiClient === undefined) {
         throw new Error("createSessionStore requires an apiClient.");
     }
+    const { cache, apiClient, onSessionMissing } = options;
     const reconnectDelayMs = options.reconnectDelayMs ?? DEFAULT_RECONNECT_DELAY_MS;
     const maxReconnectAttempts = options.maxReconnectAttempts ?? DEFAULT_MAX_RECONNECT_ATTEMPTS;
     const retryDelaysMs = options.retryDelaysMs ?? DEFAULT_HTTP_RETRY_DELAYS_MS;
     const entriesSyncCooldownMs = options.entriesSyncCooldownMs ?? DEFAULT_ENTRIES_SYNC_COOLDOWN_MS;
     const maxMemoryCacheEntries = options.maxMemoryCacheEntries ?? DEFAULT_MAX_MEMORY_CACHE_ENTRIES;
-    const client = options.apiClient;
-    const cache = options.cache;
 
     return create<SessionStore>()((set, get) => {
         let socket: SessionSocket | null = null;
-        let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-        let reconnectAttempts = 0;
         let generation = 0;
-        const memoryLru = new Map<SessionId, SessionMemoryCacheEntry>();
-        let httpSyncAbort: AbortController | null = null;
-        let httpSyncInFlightGeneration: number | null = null;
         let entriesSyncRetryTimer: ReturnType<typeof setTimeout> | null = null;
+        let autoRetriedAfterFailure = false;
+        const memoryLru = new Map<SessionId, SessionMemoryCacheEntry>();
 
-        const clearReconnectTimer = (): void => {
-            if (reconnectTimer !== null) {
-                clearTimeout(reconnectTimer);
-                reconnectTimer = null;
-            }
-        };
-
-        const cancelHttpSync = (): void => {
+        const cancelEntriesRetry = (): void => {
             if (entriesSyncRetryTimer !== null) {
                 clearTimeout(entriesSyncRetryTimer);
                 entriesSyncRetryTimer = null;
             }
-            httpSyncAbort?.abort();
-            httpSyncAbort = null;
-            httpSyncInFlightGeneration = null;
+        };
+
+        const closeActiveSocket = (): void => {
+            const current = socket;
+            socket = null;
+            current?.close();
         };
 
         const saveToMemoryLru = (state: SessionState): void => {
@@ -169,13 +169,13 @@ export function createSessionStore(options: SessionStoreOptions) {
             ) {
                 return;
             }
+            // Memory LRU supplies Tier 2 prefix anchors and instant cached rows on session switches;
+            // live-only cursor state is never cached across switch boundaries so fresh snapshots reload
+            // liveMessage and pendingUiRequests cleanly.
             memoryLru.delete(state.sessionId);
             memoryLru.set(state.sessionId, {
-                sessionId: state.sessionId,
                 entriesVersion: state.entriesVersion,
                 entries: state.entries,
-                runtimeId: state.runtimeId,
-                seq: state.seq,
                 state: state.state,
                 liveEvents: state.liveEvents,
             });
@@ -190,441 +190,394 @@ export function createSessionStore(options: SessionStoreOptions) {
 
         const evictMissingSession = (sessionId: SessionId): void => {
             memoryLru.delete(sessionId);
-            void cache?.deleteSession(sessionId);
-            options.onSessionMissing?.(sessionId);
+            if (cache !== undefined) {
+                void cache.deleteSession(sessionId);
+            }
+            onSessionMissing?.(sessionId);
         };
 
-        const buildHandshakeParams = (state: SessionState, explicitAfterSeq?: number): SessionSocketHandshakeParams => {
-            const afterSeq = explicitAfterSeq ?? (state.seq > 0 ? state.seq : undefined);
-            const prefixAnchor = derivePrefixAnchor(state.entriesVersion, state.entries);
+        const persistEntriesToCache = (prev: SessionState, next: SessionState): void => {
+            if (
+                cache === undefined ||
+                next.sessionId === null ||
+                next.entriesVersion === null ||
+                next.entriesSync.kind !== "idle" ||
+                next.entries.length === 0
+            ) {
+                return;
+            }
+            if (
+                prev.sessionId !== next.sessionId ||
+                prev.entries.length === 0 ||
+                prev.entriesVersion !== next.entriesVersion ||
+                next.entries.length < prev.entries.length
+            ) {
+                void cache.replaceEntries(next.sessionId, next.entriesVersion, next.entries);
+                return;
+            }
+            if (next.entries.length > prev.entries.length) {
+                void cache.appendEntries(
+                    next.sessionId,
+                    next.entriesVersion,
+                    prev.entries.length,
+                    next.entries.slice(prev.entries.length),
+                );
+            }
+        };
+
+        const buildAnchorForSession = (
+            sessionId: SessionId,
+            baseEntryCount: number,
+        ): SessionPrefixAnchor | undefined => {
+            const current = get();
+            if (baseEntryCount <= 0 || current.sessionId !== sessionId || current.entriesVersion === null) {
+                return undefined;
+            }
+            const lastPrefixEntry = current.entries[baseEntryCount - 1];
+            if (lastPrefixEntry === undefined) {
+                return undefined;
+            }
             return {
-                ...(afterSeq === undefined ? {} : { afterSeq }),
-                ...(state.runtimeId === null ? {} : { runtimeId: state.runtimeId }),
-                ...(prefixAnchor === undefined ? {} : { prefixAnchor }),
+                entriesVersion: current.entriesVersion,
+                afterCount: baseEntryCount,
+                afterEntryId: lastPrefixEntry.id,
             };
         };
 
-        const syncEntriesFromHttp = (sessionId: SessionId, baseEntryCount: number): void => {
-            if (httpSyncInFlightGeneration === generation && httpSyncAbort !== null) {
-                return;
-            }
-            cancelHttpSync();
-            const abortController = new AbortController();
-            httpSyncAbort = abortController;
-            const syncGeneration = generation;
-            httpSyncInFlightGeneration = syncGeneration;
-
-            const run = async (): Promise<void> => {
-                for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
-                    if (abortController.signal.aborted || generation !== syncGeneration) {
-                        return;
-                    }
-                    const snapshotBefore = get();
-                    const anchor = derivePrefixAnchor(
-                        snapshotBefore.entriesVersion,
-                        snapshotBefore.entries,
-                        baseEntryCount,
+        const fetchSessionWithRetries = async (
+            sessionId: SessionId,
+            baseEntryCount: number,
+            signal: AbortSignal,
+        ): Promise<SessionDetailResponse> => {
+            const anchor = buildAnchorForSession(sessionId, baseEntryCount);
+            let lastError: unknown;
+            for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
+                if (signal.aborted) {
+                    throw new DOMException("Aborted", "AbortError");
+                }
+                if (attempt > 0) {
+                    const delay = retryDelaysMs[attempt - 1] ?? 1_000;
+                    await waitWithAbort(delay, signal);
+                }
+                try {
+                    return await apiClient.getSession(
+                        sessionId,
+                        anchor === undefined ? { signal } : { anchor, signal },
                     );
-
-                    try {
-                        const detail = await client.getSession(sessionId, {
-                            signal: abortController.signal,
-                            ...(anchor === undefined ? {} : { anchor }),
-                        });
-                        if (abortController.signal.aborted || generation !== syncGeneration) {
-                            return;
-                        }
-                        set((state) =>
-                            reduceSessionState(state, {
-                                type: "entries_sync_succeeded",
-                                sessionId,
-                                entriesVersion: detail.entriesVersion,
-                                baseEntryCount: detail.baseEntryCount,
-                                entries: detail.entries,
-                            }),
-                        );
-                        const after = get();
-                        if (detail.entriesVersion !== null && cache !== undefined) {
-                            if (detail.baseEntryCount === 0) {
-                                void cache.replaceEntries(sessionId, detail.entriesVersion, after.entries);
-                            } else {
-                                void cache.appendEntries(
-                                    sessionId,
-                                    detail.entriesVersion,
-                                    detail.baseEntryCount,
-                                    after.entries.slice(detail.baseEntryCount),
-                                );
-                            }
-                        }
-                        if (httpSyncAbort === abortController) {
-                            httpSyncAbort = null;
-                            httpSyncInFlightGeneration = null;
-                        }
-                        if (after.entriesSync.kind === "loading") {
-                            syncEntriesFromHttp(sessionId, after.entries.length);
-                        }
-                        return;
-                    } catch (error) {
-                        if (abortController.signal.aborted || generation !== syncGeneration) {
-                            return;
-                        }
-                        if (error instanceof ApiClientError && error.status === 401) {
-                            Log.warn(`Session history sync was rejected for ${sessionId}`, error.message);
-                            get().clearCache();
-                            return;
-                        }
-                        if (error instanceof ApiClientError && error.status === 404) {
-                            Log.warn(`Session ${sessionId} no longer exists on the server`);
-                            if (httpSyncAbort === abortController) {
-                                httpSyncAbort = null;
-                                httpSyncInFlightGeneration = null;
-                            }
-                            const currentSocket = socket;
-                            socket = null;
-                            currentSocket?.close();
-                            clearReconnectTimer();
-                            evictMissingSession(sessionId);
-                            set((state) =>
-                                reduceSessionState(state, {
-                                    type: "closed",
-                                    reason: "session",
-                                    message: "Session not found",
-                                }),
-                            );
-                            return;
-                        }
-                        const retryDelay = retryDelaysMs[attempt];
-                        if (retryDelay !== undefined) {
-                            Log.warn(
-                                `Session history sync failed, retrying in ${String(retryDelay)} ms (${sessionId}, attempt ${String(attempt + 1)})`,
-                                error,
-                            );
-                            const continued = await sleepWithSignal(retryDelay, abortController.signal);
-                            if (!continued) {
-                                return;
-                            }
-                            continue;
-                        }
-                        if (httpSyncAbort === abortController) {
-                            httpSyncAbort = null;
-                            httpSyncInFlightGeneration = null;
-                        }
-                        const message =
-                            error instanceof Error && error.message !== ""
-                                ? error.message
-                                : "Cannot load session history.";
-                        Log.warn(
-                            `Session history sync gave up after ${String(attempt + 1)} attempts (${sessionId})`,
-                            error,
-                        );
-                        set((state) =>
-                            reduceSessionState(state, {
-                                type: "entries_sync_failed",
-                                sessionId,
-                                message,
-                            }),
-                        );
-                        scheduleEntriesSyncRetry(sessionId);
-                        return;
+                } catch (error) {
+                    if (isAbortError(error) || signal.aborted) {
+                        throw error;
+                    }
+                    lastError = error;
+                    if (error instanceof ApiClientError && error.status === 404) {
+                        throw error;
+                    }
+                    if (!isTransientHttpError(error) || attempt === retryDelaysMs.length) {
+                        throw error;
                     }
                 }
-            };
-
-            void run();
+            }
+            throw lastError instanceof Error ? lastError : new Error("Failed to fetch session entries.");
         };
 
-        /**
-         * Retry the entry sync once after the retry ladder ran out, unless a manual retry comes first.
-         *
-         * The failure stays visible for the whole cooldown. Without this gate every later
-         * `entries_appended` frame would restart the whole ladder, so a persistent server failure
-         * would be retried at append frequency.
-         */
-        const scheduleEntriesSyncRetry = (sessionId: SessionId): void => {
-            if (entriesSyncRetryTimer !== null) {
+        const triggerHydrationRetry = (): void => {
+            syncClient.retryHydration((prev, descriptor) => ({
+                ...prev,
+                entriesSync: {
+                    kind: "loading",
+                    baseEntryCount: descriptor.baseEntryCount,
+                    targetEntryCount: descriptor.targetEntryCount,
+                },
+            }));
+        };
+
+        const scheduleCooldownRetry = (capturedGen: number): void => {
+            if (autoRetriedAfterFailure || entriesSyncRetryTimer !== null) {
                 return;
             }
+            autoRetriedAfterFailure = true;
             entriesSyncRetryTimer = setTimeout(() => {
                 entriesSyncRetryTimer = null;
-                const state = get();
-                if (state.sessionId !== sessionId || state.entriesSync.kind !== "error") {
-                    return;
+                if (capturedGen === generation) {
+                    triggerHydrationRetry();
                 }
-                const { targetEntryCount } = state.entriesSync;
-                set((current) =>
-                    reduceSessionState(current, {
-                        type: "entries_sync_started",
-                        baseEntryCount: current.entries.length,
-                        targetEntryCount,
-                    }),
-                );
-                syncEntriesFromHttp(sessionId, get().entries.length);
             }, entriesSyncCooldownMs);
         };
 
-        const applyMessage = (message: SessionWsServerMessage): void => {
-            switch (message.type) {
-                case "snapshot":
-                    reconnectAttempts = 0;
-                    set((state) => reduceSessionState(state, { type: "snapshot", message }));
-                    if (message.entriesMode === "http") {
-                        syncEntriesFromHttp(message.sessionId, message.baseEntryCount);
-                    } else if (cache !== undefined) {
-                        if (message.baseEntryCount === 0) {
-                            void cache.replaceEntries(message.sessionId, message.entriesVersion, message.entries);
-                        } else {
-                            void cache.appendEntries(
-                                message.sessionId,
-                                message.entriesVersion,
-                                message.baseEntryCount,
-                                message.entries,
-                            );
+        const syncClient: SyncStreamClient<
+            "session",
+            SessionState,
+            SessionSnapshot,
+            SessionDelta,
+            SessionHttpHydrationDescriptor
+        > = new SyncStreamClient<
+            "session",
+            SessionState,
+            SessionSnapshot,
+            SessionDelta,
+            SessionHttpHydrationDescriptor
+        >({
+            initialState: initialSessionState,
+            reducer: createSessionSyncReducer(),
+            async onHydrateHttp(descriptor, ctx): Promise<SessionState> {
+                const sessionId = ctx.currentState.sessionId;
+                const capturedGen = generation;
+                if (sessionId === null) {
+                    return ctx.currentState;
+                }
+                // For `delta`-triggered HTTP offloads, show loading indicator while request is in flight.
+                if (descriptor.kind === "delta") {
+                    set((state) => {
+                        if (state.sessionId !== sessionId || state.status === "closed") {
+                            return state;
                         }
+                        return {
+                            ...state,
+                            entriesSync: {
+                                kind: "loading",
+                                baseEntryCount: descriptor.baseEntryCount,
+                                targetEntryCount: descriptor.targetEntryCount,
+                            },
+                        };
+                    });
+                }
+                try {
+                    const detail = await fetchSessionWithRetries(sessionId, descriptor.baseEntryCount, ctx.signal);
+                    if (ctx.signal.aborted || capturedGen !== generation) {
+                        throw new DOMException("Aborted", "AbortError");
                     }
-                    return;
-                case "replay":
-                    reconnectAttempts = 0;
-                    set((state) => reduceSessionState(state, { type: "replay", message }));
-                    if (
-                        cache !== undefined &&
-                        message.appendedSlice !== undefined &&
-                        message.appendedSlice.entries.length > 0
-                    ) {
-                        void cache.appendEntries(
-                            message.sessionId,
-                            message.entriesVersion,
-                            message.appendedSlice.baseEntryCount,
-                            message.appendedSlice.entries,
-                        );
+                    autoRetriedAfterFailure = false;
+                    return applyHydratedEntries(
+                        ctx.getLatestState(),
+                        detail.entriesVersion,
+                        detail.baseEntryCount,
+                        detail.entries,
+                    );
+                } catch (error) {
+                    if (isAbortError(error) || ctx.signal.aborted || capturedGen !== generation) {
+                        throw error;
                     }
-                    // A reconnect cancels the in-flight sync. The replay settled the prefix, so a
-                    // sync still marked loading has to be restarted from the entries it now holds.
-                    if (get().entriesSync.kind === "loading") {
-                        syncEntriesFromHttp(message.sessionId, get().entries.length);
+                    if (error instanceof ApiClientError && error.status === 404) {
+                        reconnect.stop();
+                        closeActiveSocket();
+                        evictMissingSession(sessionId);
+                        syncClient.reset(applySessionClosed(ctx.getLatestState(), "session", error.message), null);
+                        throw new DOMException("Session closed", "AbortError");
                     }
-                    return;
-                case "entries_appended": {
-                    const before = get();
-                    if (before.status === "closed" || message.sessionId !== before.sessionId) {
-                        return;
+                    const message = error instanceof Error ? error.message : String(error);
+                    Log.warn(`Session HTTP entry sync failed: ${message}`);
+                    scheduleCooldownRetry(capturedGen);
+                    throw error;
+                }
+            },
+            onStateChange(nextState, meta) {
+                const prev = get();
+                let status = nextState.status;
+                let liveMessage = nextState.liveMessage;
+                let lastError = nextState.lastError;
+                if (nextState.status !== "closed") {
+                    if (meta.phase.kind === "reconnecting") {
+                        status = "reconnecting";
+                    } else if (meta.phase.kind === "error") {
+                        status = "error";
+                        liveMessage = { kind: "none" };
+                        lastError = meta.phase.message;
                     }
-                    if (message.entriesMode === "http") {
-                        const baseCount = before.entries.length;
-                        set((state) =>
-                            reduceSessionState(state, {
-                                type: "entries_sync_started",
-                                baseEntryCount: state.entries.length,
-                                targetEntryCount: message.entryCount,
-                            }),
-                        );
-                        syncEntriesFromHttp(message.sessionId, baseCount);
-                        return;
-                    }
-                    if (before.entriesSync.kind === "idle" && message.baseEntryCount > before.entries.length) {
-                        const baseCount = before.entries.length;
-                        const targetCount = message.baseEntryCount + message.entries.length;
-                        set((state) =>
-                            reduceSessionState(state, {
-                                type: "entries_sync_started",
-                                baseEntryCount: state.entries.length,
-                                targetEntryCount: targetCount,
-                            }),
-                        );
-                        set((state) => reduceSessionState(state, { type: "entries_appended", message }));
-                        syncEntriesFromHttp(message.sessionId, baseCount);
-                        return;
-                    }
-                    set((state) => reduceSessionState(state, { type: "entries_appended", message }));
-                    if (before.entriesSync.kind === "idle" && cache !== undefined) {
-                        void cache.appendEntries(
-                            message.sessionId,
-                            message.entriesVersion,
-                            message.baseEntryCount,
-                            message.entries,
-                        );
-                    }
+                }
+                const committed: SessionState = {
+                    ...nextState,
+                    status,
+                    cursor: meta.cursor,
+                    liveMessage,
+                    lastError,
+                };
+                if (
+                    meta.source === "snapshot" ||
+                    meta.source === "replay" ||
+                    meta.source === "delta" ||
+                    meta.source === "hydrate"
+                ) {
+                    persistEntriesToCache(prev, committed);
+                }
+                set(committed);
+            },
+            onResyncRequired(reason) {
+                const capturedGen = generation;
+                if (get().status === "closed") {
                     return;
                 }
-                case "event":
-                    reconnectAttempts = 0;
-                    set((state) => reduceSessionState(state, { type: "event", message }));
-                    return;
-                case "extension_ui_request":
-                    set((state) => reduceSessionState(state, { type: "extension_ui_request", message }));
-                    return;
-                case "extension_ui_resolved":
-                    set((state) => reduceSessionState(state, { type: "extension_ui_resolved", message }));
-                    return;
-                case "extension_error":
-                    Log.warn(
-                        `Extension ${message.extensionPath} failed while handling ${message.event}`,
-                        message.error,
-                    );
-                    return;
-                case "error":
-                    set((state) => reduceSessionState(state, { type: "server_error", message }));
-                    return;
-                case "response":
-                    // The socket settles the matching command promise before this callback runs.
-                    return;
-            }
-        };
+                closeActiveSocket();
+                if (capturedGen === generation) {
+                    reconnect.scheduleResync(reason);
+                }
+            },
+        });
 
-        const open = (sessionId: SessionId, handshake: SessionSocketHandshakeParams): void => {
-            const currentGeneration = generation;
+        const openSocket = (
+            sessionId: SessionId,
+            handshake: SessionSocketHandshakeParams,
+            capturedGen: number,
+        ): void => {
+            if (capturedGen !== generation || get().status === "closed") {
+                return;
+            }
+            closeActiveSocket();
             const nextSocket = new SessionSocket({
                 sessionId,
                 handshake,
-                ...(options.WebSocket === undefined ? {} : { WebSocket: options.WebSocket }),
+                WebSocket: options.WebSocket,
                 onOpen: () => {
-                    if (generation !== currentGeneration) {
+                    if (capturedGen !== generation) {
                         return;
                     }
-                    set((state) => reduceSessionState(state, { type: "open" }));
+                    set((state) => (state.status === "closed" ? state : { ...state, status: "open", lastError: null }));
                 },
-                onMessage: (message: SessionWsServerMessage) => {
-                    if (generation !== currentGeneration) {
+                onSyncFrame: (frame) => {
+                    if (capturedGen !== generation || get().status === "closed") {
                         return;
                     }
-                    applyMessage(message);
+                    if (frame.type === "sync:snapshot" || frame.type === "sync:replay") {
+                        cancelEntriesRetry();
+                        autoRetriedAfterFailure = false;
+                        reconnect.markConnected();
+                    } else if (frame.type === "sync:delta" && frame.delta.kind === "extension_error") {
+                        Log.warn(
+                            `Extension ${frame.delta.extensionPath} failed while handling ${frame.delta.event}`,
+                            frame.delta.error,
+                        );
+                    }
+                    syncClient.handleFrame(frame);
+                },
+                onMessage: (message) => {
+                    if (capturedGen !== generation || get().status === "closed") {
+                        return;
+                    }
+                    if (message.type === "rpc:error") {
+                        set({ lastError: message.message });
+                    }
                 },
                 onClose: (close) => {
-                    if (generation !== currentGeneration) {
+                    if (capturedGen !== generation) {
                         return;
                     }
                     handleClose(sessionId, close);
                 },
                 onError: (message) => {
-                    if (generation === currentGeneration) {
+                    if (capturedGen === generation) {
                         Log.warn(`Session socket error: ${message}`);
                     }
                 },
             });
             socket = nextSocket;
-            try {
-                nextSocket.connect();
-            } catch (error) {
-                socket = null;
-                const message = error instanceof Error ? error.message : String(error);
-                set((state) => reduceSessionState(state, { type: "failed", message }));
-            }
+            nextSocket.connect();
         };
 
-        const scheduleReconnect = (): void => {
-            const state = get();
-            if (state.sessionId === null || state.status === "closed") {
-                set((current) => reduceSessionState(current, { type: "closed", reason: "client" }));
-                return;
-            }
-            if (reconnectAttempts >= maxReconnectAttempts) {
-                set((current) =>
-                    reduceSessionState(current, {
-                        type: "failed",
-                        message: "Cannot reconnect to the session.",
-                    }),
-                );
-                return;
-            }
-            reconnectAttempts += 1;
-            set((current) => reduceSessionState(current, { type: "reconnecting" }));
-            const scheduledGeneration = generation;
-            reconnectTimer = setTimeout(() => {
-                reconnectTimer = null;
-                const next = get();
-                if (generation !== scheduledGeneration || next.sessionId === null || next.status !== "reconnecting") {
+        const reconnect: ReconnectController = createReconnectController({
+            delaysMs: [reconnectDelayMs],
+            maxAttempts: maxReconnectAttempts,
+            listenBrowserEvents: false,
+            onScheduled(attempt) {
+                if (get().status === "closed") {
                     return;
                 }
-                open(next.sessionId, buildHandshakeParams(next));
-            }, reconnectDelayMs);
-        };
+                syncClient.markReconnecting(attempt);
+            },
+            onExhausted() {
+                if (get().status === "closed") {
+                    return;
+                }
+                syncClient.markError("Cannot reconnect to the session.");
+            },
+            onReconnect() {
+                const state = get();
+                if (state.sessionId === null || state.status === "closed") {
+                    return;
+                }
+                const prefixAnchor = buildSessionPrefixAnchor(state);
+                const cursor = syncClient.handshakeCursor();
+                const handshake: SessionSocketHandshakeParams = {
+                    ...(cursor === undefined ? {} : { cursor }),
+                    ...(prefixAnchor === undefined ? {} : { prefixAnchor }),
+                };
+                openSocket(state.sessionId, handshake, generation);
+            },
+        });
 
         const handleClose = (sessionId: SessionId, close: SessionSocketClose): void => {
             socket = null;
-            clearReconnectTimer();
-            if (close.code === SESSION_CLOSE_CODE.sessionNotFound) {
-                cancelHttpSync();
-                evictMissingSession(sessionId);
-            }
-            if (close.classification === "client" || close.classification === "session") {
-                set((state) =>
-                    reduceSessionState(state, {
-                        type: "closed",
-                        reason: close.classification,
-                        message: close.reason,
-                    }),
-                );
+            if (close.classification === "client") {
                 return;
             }
-            Log.warn(`The session connection closed (${close.classification}, code ${String(close.code)})`);
-            // The handshake re-anchors the transcript from the client's prefix, so a response that
-            // was computed for the pre-drop prefix must not land afterwards: it can be shorter than
-            // what the reconnect already delivered.
-            cancelHttpSync();
-            scheduleReconnect();
+            if (close.code === SESSION_CLOSE_CODE.sessionNotFound) {
+                reconnect.stop();
+                cancelEntriesRetry();
+                evictMissingSession(sessionId);
+                const closedState = applySessionClosed(syncClient.currentState, "session", close.reason);
+                syncClient.reset(closedState, null);
+                return;
+            }
+            if (close.classification === "session") {
+                reconnect.stop();
+                cancelEntriesRetry();
+                const closedState = applySessionClosed(syncClient.currentState, "session", close.reason);
+                syncClient.reset(closedState, null);
+                return;
+            }
+            reconnect.notifyClosed();
         };
 
-        const hydrateAndConnect = (sessionId: SessionId, explicitAfterSeq: number | undefined): void => {
+        const hydrateAndConnect = (sessionId: SessionId, capturedGen: number): void => {
             const memEntry = memoryLru.get(sessionId);
             if (memEntry !== undefined) {
-                // Touch LRU order.
-                memoryLru.delete(sessionId);
-                memoryLru.set(sessionId, memEntry);
-                set((state) =>
-                    reduceSessionState(state, {
-                        type: "hydrate_cache",
-                        sessionId,
-                        entriesVersion: memEntry.entriesVersion,
-                        entries: memEntry.entries,
-                        runtimeId: memEntry.runtimeId,
-                        seq: memEntry.seq,
-                        state: memEntry.state,
-                        liveEvents: memEntry.liveEvents,
-                    }),
-                );
-                open(sessionId, buildHandshakeParams(get(), explicitAfterSeq));
+                const hydrated = applyLocalSessionHydration(syncClient.currentState, {
+                    sessionId,
+                    entriesVersion: memEntry.entriesVersion,
+                    entries: memEntry.entries,
+                    state: memEntry.state,
+                    liveEvents: memEntry.liveEvents,
+                });
+                syncClient.hydrateLocalState(hydrated);
+                set(hydrated);
+                const prefixAnchor = buildSessionPrefixAnchor(hydrated);
+                openSocket(sessionId, prefixAnchor === undefined ? {} : { prefixAnchor }, capturedGen);
                 return;
             }
 
             if (cache === undefined) {
-                open(sessionId, buildHandshakeParams(get(), explicitAfterSeq));
+                openSocket(sessionId, {}, capturedGen);
                 return;
             }
 
-            const connectGeneration = generation;
             void cache
                 .getSession(sessionId)
-                .then((cached) => {
-                    if (generation !== connectGeneration) {
-                        return;
-                    }
-                    if (cached !== null) {
-                        set((state) =>
-                            reduceSessionState(state, {
-                                type: "hydrate_cache",
-                                sessionId,
-                                entriesVersion: cached.meta.entriesVersion,
-                                entries: cached.entries,
-                            }),
-                        );
-                    }
-                    open(sessionId, buildHandshakeParams(get(), explicitAfterSeq));
-                })
                 .catch((error: unknown) => {
                     Log.warn("Failed to hydrate session from IndexedDB", error);
-                    if (generation !== connectGeneration) {
+                    return null;
+                })
+                .then((record) => {
+                    if (capturedGen !== generation || get().status === "closed") {
                         return;
                     }
-                    open(sessionId, buildHandshakeParams(get(), explicitAfterSeq));
+                    if (record !== null) {
+                        const hydrated = applyLocalSessionHydration(syncClient.currentState, {
+                            sessionId,
+                            entriesVersion: record.meta.entriesVersion,
+                            entries: record.entries,
+                        });
+                        syncClient.hydrateLocalState(hydrated);
+                        set(hydrated);
+                    }
+                    const prefixAnchor = buildSessionPrefixAnchor(get());
+                    openSocket(sessionId, prefixAnchor === undefined ? {} : { prefixAnchor }, capturedGen);
                 });
         };
 
         return {
             ...initialSessionState,
-            connect: (sessionId, connectOptions = {}) => {
+            connect: (sessionId) => {
                 const current = get();
                 if (
                     current.sessionId === sessionId &&
-                    socket !== null &&
                     (current.status === "connecting" || current.status === "open" || current.status === "reconnecting")
                 ) {
                     return;
@@ -633,62 +586,48 @@ export function createSessionStore(options: SessionStoreOptions) {
                     saveToMemoryLru(current);
                 }
                 generation += 1;
-                clearReconnectTimer();
-                cancelHttpSync();
-                reconnectAttempts = 0;
-                const previous = socket;
-                socket = null;
-                previous?.close();
-                set((state) => reduceSessionState(state, { type: "connect", sessionId }));
-                hydrateAndConnect(sessionId, connectOptions.afterSeq);
+                const capturedGen = generation;
+                cancelEntriesRetry();
+                autoRetriedAfterFailure = false;
+                closeActiveSocket();
+                reconnect.stop();
+                reconnect.start();
+                syncClient.reset({ ...initialSessionState, status: "connecting", sessionId }, null);
+                hydrateAndConnect(sessionId, capturedGen);
             },
             disconnect: () => {
                 saveToMemoryLru(get());
                 generation += 1;
-                clearReconnectTimer();
-                cancelHttpSync();
-                reconnectAttempts = 0;
-                const current = socket;
-                socket = null;
-                current?.close();
-                set((state) => reduceSessionState(state, { type: "reset" }));
+                cancelEntriesRetry();
+                autoRetriedAfterFailure = false;
+                reconnect.stop();
+                closeActiveSocket();
+                syncClient.reset(initialSessionState, null);
             },
             clearCache: () => {
                 memoryLru.clear();
                 generation += 1;
-                clearReconnectTimer();
-                cancelHttpSync();
-                reconnectAttempts = 0;
-                const current = socket;
-                socket = null;
-                current?.close();
-                set((state) => reduceSessionState(state, { type: "reset" }));
+                cancelEntriesRetry();
+                autoRetriedAfterFailure = false;
+                reconnect.stop();
+                closeActiveSocket();
+                syncClient.reset(initialSessionState, null);
             },
             retryEntriesSync: () => {
-                const current = get();
-                if (current.sessionId === null || current.entriesSync.kind !== "error") {
-                    return;
-                }
-                const { baseEntryCount, targetEntryCount } = current.entriesSync;
-                set((state) =>
-                    reduceSessionState(state, {
-                        type: "entries_sync_started",
-                        baseEntryCount,
-                        targetEntryCount,
-                    }),
-                );
-                syncEntriesFromHttp(current.sessionId, baseEntryCount);
+                cancelEntriesRetry();
+                autoRetriedAfterFailure = false;
+                triggerHydrationRetry();
             },
             sendCommand: (command) => {
                 const current = socket;
-                if (current === null) {
+                if (current === null || current.isClosed) {
                     return Promise.reject(new SessionSocketClosedError("client"));
                 }
                 return current.sendCommand(command);
             },
             sendUiResponse: (response) => {
                 const current = socket;
-                if (current === null) {
+                if (current === null || current.isClosed) {
                     return Promise.reject(new SessionSocketClosedError("client"));
                 }
                 try {

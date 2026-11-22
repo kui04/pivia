@@ -1,20 +1,23 @@
-import type {
-    AssistantMessage,
-    EntriesVersion,
-    FileEntry,
-    RpcExtensionUIRequest,
-    SequencedSessionEvent,
-    SessionCloseReason,
-    SessionId,
-    SessionStateSnapshot,
-    SessionWsEntriesAppendedMessage,
-    SessionWsErrorMessage,
-    SessionWsEventMessage,
-    SessionWsExtensionUiRequestMessage,
-    SessionWsExtensionUiResolvedMessage,
-    SessionWsReplayMessage,
-    SessionWsSnapshotMessage,
+import {
+    assertNever,
+    parseSyncSeq,
+    type AssistantMessage,
+    type EntriesVersion,
+    type FileEntry,
+    type HydratableSyncReducer,
+    type RpcExtensionUIRequest,
+    type SessionCloseReason,
+    type SessionCursor,
+    type SessionDelta,
+    type SessionId,
+    type SessionPrefixAnchor,
+    type SessionSeq,
+    type SessionSnapshot,
+    type SessionStatePatch,
+    type SessionStateSnapshot,
 } from "@pivia/protocol";
+
+export type SessionEvent = Extract<SessionDelta, { readonly kind: "agent_event" }>["event"];
 
 /** Connection lifecycle of the one session the workspace currently shows. */
 export type SessionConnectionStatus = "idle" | "connecting" | "open" | "reconnecting" | "closed" | "error";
@@ -32,10 +35,10 @@ export type LiveMessageState =
     | { readonly kind: "settled"; readonly message: AssistantMessage };
 
 /**
- * Sum type for HTTP entry synchronization (`entriesMode: "http"` and gap self-healing).
+ * Sum type for HTTP entry synchronization (`Delivery.http` snapshots and large appends).
  *
- * `pendingAppendedEntries` and `targetEntryCount` exist only while a sync is in flight or
- * awaiting retry, making idle-with-pending-queue states unrepresentable.
+ * Pending WebSocket deltas are owned by `SyncStreamClient`'s `hydrating_http` phase rather than
+ * duplicated in UI store state.
  */
 export type EntriesSyncState =
     | { readonly kind: "idle" }
@@ -43,24 +46,34 @@ export type EntriesSyncState =
           readonly kind: "loading";
           readonly baseEntryCount: number;
           readonly targetEntryCount: number;
-          readonly pendingAppendedEntries: readonly FileEntry[];
       }
     | {
           readonly kind: "error";
           readonly baseEntryCount: number;
           readonly targetEntryCount: number;
           readonly message: string;
-          readonly pendingAppendedEntries: readonly FileEntry[];
       };
+
+/** One structural runtime event kept with the stream sequence that produced it. */
+export interface SequencedSessionEvent {
+    readonly seq: SessionSeq;
+    readonly event: SessionEvent;
+}
+
+/** HTTP hydration descriptor returned to `SyncStreamClient` when session entries offload to HTTP. */
+export interface SessionHttpHydrationDescriptor {
+    readonly kind: "snapshot" | "delta";
+    readonly entriesVersion: EntriesVersion;
+    readonly baseEntryCount: number;
+    readonly targetEntryCount: number;
+}
 
 /** Everything the session view needs from the active runtime. */
 export interface SessionState {
     readonly status: SessionConnectionStatus;
     readonly sessionId: SessionId | null;
-    /** Active server runtime id for Tier 1 replay matching. */
-    readonly runtimeId: string | null;
-    /** Sequence number of the newest applied event. */
-    readonly seq: number;
+    /** Domain clock cursor (`epoch` = runtime id, `seq` = stream counter) of the applied state. */
+    readonly cursor: SessionCursor | null;
     /** Composite `${sessionVersion}:${sdkVersion}`, or `null` when uncached/unmigrated. */
     readonly entriesVersion: EntriesVersion | null;
     readonly state: SessionStateSnapshot | null;
@@ -74,55 +87,20 @@ export interface SessionState {
     readonly lastError: string | null;
 }
 
-/** Inputs the reducer accepts from the transport, cache, store and route changes. */
-export type SessionAction =
-    | { readonly type: "connect"; readonly sessionId: SessionId }
-    | {
-          readonly type: "hydrate_cache";
-          readonly sessionId: SessionId;
-          readonly entriesVersion: EntriesVersion | null;
-          readonly entries: readonly FileEntry[];
-          readonly runtimeId?: string | null | undefined;
-          readonly seq?: number | undefined;
-          readonly state?: SessionStateSnapshot | null | undefined;
-          readonly liveEvents?: readonly SequencedSessionEvent[] | undefined;
-      }
-    | { readonly type: "open" }
-    | { readonly type: "snapshot"; readonly message: SessionWsSnapshotMessage }
-    | { readonly type: "replay"; readonly message: SessionWsReplayMessage }
-    | {
-          readonly type: "entries_appended";
-          readonly message: Extract<SessionWsEntriesAppendedMessage, { readonly entriesMode: "inline" }>;
-      }
-    | { readonly type: "entries_sync_started"; readonly baseEntryCount: number; readonly targetEntryCount: number }
-    | {
-          readonly type: "entries_sync_succeeded";
-          readonly sessionId: SessionId;
-          readonly entriesVersion: EntriesVersion | null;
-          readonly baseEntryCount: number;
-          readonly entries: readonly FileEntry[];
-      }
-    | { readonly type: "entries_sync_failed"; readonly sessionId: SessionId; readonly message: string }
-    | { readonly type: "event"; readonly message: SessionWsEventMessage }
-    | { readonly type: "extension_ui_request"; readonly message: SessionWsExtensionUiRequestMessage }
-    | { readonly type: "extension_ui_resolved"; readonly message: SessionWsExtensionUiResolvedMessage }
-    | { readonly type: "server_error"; readonly message: SessionWsErrorMessage }
-    | { readonly type: "reconnecting" }
-    | {
-          readonly type: "closed";
-          readonly reason: SessionCloseReason;
-          /** Server close reason, used for a terminal session close. */
-          readonly message?: string | undefined;
-      }
-    | { readonly type: "failed"; readonly message: string }
-    | { readonly type: "reset" };
+/** Cached transcript and state snapshot loaded from IndexedDB or the memory LRU. */
+export interface SessionLocalHydrationInput {
+    readonly sessionId: SessionId;
+    readonly entriesVersion: EntriesVersion | null;
+    readonly entries: readonly FileEntry[];
+    readonly state?: SessionStateSnapshot | null | undefined;
+    readonly liveEvents?: readonly SequencedSessionEvent[] | undefined;
+}
 
 /** The session state before a socket exists. */
 export const initialSessionState: SessionState = {
     status: "idle",
     sessionId: null,
-    runtimeId: null,
-    seq: 0,
+    cursor: null,
     entriesVersion: null,
     state: null,
     entries: [],
@@ -138,7 +116,19 @@ export function liveAssistantMessage(state: SessionState): AssistantMessage | nu
     return state.liveMessage.kind === "none" ? null : state.liveMessage.message;
 }
 
-type SessionEvent = SequencedSessionEvent["event"];
+/** Build a Tier 2 entry-prefix anchor when the store holds a non-empty cached transcript. */
+export function buildSessionPrefixAnchor(state: SessionState): SessionPrefixAnchor | undefined {
+    const lastEntry = state.entries.at(-1);
+    if (state.entriesVersion === null || lastEntry === undefined) {
+        return undefined;
+    }
+    return {
+        entriesVersion: state.entriesVersion,
+        afterCount: state.entries.length,
+        afterEntryId: lastEntry.id,
+    };
+}
+
 type AssistantDelta = Extract<SessionEvent, { type: "message_update" }>["assistantMessageEvent"];
 
 /**
@@ -149,14 +139,6 @@ type AssistantDelta = Extract<SessionEvent, { type: "message_update" }>["assista
  */
 const MAX_LIVE_EVENTS = 512;
 
-/**
- * Upper bound for entries staged while an HTTP sync owns the transcript.
- *
- * The queue only saves a re-read of the same range, so dropping it on overflow costs one extra
- * request instead of holding an entire session delta in memory during a stalled or failing sync.
- */
-const MAX_PENDING_APPENDED_ENTRIES = 512;
-
 const INTERACTIVE_METHODS: ReadonlySet<RpcExtensionUIRequest["method"]> = new Set([
     "select",
     "confirm",
@@ -166,6 +148,10 @@ const INTERACTIVE_METHODS: ReadonlySet<RpcExtensionUIRequest["method"]> = new Se
 
 function isDialogRequest(request: RpcExtensionUIRequest): boolean {
     return INTERACTIVE_METHODS.has(request.method);
+}
+
+function filterInteractiveUiRequests(requests: readonly RpcExtensionUIRequest[]): readonly RpcExtensionUIRequest[] {
+    return requests.filter(isDialogRequest);
 }
 
 function isStructuralEvent(event: SessionEvent): boolean {
@@ -180,17 +166,6 @@ function appendLiveEvent(
         return [...events, event];
     }
     return [...events.slice(events.length - MAX_LIVE_EVENTS + 1), event];
-}
-
-function appendLiveEvents(
-    events: readonly SequencedSessionEvent[],
-    additions: readonly SequencedSessionEvent[],
-): readonly SequencedSessionEvent[] {
-    if (additions.length === 0) {
-        return events;
-    }
-    const combined = [...events, ...additions];
-    return combined.length > MAX_LIVE_EVENTS ? combined.slice(combined.length - MAX_LIVE_EVENTS) : combined;
 }
 
 function replaceContent(message: AssistantMessage, index: number, block: AssistantMessage["content"][number]) {
@@ -283,8 +258,15 @@ function applyAssistantEvent(live: LiveMessageState, event: SessionEvent): LiveM
     }
 }
 
+function containsAssistantMessage(entries: readonly FileEntry[], timestamp: number): boolean {
+    return entries.some(
+        (entry) =>
+            entry.type === "message" && entry.message.role === "assistant" && entry.message.timestamp === timestamp,
+    );
+}
+
 /** Merge newly appended entries idempotently by `entry.id` and clear a settled `liveMessage` only when matched. */
-function mergeAppendedEntries(
+export function mergeAppendedEntries(
     existing: readonly FileEntry[],
     baseEntryCount: number,
     additions: readonly FileEntry[],
@@ -316,19 +298,12 @@ function mergeAppendedEntries(
     return { entries: nextEntries, liveMessage: nextLive };
 }
 
-function containsAssistantMessage(entries: readonly FileEntry[], timestamp: number): boolean {
-    return entries.some(
-        (entry) =>
-            entry.type === "message" && entry.message.role === "assistant" && entry.message.timestamp === timestamp,
-    );
-}
-
 /**
  * Folds one live event into the state summary.
  *
- * Only fields whose value the event states in full are updated. Counters such as `messageCount`
- * stay whatever the server last reported, because a partial delta cannot reconstruct them and a
- * replay would otherwise apply the same increment twice.
+ * Only fields whose value the event states in full are updated. Non-event state mutations such as
+ * `model` and `messageCount` arrive via {@link SessionDelta} `state_patched` frames so replays remain
+ * deterministic.
  */
 function applySessionEvent(summary: SessionStateSnapshot | null, event: SessionEvent): SessionStateSnapshot | null {
     if (summary === null) {
@@ -361,6 +336,69 @@ function applySessionEvent(summary: SessionStateSnapshot | null, event: SessionE
     }
 }
 
+function applyStatePatch(summary: SessionStateSnapshot | null, patch: SessionStatePatch): SessionStateSnapshot | null {
+    if (summary === null) {
+        return null;
+    }
+    return {
+        ...summary,
+        ...(patch.model === undefined ? {} : { model: patch.model }),
+        ...(patch.messageCount === undefined ? {} : { messageCount: patch.messageCount }),
+        ...(patch.autoCompactionEnabled === undefined ? {} : { autoCompactionEnabled: patch.autoCompactionEnabled }),
+        ...(patch.steeringMode === undefined ? {} : { steeringMode: patch.steeringMode }),
+        ...(patch.followUpMode === undefined ? {} : { followUpMode: patch.followUpMode }),
+    };
+}
+
+/** Merge an HTTP `GET /api/sessions/:id` entry slice cleanly into `state`. */
+export function applyHydratedEntries(
+    state: SessionState,
+    entriesVersion: EntriesVersion | null,
+    baseEntryCount: number,
+    entries: readonly FileEntry[],
+): SessionState {
+    if (state.status === "closed") {
+        return state;
+    }
+    const basePrefix = baseEntryCount > 0 ? state.entries.slice(0, baseEntryCount) : [];
+    const seenIds = new Set(basePrefix.map((entry) => entry.id));
+    const additions: FileEntry[] = [];
+    for (const entry of entries) {
+        if (!seenIds.has(entry.id)) {
+            seenIds.add(entry.id);
+            additions.push(entry);
+        }
+    }
+    const mergedEntries = basePrefix.length === 0 ? additions : [...basePrefix, ...additions];
+    const nextLive =
+        state.liveMessage.kind === "settled" && containsAssistantMessage(entries, state.liveMessage.message.timestamp)
+            ? ({ kind: "none" } as const)
+            : state.liveMessage;
+    return {
+        ...state,
+        entriesVersion: entriesVersion ?? state.entriesVersion,
+        entries: mergedEntries,
+        entriesSync: { kind: "idle" },
+        liveMessage: nextLive,
+    };
+}
+
+/** Hydrate locally cached entries/summary without assigning a server clock cursor. */
+export function applyLocalSessionHydration(state: SessionState, input: SessionLocalHydrationInput): SessionState {
+    if (state.status === "closed" || input.sessionId !== state.sessionId || state.entries.length > 0) {
+        return state;
+    }
+    return {
+        ...state,
+        entriesVersion: input.entriesVersion,
+        entries: input.entries,
+        state: input.state ?? state.state,
+        liveEvents: input.liveEvents ?? state.liveEvents,
+        // Keep liveMessage empty when hydrating locally until the WS handshake confirms live state.
+        liveMessage: { kind: "none" },
+    };
+}
+
 function closeReasonError(reason: SessionCloseReason): string | null {
     switch (reason) {
         case "slow-consumer":
@@ -373,309 +411,196 @@ function closeReasonError(reason: SessionCloseReason): string | null {
     }
 }
 
-function closedError(reason: SessionCloseReason, message: string | undefined): string | null {
+/** Format a terminal server/transport close into the state summary's `lastError`. */
+export function sessionCloseError(reason: SessionCloseReason, message?: string): string | null {
     if (reason === "session") {
         return message ?? "The session closed.";
     }
     return closeReasonError(reason);
 }
 
+/** Transition into terminal `closed` state while wiping transient dialogs and live streams. */
+export function applySessionClosed(state: SessionState, reason: SessionCloseReason, message?: string): SessionState {
+    return {
+        ...state,
+        status: "closed",
+        liveMessage: { kind: "none" },
+        pendingUiRequests: [],
+        lastError: sessionCloseError(reason, message),
+    };
+}
+
 /**
- * Pure reducer for the active session.
+ * Create the pure {@link HydratableSyncReducer} consumed by `SyncStreamClient<"session", ...>`.
  *
- * Snapshots and replays replace `pendingUiRequests` as a whole. An appended or resolved dialog is
- * never merged with an older list, because a resolved dialog that came back would block the
- * extension again.
+ * Offloaded HTTP snapshots and large `entries_appended` deltas trigger `hydrating_http` before
+ * subsequent deltas execute.
  */
-export function reduceSessionState(state: SessionState, action: SessionAction): SessionState {
-    switch (action.type) {
-        case "connect":
-            return {
-                ...initialSessionState,
-                status: "connecting",
-                sessionId: action.sessionId,
-            };
-        case "hydrate_cache": {
-            if (state.status === "closed" || action.sessionId !== state.sessionId || state.entries.length > 0) {
-                return state;
+export function createSessionSyncReducer(): HydratableSyncReducer<
+    SessionState,
+    SessionSnapshot,
+    SessionDelta,
+    SessionHttpHydrationDescriptor
+> {
+    return {
+        applySnapshot(prev, snapshot) {
+            if (prev.status === "closed" || (prev.sessionId !== null && snapshot.state.sessionId !== prev.sessionId)) {
+                return prev;
             }
-            return {
-                ...state,
-                entriesVersion: action.entriesVersion,
-                entries: action.entries,
-                runtimeId: action.runtimeId ?? state.runtimeId,
-                seq: action.seq ?? state.seq,
-                state: action.state ?? state.state,
-                liveEvents: action.liveEvents ?? state.liveEvents,
-                // Keep liveMessage empty when hydrating from cache until WS handshake confirms live state.
-                liveMessage: { kind: "none" },
-            };
-        }
-        case "open":
-            return state.status === "closed" ? state : { ...state, status: "open", lastError: null };
-        case "snapshot": {
-            const { message } = action;
-            if (state.status === "closed" || message.sessionId !== state.sessionId) {
-                return state;
-            }
-            if (message.entriesMode === "http") {
-                const basePrefix = message.baseEntryCount > 0 ? state.entries.slice(0, message.baseEntryCount) : [];
+            if (snapshot.entries.mode === "http") {
+                const basePrefix = snapshot.baseEntryCount > 0 ? prev.entries.slice(0, snapshot.baseEntryCount) : [];
                 return {
-                    ...state,
+                    ...prev,
                     status: "open",
-                    runtimeId: message.runtimeId,
-                    seq: message.seq,
-                    entriesVersion: message.entriesVersion,
-                    state: message.state,
+                    sessionId: snapshot.state.sessionId,
+                    entriesVersion: snapshot.entriesVersion,
+                    state: snapshot.state,
                     entries: basePrefix,
                     entriesSync: {
                         kind: "loading",
-                        baseEntryCount: message.baseEntryCount,
-                        targetEntryCount: message.entryCount,
-                        pendingAppendedEntries: [],
+                        baseEntryCount: snapshot.baseEntryCount,
+                        targetEntryCount: snapshot.entries.meta.entryCount,
                     },
                     liveEvents: [],
-                    liveMessage: toLiveMessageState(message.liveMessage),
-                    pendingUiRequests: message.pendingUiRequests,
+                    liveMessage: toLiveMessageState(snapshot.liveMessage),
+                    pendingUiRequests: filterInteractiveUiRequests(snapshot.pendingUiRequests),
                     lastError: null,
                 };
             }
             const nextEntries =
-                message.baseEntryCount === 0
-                    ? message.entries
-                    : [...state.entries.slice(0, message.baseEntryCount), ...message.entries];
+                snapshot.baseEntryCount === 0
+                    ? snapshot.entries.data
+                    : [...prev.entries.slice(0, snapshot.baseEntryCount), ...snapshot.entries.data];
             return {
-                ...state,
+                ...prev,
                 status: "open",
-                runtimeId: message.runtimeId,
-                seq: message.seq,
-                entriesVersion: message.entriesVersion,
-                state: message.state,
+                sessionId: snapshot.state.sessionId,
+                entriesVersion: snapshot.entriesVersion,
+                state: snapshot.state,
                 entries: nextEntries,
                 entriesSync: { kind: "idle" },
                 liveEvents: [],
-                liveMessage: toLiveMessageState(message.liveMessage),
-                pendingUiRequests: message.pendingUiRequests,
+                liveMessage: toLiveMessageState(snapshot.liveMessage),
+                pendingUiRequests: filterInteractiveUiRequests(snapshot.pendingUiRequests),
                 lastError: null,
             };
-        }
-        case "replay": {
-            const { message } = action;
-            if (state.status === "closed" || message.sessionId !== state.sessionId) {
-                return state;
+        },
+        inspectSnapshot(snapshot, nextState) {
+            if (nextState.status === "closed" || snapshot.entries.mode !== "http") {
+                return null;
             }
-            const previousSeq = state.seq;
-            let summary: SessionStateSnapshot | null = message.state;
-            const appended: SequencedSessionEvent[] = [];
-            for (const sequenced of message.events) {
-                if (sequenced.seq <= previousSeq) {
-                    continue;
-                }
-                // The server state already includes these events. Applying the idempotent fields
-                // again keeps a replayed state equal to the one the event stream describes.
-                summary = applySessionEvent(summary, sequenced.event);
-                if (isStructuralEvent(sequenced.event)) {
-                    appended.push(sequenced);
-                }
-            }
-            const nextEntries =
-                message.appendedSlice !== undefined
-                    ? mergeAppendedEntries(
-                          state.entries,
-                          message.appendedSlice.baseEntryCount,
-                          message.appendedSlice.entries,
-                          { kind: "none" },
-                      ).entries
-                    : state.entries;
             return {
-                ...state,
-                status: "open",
-                runtimeId: message.runtimeId,
-                entriesVersion: message.entriesVersion,
-                // The server's current sequence covers an empty replay, and the applied events
-                // already moved `previousSeq`; keep the newer of the two.
-                seq: message.seq > previousSeq ? message.seq : previousSeq,
-                state: summary,
-                entries: nextEntries,
-                liveEvents: appendLiveEvents(state.liveEvents, appended),
-                liveMessage: toLiveMessageState(message.liveMessage),
-                pendingUiRequests: message.pendingUiRequests,
-                lastError: null,
+                kind: "snapshot",
+                entriesVersion: snapshot.entriesVersion,
+                baseEntryCount: snapshot.baseEntryCount,
+                targetEntryCount: snapshot.entries.meta.entryCount,
             };
-        }
-        case "entries_appended": {
-            const { message } = action;
-            if (state.status === "closed" || message.sessionId !== state.sessionId) {
-                return state;
+        },
+        inspectDelta(delta, state) {
+            if (state.status === "closed" || delta.kind !== "entries_appended" || delta.entries.mode !== "http") {
+                return null;
             }
-            if (state.entriesSync.kind !== "idle") {
-                const nextTarget = Math.max(
-                    state.entriesSync.targetEntryCount,
-                    message.baseEntryCount + message.entries.length,
-                );
-                const staged = [...state.entriesSync.pendingAppendedEntries, ...message.entries];
-                return {
-                    ...state,
-                    entriesVersion: message.entriesVersion,
-                    entriesSync: {
-                        ...state.entriesSync,
-                        targetEntryCount: nextTarget,
-                        pendingAppendedEntries: staged.length > MAX_PENDING_APPENDED_ENTRIES ? [] : staged,
-                    },
-                };
-            }
-            if (message.baseEntryCount > state.entries.length) {
-                return state;
-            }
-            const merged = mergeAppendedEntries(
-                state.entries,
-                message.baseEntryCount,
-                message.entries,
-                state.liveMessage,
-            );
-            return {
-                ...state,
-                entriesVersion: message.entriesVersion,
-                entries: merged.entries,
-                liveMessage: merged.liveMessage,
-            };
-        }
-        case "entries_sync_started": {
-            const prev = state.entriesSync;
-            const pending = prev.kind === "idle" ? [] : prev.pendingAppendedEntries;
-            const target =
-                prev.kind === "idle"
-                    ? action.targetEntryCount
-                    : Math.max(prev.targetEntryCount, action.targetEntryCount);
-            return {
-                ...state,
-                entriesSync: {
-                    kind: "loading",
-                    baseEntryCount: action.baseEntryCount,
-                    targetEntryCount: target,
-                    pendingAppendedEntries: pending,
-                },
-            };
-        }
-        case "entries_sync_succeeded": {
-            if (state.status === "closed" || action.sessionId !== state.sessionId) {
-                return state;
-            }
-            // A handshake or replay already settled the transcript, so no sync is in flight and the
-            // response describes a prefix the client no longer holds.
-            if (state.entriesSync.kind === "idle") {
-                return state;
-            }
-            const { pendingAppendedEntries: pending, targetEntryCount } = state.entriesSync;
-            const basePrefix = action.baseEntryCount > 0 ? state.entries.slice(0, action.baseEntryCount) : [];
-            const combinedBase = basePrefix.length === 0 ? action.entries : [...basePrefix, ...action.entries];
-            const seenIds = new Set(combinedBase.map((entry) => entry.id));
-            const trailing: FileEntry[] = [];
-            for (const entry of pending) {
-                if (!seenIds.has(entry.id)) {
-                    seenIds.add(entry.id);
-                    trailing.push(entry);
-                }
-            }
-            const mergedEntries = trailing.length === 0 ? combinedBase : [...combinedBase, ...trailing];
-            const settledMatched =
-                state.liveMessage.kind === "settled" &&
-                (containsAssistantMessage(action.entries, state.liveMessage.message.timestamp) ||
-                    containsAssistantMessage(pending, state.liveMessage.message.timestamp));
-            const nextLive = settledMatched ? ({ kind: "none" } as const) : state.liveMessage;
-            const nextSync: EntriesSyncState =
-                mergedEntries.length < targetEntryCount
-                    ? {
-                          kind: "loading",
-                          baseEntryCount: mergedEntries.length,
-                          targetEntryCount,
-                          pendingAppendedEntries: [],
-                      }
-                    : { kind: "idle" };
-            return {
-                ...state,
-                entriesVersion: action.entriesVersion,
-                entries: mergedEntries,
-                entriesSync: nextSync,
-                liveMessage: nextLive,
-            };
-        }
-        case "entries_sync_failed": {
-            if (state.status === "closed" || action.sessionId !== state.sessionId) {
-                return state;
-            }
-            const prev = state.entriesSync;
-            return {
-                ...state,
-                entriesSync: {
-                    kind: "error",
-                    baseEntryCount: prev.kind === "idle" ? state.entries.length : prev.baseEntryCount,
-                    targetEntryCount: prev.kind === "idle" ? state.entries.length : prev.targetEntryCount,
-                    message: action.message,
-                    pendingAppendedEntries: prev.kind === "idle" ? [] : prev.pendingAppendedEntries,
-                },
-            };
-        }
-        case "event": {
-            const { message } = action;
-            if (state.status === "closed" || message.sessionId !== state.sessionId || message.seq <= state.seq) {
-                return state;
-            }
-            const sequenced: SequencedSessionEvent = { seq: message.seq, event: message.event };
-            return {
-                ...state,
-                status: "open",
-                seq: message.seq,
-                state: applySessionEvent(state.state, message.event),
-                liveEvents: isStructuralEvent(message.event)
-                    ? appendLiveEvent(state.liveEvents, sequenced)
-                    : state.liveEvents,
-                liveMessage: applyAssistantEvent(state.liveMessage, message.event),
-                lastError: null,
-            };
-        }
-        case "extension_ui_request": {
-            const { message } = action;
+            // Skip redundant HTTP reads when the transcript already reached the advertised entry count.
             if (
-                state.status === "closed" ||
-                message.sessionId !== state.sessionId ||
-                !isDialogRequest(message.request)
+                state.entriesVersion === delta.entriesVersion &&
+                state.entries.length >= delta.entries.meta.entryCount
             ) {
-                return state;
-            }
-            if (state.pendingUiRequests.some((request) => request.id === message.request.id)) {
-                return state;
+                return null;
             }
             return {
-                ...state,
-                pendingUiRequests: [...state.pendingUiRequests, message.request],
+                kind: "delta",
+                entriesVersion: delta.entriesVersion,
+                baseEntryCount: Math.min(state.entries.length, delta.baseEntryCount),
+                targetEntryCount: delta.entries.meta.entryCount,
             };
-        }
-        case "extension_ui_resolved": {
-            const { message } = action;
-            if (state.status === "closed" || message.sessionId !== state.sessionId) {
-                return state;
+        },
+        recoverHydrationFailure(prevState, descriptor, message) {
+            return prevState.status === "closed"
+                ? prevState
+                : {
+                      ...prevState,
+                      entriesSync: {
+                          kind: "error",
+                          baseEntryCount: descriptor.baseEntryCount,
+                          targetEntryCount: descriptor.targetEntryCount,
+                          message,
+                      },
+                  };
+        },
+        applyDelta(prev, delta, seq) {
+            if (prev.status === "closed") {
+                return prev;
             }
-            const pendingUiRequests = state.pendingUiRequests.filter((request) => request.id !== message.requestId);
-            return pendingUiRequests.length === state.pendingUiRequests.length
-                ? state
-                : { ...state, pendingUiRequests };
-        }
-        case "server_error":
-            return { ...state, lastError: action.message.message };
-        case "reconnecting":
-            return state.status === "closed" ? state : { ...state, status: "reconnecting" };
-        case "closed":
-            return {
-                ...state,
-                status: "closed",
-                liveMessage: { kind: "none" },
-                pendingUiRequests: [],
-                lastError: closedError(action.reason, action.message),
-            };
-        case "failed":
-            return { ...state, status: "error", liveMessage: { kind: "none" }, lastError: action.message };
-        case "reset":
-            return initialSessionState;
-    }
+            switch (delta.kind) {
+                case "agent_event": {
+                    const parsedSeq = seq !== undefined ? parseSyncSeq<"session">(seq) : null;
+                    const nextLiveEvents =
+                        isStructuralEvent(delta.event) && parsedSeq !== null
+                            ? appendLiveEvent(prev.liveEvents, { seq: parsedSeq, event: delta.event })
+                            : prev.liveEvents;
+                    return {
+                        ...prev,
+                        status: "open",
+                        state: applySessionEvent(prev.state, delta.event),
+                        liveEvents: nextLiveEvents,
+                        liveMessage: applyAssistantEvent(prev.liveMessage, delta.event),
+                        lastError: null,
+                    };
+                }
+                case "entries_appended": {
+                    if (delta.entries.mode === "http") {
+                        return delta.entriesVersion === prev.entriesVersion
+                            ? prev
+                            : { ...prev, entriesVersion: delta.entriesVersion };
+                    }
+                    if (delta.baseEntryCount > prev.entries.length) {
+                        return prev;
+                    }
+                    const merged = mergeAppendedEntries(
+                        prev.entries,
+                        delta.baseEntryCount,
+                        delta.entries.data,
+                        prev.liveMessage,
+                    );
+                    return {
+                        ...prev,
+                        entriesVersion: delta.entriesVersion,
+                        entries: merged.entries,
+                        liveMessage: merged.liveMessage,
+                    };
+                }
+                case "state_patched":
+                    return {
+                        ...prev,
+                        status: "open",
+                        state: applyStatePatch(prev.state, delta.patch),
+                        lastError: null,
+                    };
+                case "ui_request": {
+                    if (!isDialogRequest(delta.request)) {
+                        return prev;
+                    }
+                    if (prev.pendingUiRequests.some((candidate) => candidate.id === delta.request.id)) {
+                        return prev;
+                    }
+                    return {
+                        ...prev,
+                        pendingUiRequests: [...prev.pendingUiRequests, delta.request],
+                    };
+                }
+                case "ui_resolved": {
+                    const pendingUiRequests = prev.pendingUiRequests.filter(
+                        (candidate) => candidate.id !== delta.requestId,
+                    );
+                    return pendingUiRequests.length === prev.pendingUiRequests.length
+                        ? prev
+                        : { ...prev, pendingUiRequests };
+                }
+                case "extension_error":
+                    return prev;
+                default:
+                    return assertNever(delta);
+            }
+        },
+    };
 }

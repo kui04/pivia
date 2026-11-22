@@ -1,4 +1,4 @@
-import { parseWorkspaceWsServerMessage, type WorkspaceWsServerMessage } from "@pivia/protocol";
+import { parseWorkspaceWsServerMessage, type CatalogCursor, type WorkspaceWsServerMessage } from "@pivia/protocol";
 
 import { Log } from "@/lib/log";
 
@@ -15,6 +15,7 @@ export interface WorkspaceSocketHandlers {
 /** Options for {@link connectWorkspaceSocket}. */
 export interface WorkspaceSocketOptions {
     readonly url?: string | undefined;
+    readonly cursor?: CatalogCursor | undefined;
     readonly WebSocket?: SessionSocketConstructor | undefined;
     readonly handlers: WorkspaceSocketHandlers;
 }
@@ -25,7 +26,7 @@ export interface WorkspaceSocket {
 }
 
 /** Build the default `/ws/workspace` WebSocket endpoint from the current page origin. */
-export function buildWorkspaceSocketUrl(pageUrl?: string): string {
+export function buildWorkspaceSocketUrl(pageUrl?: string, cursor?: CatalogCursor): string {
     const source = pageUrl ?? globalThis.location?.href;
     if (source === undefined) {
         throw new Error("A WebSocket URL is required outside the browser.");
@@ -34,6 +35,10 @@ export function buildWorkspaceSocketUrl(pageUrl?: string): string {
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     url.pathname = "/ws/workspace";
     url.search = "";
+    if (cursor !== undefined) {
+        url.searchParams.set("epoch", cursor.epoch);
+        url.searchParams.set("afterSeq", String(cursor.seq));
+    }
     url.hash = "";
     return url.toString();
 }
@@ -60,7 +65,7 @@ function detachHandlers(socket: SessionSocketLike): void {
  */
 export function connectWorkspaceSocket(options: WorkspaceSocketOptions): WorkspaceSocket {
     const SocketImpl = options.WebSocket ?? defaultSocketConstructor();
-    const url = options.url ?? buildWorkspaceSocketUrl();
+    const url = options.url ?? buildWorkspaceSocketUrl(undefined, options.cursor);
     const socket = new SocketImpl(url);
     const { handlers } = options;
 

@@ -1,12 +1,15 @@
 import {
     assertNever,
-    type CatalogCursor,
+    type CatalogDelta,
+    type CatalogSnapshot,
     type SessionId,
     type SessionRuntimeState,
     type SessionSummary,
     type SessionSummaryPatch,
-    type WorkspaceWsCatalogEvent,
+    type SyncReducer,
 } from "@pivia/protocol";
+
+import { createCollectionSyncReducer } from "@/lib/sync";
 
 /** Where workspace catalog synchronization stands. */
 export type CatalogSyncPhase =
@@ -167,114 +170,46 @@ function patchChangesSession(existing: SessionSummary, patch: SessionSummaryPatc
     );
 }
 
-/** Replaces the session with the same id, or appends it when the id is new. */
-export function upsertSession(sessions: readonly SessionSummary[], session: SessionSummary): readonly SessionSummary[] {
-    const index = sessions.findIndex((candidate) => candidate.id === session.id);
-    if (index === -1) {
-        return [...sessions, session];
-    }
-    const existing = sessions[index];
-    if (existing !== undefined && summariesEqual(existing, session)) {
-        return sessions;
-    }
-    const next = [...sessions];
-    next[index] = session;
-    return next;
-}
-
-/** Applies a mutable summary patch to `sessionId`, returning `sessions` unchanged if missing or identical. */
-export function patchSession(
-    sessions: readonly SessionSummary[],
-    sessionId: SessionId,
-    patch: SessionSummaryPatch,
-): readonly SessionSummary[] {
-    const index = sessions.findIndex((candidate) => candidate.id === sessionId);
-    if (index === -1) {
-        return sessions;
-    }
-    const existing = sessions[index];
-    if (existing === undefined || !patchChangesSession(existing, patch)) {
-        return sessions;
-    }
-    const next = [...sessions];
-    next[index] = { ...existing, ...patch };
-    return next;
-}
-
-/** Returns a new list without the session of `id`. */
-export function removeSession(sessions: readonly SessionSummary[], id: SessionId): readonly SessionSummary[] {
-    return sessions.filter((session) => session.id !== id);
-}
-
-/** Snapshot payload paired with its server {@link CatalogCursor}. */
-export interface CatalogSnapshotState {
-    readonly sessions: readonly SessionSummary[];
-    readonly cursor: CatalogCursor;
-}
-
-/**
- * Returns true when an incoming catalog snapshot is at least as recent as `current`.
- *
- * A different `epoch` means the server restarted and started a fresh sequence space, so its
- * snapshot always supersedes the previous server's cursor.
- */
-export function canApplyCatalogSnapshot(current: CatalogCursor | null, incoming: CatalogCursor): boolean {
-    return current === null || current.epoch !== incoming.epoch || incoming.seq >= current.seq;
-}
-
-/**
- * Returns true when an incremental catalog event strictly advances `current` in the same epoch.
- *
- * Before any snapshot has been applied (`current === null`), incremental events are accepted as
- * received; once a snapshot establishes an epoch, stale or cross-epoch events are dropped.
- */
-export function canApplyCatalogEvent(current: CatalogCursor | null, incoming: CatalogCursor): boolean {
-    return current === null || (current.epoch === incoming.epoch && incoming.seq > current.seq);
-}
-
-/** Apply one incremental catalog event to `sessions`, returning a new array only when changed. */
-export function applyCatalogEvent(
-    sessions: readonly SessionSummary[],
-    event: WorkspaceWsCatalogEvent,
-): readonly SessionSummary[] {
-    switch (event.type) {
-        case "session_upserted":
-            return upsertSession(sessions, event.session);
-        case "session_updated":
-            return patchSession(sessions, event.sessionId, event.patch);
-        case "session_removed":
-            return removeSession(sessions, event.sessionId);
-        default:
-            return assertNever(event, "Unknown workspace catalog event");
-    }
-}
-
-/**
- * Fold any buffered WebSocket events newer than `snapshot.cursor` onto `snapshot.sessions`.
- *
- * Events from a different epoch or with `seq <= current seq` are skipped so an in-flight HTTP
- * refresh never overwrites live incremental updates received while the request was pending.
- */
-export function mergeRefreshSnapshot(
-    snapshot: CatalogSnapshotState,
-    buffered: readonly WorkspaceWsCatalogEvent[],
-): CatalogSnapshotState {
-    let sessions = snapshot.sessions;
-    let seq = snapshot.cursor.seq;
-    for (const event of buffered) {
-        if (event.catalogEpoch !== snapshot.cursor.epoch || event.seq <= seq) {
-            continue;
-        }
-        sessions = applyCatalogEvent(sessions, event);
-        seq = event.seq;
-    }
+function applySessionSummaryPatch(existing: SessionSummary, patch: SessionSummaryPatch): SessionSummary {
     return {
-        sessions,
-        cursor: {
-            epoch: snapshot.cursor.epoch,
-            seq,
-        },
+        ...existing,
+        ...(patch.name !== undefined ? { name: patch.name } : {}),
+        ...(patch.firstMessage !== undefined ? { firstMessage: patch.firstMessage } : {}),
+        ...(patch.messageCount !== undefined ? { messageCount: patch.messageCount } : {}),
+        ...(patch.modifiedAtMs !== undefined ? { modifiedAtMs: patch.modifiedAtMs } : {}),
+        ...(patch.runtimeState !== undefined ? { runtimeState: patch.runtimeState } : {}),
+        ...(patch.attachedClients !== undefined ? { attachedClients: patch.attachedClients } : {}),
     };
+}
+
+/** Snapshot-derived collection state managed by {@link createCatalogSyncReducer}. */
+export interface CatalogSyncState {
+    readonly sessions: readonly SessionSummary[];
+    readonly updatedAtMs: number | null;
+}
+
+/**
+ * Create a {@link SyncReducer} for the workspace session catalog built on {@link createCollectionSyncReducer}.
+ */
+export function createCatalogSyncReducer(): SyncReducer<CatalogSyncState, CatalogSnapshot, CatalogDelta> {
+    return createCollectionSyncReducer<
+        CatalogSyncState,
+        CatalogSnapshot,
+        SessionId,
+        SessionSummary,
+        SessionSummaryPatch
+    >({
+        getItems: (snapshot) => snapshot.sessions,
+        getId: (session) => session.id,
+        applyPatch: (existing, patch) =>
+            patchChangesSession(existing, patch) ? applySessionSummaryPatch(existing, patch) : existing,
+        itemsEqual: summariesEqual,
+        fromItems: (prev, sessions, snapshot) => ({
+            sessions,
+            updatedAtMs: snapshot === undefined ? prev.updatedAtMs : snapshot.updatedAtMs,
+        }),
+        toItems: (state) => state.sessions,
+    });
 }
 
 function toRow(summary: SessionSummary, pins: ReadonlySet<SessionId>, selectedId: SessionId | null): SessionRow {

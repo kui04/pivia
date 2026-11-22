@@ -180,7 +180,7 @@ describe("workspace websocket route", () => {
         };
     }
 
-    it("rejects unauthenticated upgrades and streams catalog snapshots and lifecycle changes", async () => {
+    it("rejects unauthenticated upgrades and streams SyncFrame snapshots, deltas, and Tier 1 replay", async () => {
         const fixture = await startFixture();
 
         expect(await upgradeStatus(new URL(fixture.wsUrl), {})).toEqual({
@@ -190,18 +190,18 @@ describe("workspace websocket route", () => {
 
         const client = await connectWorkspaceWebSocket(fixture.wsUrl, fixture.authHeaders);
         const snapshot = await client.waitFor(
-            (message): message is Extract<WorkspaceWsServerMessage, { type: "catalog_snapshot" }> =>
-                message.type === "catalog_snapshot",
+            (message): message is Extract<WorkspaceWsServerMessage, { type: "sync:snapshot" }> =>
+                message.type === "sync:snapshot",
         );
-        expect(snapshot.sessions).toHaveLength(1);
-        expect(snapshot.sessions[0]).toMatchObject({
+        expect(snapshot.snapshot.sessions).toHaveLength(1);
+        expect(snapshot.snapshot.sessions[0]).toMatchObject({
             id: "session-existing",
             name: "Existing Session",
             runtimeState: "idle",
         });
-        expect(Number.isFinite(snapshot.updatedAtMs)).toBe(true);
-        expect(snapshot.catalogEpoch.length).toBeGreaterThan(0);
-        expect(snapshot.catalogSeq).toBe(0);
+        expect(Number.isFinite(snapshot.snapshot.updatedAtMs)).toBe(true);
+        expect(snapshot.cursor.epoch.length).toBeGreaterThan(0);
+        expect(snapshot.cursor.seq).toBe(0);
 
         const createdRes = await fixture.app.inject({
             method: "POST",
@@ -213,22 +213,25 @@ describe("workspace websocket route", () => {
         const createdId: SessionId = createdRes.json<CreateSessionResponse>().session.id;
 
         const upserted = await client.waitFor(
-            (message): message is Extract<WorkspaceWsServerMessage, { type: "session_upserted" }> =>
-                message.type === "session_upserted" && message.session.id === createdId,
+            (message): message is Extract<WorkspaceWsServerMessage, { type: "sync:delta" }> =>
+                message.type === "sync:delta" && message.delta.op === "upsert" && message.delta.item.id === createdId,
         );
-        expect(upserted.catalogEpoch).toBe(snapshot.catalogEpoch);
-        expect(upserted.seq).toBeGreaterThan(snapshot.catalogSeq);
-        expect(upserted.session.attachedClients).toBe(0);
+        expect(upserted.cursor.epoch).toBe(snapshot.cursor.epoch);
+        expect(upserted.cursor.seq).toBeGreaterThan(snapshot.cursor.seq);
 
         const updatedIdle = await client.waitFor(
-            (message): message is Extract<WorkspaceWsServerMessage, { type: "session_updated" }> =>
-                message.type === "session_updated" &&
-                message.sessionId === createdId &&
-                message.patch.runtimeState === "idle",
+            (message): message is Extract<WorkspaceWsServerMessage, { type: "sync:delta" }> =>
+                message.type === "sync:delta" &&
+                message.delta.op === "patch" &&
+                message.delta.id === createdId &&
+                message.delta.patch.runtimeState === "idle",
         );
-        expect(updatedIdle.catalogEpoch).toBe(snapshot.catalogEpoch);
-        expect(updatedIdle.seq).toBeGreaterThan(upserted.seq);
-        expect(updatedIdle.patch).toEqual({ runtimeState: "idle" });
+        expect(updatedIdle.cursor.epoch).toBe(snapshot.cursor.epoch);
+        expect(updatedIdle.cursor.seq).toBeGreaterThan(upserted.cursor.seq);
+
+        // Reconnect with epoch + afterSeq receives Tier 1 sync:replay without rescanning disk.
+        const listSpy = vi.spyOn(fixture.catalog, "list");
+        await client.close();
 
         const closeRes = await fixture.app.inject({
             method: "POST",
@@ -238,13 +241,20 @@ describe("workspace websocket route", () => {
         expect(closeRes.statusCode).toBe(200);
         expect(closeRes.json()).toEqual({ closed: true });
 
-        const removed = await client.waitFor(
-            (message): message is Extract<WorkspaceWsServerMessage, { type: "session_removed" }> =>
-                message.type === "session_removed" && message.sessionId === createdId,
+        const replayedClient = await connectWorkspaceWebSocket(
+            `${fixture.wsUrl}?epoch=${encodeURIComponent(snapshot.cursor.epoch)}&afterSeq=${updatedIdle.cursor.seq}`,
+            fixture.authHeaders,
         );
-        expect(removed.sessionId).toBe(createdId);
+        const replay = await replayedClient.waitFor(
+            (message): message is Extract<WorkspaceWsServerMessage, { type: "sync:replay" }> =>
+                message.type === "sync:replay",
+        );
+        expect(listSpy).not.toHaveBeenCalled();
+        expect(replay.fromSeq).toBe(updatedIdle.cursor.seq);
+        expect(replay.deltas.some((item) => item.payload.op === "remove" && item.payload.id === createdId)).toBe(true);
+        listSpy.mockRestore();
 
-        await client.close();
+        await replayedClient.close();
     });
 
     it("skips buffered events already covered by the snapshot and replays newer events after it", async () => {
@@ -262,14 +272,26 @@ describe("workspace websocket route", () => {
         const originalRegistryList = fixture.registry.list.bind(fixture.registry);
         let postSnapshotAttachment: { detach(): void } | undefined;
         let capturedId: SessionId | null = null;
-        fixture.registry.list = async () => {
-            const list = await originalRegistryList();
-            // Emit a new transition after list() captured catalogSeq but before catalog_snapshot sends.
-            if (capturedId !== null) {
-                postSnapshotAttachment = fixture.registry.attach(capturedId, { send: () => {} });
-            }
-            return list;
+        const origAttachCatalog = fixture.registry.attachCatalog.bind(fixture.registry);
+        let snapshotIntercepted = false;
+        fixture.registry.attachCatalog = (transport, handshake) => {
+            return origAttachCatalog(
+                {
+                    sendRaw(raw) {
+                        transport.sendRaw(raw);
+                        if (!snapshotIntercepted && raw.includes('"type":"sync:snapshot"') && capturedId !== null) {
+                            snapshotIntercepted = true;
+                            postSnapshotAttachment = fixture.registry.attach(capturedId, { send: () => {} });
+                        }
+                    },
+                    close(code, reason) {
+                        transport.close(code, reason);
+                    },
+                },
+                handshake,
+            );
         };
+        void originalRegistryList;
 
         const client = await connectWorkspaceWebSocket(fixture.wsUrl, fixture.authHeaders);
         await listStarted.promise;
@@ -286,24 +308,24 @@ describe("workspace websocket route", () => {
         releaseList.resolve();
 
         const snapshot = await client.waitFor(
-            (message): message is Extract<WorkspaceWsServerMessage, { type: "catalog_snapshot" }> =>
-                message.type === "catalog_snapshot",
+            (message): message is Extract<WorkspaceWsServerMessage, { type: "sync:snapshot" }> =>
+                message.type === "sync:snapshot",
         );
-        expect(snapshot.sessions.some((session) => session.id === createdId)).toBe(true);
+        expect(snapshot.snapshot.sessions.some((session) => session.id === createdId)).toBe(true);
         const snapshotIndex = client.messages.indexOf(snapshot);
 
         const postAttachUpdate = await client.waitFor(
-            (message): message is Extract<WorkspaceWsServerMessage, { type: "session_updated" }> =>
-                message.type === "session_updated" &&
-                message.sessionId === createdId &&
-                message.patch.attachedClients === 1,
+            (message): message is Extract<WorkspaceWsServerMessage, { type: "sync:delta" }> =>
+                message.type === "sync:delta" &&
+                message.delta.op === "patch" &&
+                message.delta.id === createdId &&
+                message.delta.patch.attachedClients === 1,
         );
         expect(client.messages.indexOf(postAttachUpdate)).toBeGreaterThan(snapshotIndex);
-        expect(postAttachUpdate.seq).toBeGreaterThan(snapshot.catalogSeq);
+        expect(postAttachUpdate.cursor.seq).toBeGreaterThan(snapshot.cursor.seq);
 
-        // Events already reflected in the snapshot (seq <= snapshot.catalogSeq) were skipped.
         const staleEvents = client.messages.filter(
-            (message) => message.type !== "catalog_snapshot" && message.seq <= snapshot.catalogSeq,
+            (message) => message.type === "sync:delta" && message.cursor.seq <= snapshot.cursor.seq,
         );
         expect(staleEvents).toEqual([]);
 
@@ -311,55 +333,57 @@ describe("workspace websocket route", () => {
         await client.close();
     });
 
-    it("shares one catalog subscription and serializes each incremental event once across clients", async () => {
+    it("serializes each incremental catalog delta once across connected clients", async () => {
         const fixture = await startFixture();
-        const subscribeSpy = vi.spyOn(fixture.registry, "subscribeCatalog");
 
         const clientA = await connectWorkspaceWebSocket(fixture.wsUrl, fixture.authHeaders);
         await clientA.waitFor(
-            (message): message is Extract<WorkspaceWsServerMessage, { type: "catalog_snapshot" }> =>
-                message.type === "catalog_snapshot",
+            (message): message is Extract<WorkspaceWsServerMessage, { type: "sync:snapshot" }> =>
+                message.type === "sync:snapshot",
         );
         const clientB = await connectWorkspaceWebSocket(fixture.wsUrl, fixture.authHeaders);
         await clientB.waitFor(
-            (message): message is Extract<WorkspaceWsServerMessage, { type: "catalog_snapshot" }> =>
-                message.type === "catalog_snapshot",
+            (message): message is Extract<WorkspaceWsServerMessage, { type: "sync:snapshot" }> =>
+                message.type === "sync:snapshot",
         );
-        expect(subscribeSpy).toHaveBeenCalledTimes(1);
 
         const handle = await fixture.registry.createSession(fixture.projectDir);
         await clientA.waitFor(
-            (message): message is Extract<WorkspaceWsServerMessage, { type: "session_updated" }> =>
-                message.type === "session_updated" &&
-                message.sessionId === handle.sessionId &&
-                message.patch.runtimeState === "idle",
+            (message): message is Extract<WorkspaceWsServerMessage, { type: "sync:delta" }> =>
+                message.type === "sync:delta" &&
+                message.delta.op === "patch" &&
+                message.delta.id === handle.sessionId &&
+                message.delta.patch.runtimeState === "idle",
         );
         await clientB.waitFor(
-            (message): message is Extract<WorkspaceWsServerMessage, { type: "session_updated" }> =>
-                message.type === "session_updated" &&
-                message.sessionId === handle.sessionId &&
-                message.patch.runtimeState === "idle",
+            (message): message is Extract<WorkspaceWsServerMessage, { type: "sync:delta" }> =>
+                message.type === "sync:delta" &&
+                message.delta.op === "patch" &&
+                message.delta.id === handle.sessionId &&
+                message.delta.patch.runtimeState === "idle",
         );
 
         const stringifySpy = vi.spyOn(JSON, "stringify");
         const attachment = fixture.registry.attach(handle.sessionId, { send: () => {} });
         await clientA.waitFor(
-            (message): message is Extract<WorkspaceWsServerMessage, { type: "session_updated" }> =>
-                message.type === "session_updated" &&
-                message.sessionId === handle.sessionId &&
-                message.patch.attachedClients === 1,
+            (message): message is Extract<WorkspaceWsServerMessage, { type: "sync:delta" }> =>
+                message.type === "sync:delta" &&
+                message.delta.op === "patch" &&
+                message.delta.id === handle.sessionId &&
+                message.delta.patch.attachedClients === 1,
         );
         await clientB.waitFor(
-            (message): message is Extract<WorkspaceWsServerMessage, { type: "session_updated" }> =>
-                message.type === "session_updated" &&
-                message.sessionId === handle.sessionId &&
-                message.patch.attachedClients === 1,
+            (message): message is Extract<WorkspaceWsServerMessage, { type: "sync:delta" }> =>
+                message.type === "sync:delta" &&
+                message.delta.op === "patch" &&
+                message.delta.id === handle.sessionId &&
+                message.delta.patch.attachedClients === 1,
         );
         const patchStringifyCalls = stringifySpy.mock.results.filter(
             (result) =>
                 result.type === "return" &&
                 typeof result.value === "string" &&
-                result.value.includes('"type":"session_updated"') &&
+                result.value.includes('"type":"sync:delta"') &&
                 result.value.includes('"attachedClients":1'),
         );
         expect(patchStringifyCalls).toHaveLength(1);
@@ -368,15 +392,6 @@ describe("workspace websocket route", () => {
         attachment.detach();
         await clientA.close();
         await clientB.close();
-
-        // Once all clients disconnect, the next client establishes a fresh subscription.
-        const clientC = await connectWorkspaceWebSocket(fixture.wsUrl, fixture.authHeaders);
-        await clientC.waitFor(
-            (message): message is Extract<WorkspaceWsServerMessage, { type: "catalog_snapshot" }> =>
-                message.type === "catalog_snapshot",
-        );
-        expect(subscribeSpy).toHaveBeenCalledTimes(2);
-        await clientC.close();
     });
 
     it("closes the workspace socket when the catalog scan fails", async () => {
@@ -401,8 +416,8 @@ describe("workspace websocket route", () => {
         const fixture = await startFixture({ wsHeartbeatIntervalMs: 40 });
         const client = await connectWorkspaceWebSocket(fixture.wsUrl, fixture.authHeaders);
         await client.waitFor(
-            (message): message is Extract<WorkspaceWsServerMessage, { type: "catalog_snapshot" }> =>
-                message.type === "catalog_snapshot",
+            (message): message is Extract<WorkspaceWsServerMessage, { type: "sync:snapshot" }> =>
+                message.type === "sync:snapshot",
         );
 
         const silent = new WebSocket(fixture.wsUrl, { headers: fixture.authHeaders, autoPong: false });

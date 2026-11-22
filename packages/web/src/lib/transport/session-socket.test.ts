@@ -1,9 +1,14 @@
 import {
     parseEntriesVersion,
     parseSessionId,
+    parseSyncEpoch,
+    parseSyncSeq,
     SESSION_CLOSE_CODE,
     type EntriesVersion,
     type SessionId,
+    type SessionRuntimeId,
+    type SessionSeq,
+    type SessionSyncFrame,
     type SessionWsServerMessage,
 } from "@pivia/protocol";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -24,7 +29,24 @@ function ev(raw: string): EntriesVersion {
     return parsed;
 }
 
+function rt(raw: string): SessionRuntimeId {
+    const parsed = parseSyncEpoch<"session">(raw);
+    if (parsed === null) {
+        throw new Error(`Invalid test runtime id: ${raw}`);
+    }
+    return parsed;
+}
+
+function seq(raw: number): SessionSeq {
+    const parsed = parseSyncSeq<"session">(raw);
+    if (parsed === null) {
+        throw new Error(`Invalid test session seq: ${raw}`);
+    }
+    return parsed;
+}
+
 const SESSION_1 = sid("session-1");
+const RUNTIME_1 = rt("runtime-1");
 const V152 = ev("3:1.5.2");
 
 import {
@@ -119,18 +141,18 @@ describe("buildSessionSocketUrl", () => {
         );
     });
 
-    it("encodes the session id and appends afterSeq and prefixAnchor", () => {
+    it("encodes the session id and appends cursor and prefixAnchor", () => {
         expect(
             buildSessionSocketUrl(
                 sid("session.1_a-b"),
                 {
-                    afterSeq: 12,
+                    cursor: { epoch: rt("runtime-1"), seq: seq(12) },
                     prefixAnchor: { entriesVersion: V152, afterCount: 3, afterEntryId: "e3" },
                 },
                 "http://127.0.0.1:3141/workspace?x=1#top",
             ),
         ).toBe(
-            "ws://127.0.0.1:3141/ws/sessions/session.1_a-b?afterSeq=12&entriesVersion=3%3A1.5.2&afterCount=3&afterEntryId=e3",
+            "ws://127.0.0.1:3141/ws/sessions/session.1_a-b?epoch=runtime-1&afterSeq=12&entriesVersion=3%3A1.5.2&afterCount=3&afterEntryId=e3",
         );
     });
 });
@@ -148,24 +170,26 @@ describe("SessionSocket", () => {
         expect(onOpen).toHaveBeenCalledOnce();
     });
 
-    it("adds a command id and resolves the matching successful response", async () => {
+    it("adds a command id, wraps rpc:command, and resolves the matching successful response", async () => {
         const { socket, instance } = openSocket();
         instance.open();
 
         const response = socket.sendCommand({ type: "abort" });
-        const sent = parseSent(instance, 0);
+        const envelope = parseSent(instance, 0);
+        const sentCommand = envelope["command"] as Record<string, unknown>;
 
-        expect(sent["type"]).toBe("abort");
-        expect(typeof sent["id"]).toBe("string");
+        expect(envelope["type"]).toBe("rpc:command");
+        expect(sentCommand["type"]).toBe("abort");
+        expect(typeof sentCommand["id"]).toBe("string");
 
         instance.receive({
-            type: "response",
-            id: String(sent["id"]),
+            type: "rpc:response",
+            id: String(sentCommand["id"]),
             command: "abort",
             success: true,
         });
 
-        await expect(response).resolves.toMatchObject({ command: "abort", success: true });
+        await expect(response).resolves.toMatchObject({ type: "rpc:response", command: "abort", success: true });
     });
 
     it("reuses a caller-provided id and rejects a failed response", async () => {
@@ -173,10 +197,12 @@ describe("SessionSocket", () => {
         instance.open();
 
         const response = socket.sendCommand({ type: "clear_queue", id: "my-command" });
-        expect(parseSent(instance, 0)["id"]).toBe("my-command");
+        const envelope = parseSent(instance, 0);
+        const sentCommand = envelope["command"] as Record<string, unknown>;
+        expect(sentCommand["id"]).toBe("my-command");
 
         instance.receive({
-            type: "response",
+            type: "rpc:response",
             id: "my-command",
             command: "clear_queue",
             success: false,
@@ -195,7 +221,7 @@ describe("SessionSocket", () => {
         instance.open();
 
         const response = socket.sendCommand({ type: "prompt", message: "hello", id: "prompt-1" });
-        instance.receive({ type: "error", id: "prompt-1", code: "invalid_request", message: "Invalid command." });
+        instance.receive({ type: "rpc:error", id: "prompt-1", code: "invalid_request", message: "Invalid command." });
 
         await expect(response).rejects.toMatchObject({
             command: "prompt",
@@ -204,16 +230,19 @@ describe("SessionSocket", () => {
         });
     });
 
-    it("sends an extension UI response out of band without waiting for a command", () => {
+    it("sends an extension UI response wrapped in rpc:ui_response out of band", () => {
         const { socket, instance } = openSocket();
         instance.open();
 
         socket.sendUiResponse({ type: "extension_ui_response", id: "dialog-1", confirmed: true });
 
         expect(parseSent(instance, 0)).toEqual({
-            type: "extension_ui_response",
-            id: "dialog-1",
-            confirmed: true,
+            type: "rpc:ui_response",
+            response: {
+                type: "extension_ui_response",
+                id: "dialog-1",
+                confirmed: true,
+            },
         });
         expect(instance.sent).toHaveLength(1);
     });
@@ -228,11 +257,11 @@ describe("SessionSocket", () => {
         instance.open();
 
         expect(instance.sent).toHaveLength(2);
-        expect(parseSent(instance, 0)["id"]).toBe("first");
-        expect(parseSent(instance, 1)["id"]).toBe("second");
+        expect((parseSent(instance, 0)["command"] as Record<string, unknown>)["id"]).toBe("first");
+        expect((parseSent(instance, 1)["command"] as Record<string, unknown>)["id"]).toBe("second");
 
-        instance.receive({ type: "response", id: "first", command: "abort", success: true });
-        instance.receive({ type: "response", id: "second", command: "clear_queue", success: true });
+        instance.receive({ type: "rpc:response", id: "first", command: "abort", success: true });
+        instance.receive({ type: "rpc:response", id: "second", command: "clear_queue", success: true });
 
         await expect(first).resolves.toMatchObject({ command: "abort" });
         await expect(second).resolves.toMatchObject({ command: "clear_queue" });
@@ -282,93 +311,91 @@ describe("SessionSocket", () => {
         });
     });
 
-    it("delivers non-response messages to the message callback", () => {
+    it("delivers sync frames and unmatched rpc errors to callbacks", () => {
+        const onSyncFrame = vi.fn<(frame: SessionSyncFrame) => void>();
         const onMessage = vi.fn<(message: SessionWsServerMessage) => void>();
-        const { instance } = openSocket({ onMessage });
+        const { instance } = openSocket({ onSyncFrame, onMessage });
         instance.open();
+
+        const state = {
+            sessionId: SESSION_1,
+            cwd: "/tmp",
+            name: null,
+            model: null,
+            thinkingLevel: "off" as const,
+            isStreaming: false,
+            isCompacting: false,
+            steeringMode: "one-at-a-time" as const,
+            followUpMode: "one-at-a-time" as const,
+            autoCompactionEnabled: false,
+            messageCount: 0,
+            pendingMessageCount: 0,
+            steeringMessages: [],
+            followUpMessages: [],
+        };
 
         const messages: SessionWsServerMessage[] = [
             {
-                type: "snapshot",
-                sessionId: SESSION_1,
-                runtimeId: "runtime-1",
-                seq: 0,
-                entriesVersion: V152,
-                baseEntryCount: 0,
-                entriesMode: "inline",
-                state: {
-                    sessionId: SESSION_1,
-                    cwd: "/tmp",
-                    name: null,
-                    model: null,
-                    thinkingLevel: "off",
-                    isStreaming: false,
-                    isCompacting: false,
-                    steeringMode: "one-at-a-time",
-                    followUpMode: "one-at-a-time",
-                    autoCompactionEnabled: false,
-                    messageCount: 0,
-                    pendingMessageCount: 0,
-                    steeringMessages: [],
-                    followUpMessages: [],
-                },
-                entries: [],
-                liveMessage: null,
-                pendingUiRequests: [],
-            },
-            {
-                type: "replay",
-                sessionId: SESSION_1,
-                runtimeId: "runtime-1",
-                seq: 0,
-                entriesVersion: V152,
-                state: {
-                    sessionId: SESSION_1,
-                    cwd: "/tmp",
-                    name: null,
-                    model: null,
-                    thinkingLevel: "off",
-                    isStreaming: false,
-                    isCompacting: false,
-                    steeringMode: "one-at-a-time",
-                    followUpMode: "one-at-a-time",
-                    autoCompactionEnabled: false,
-                    messageCount: 0,
-                    pendingMessageCount: 0,
-                    steeringMessages: [],
-                    followUpMessages: [],
-                },
-                events: [],
-                liveMessage: null,
-                pendingUiRequests: [],
-            },
-            { type: "event", sessionId: SESSION_1, seq: 1, event: { type: "agent_start" } },
-            {
-                type: "extension_ui_request",
-                sessionId: SESSION_1,
-                request: {
-                    type: "extension_ui_request",
-                    id: "dialog",
-                    method: "confirm",
-                    title: "Continue?",
-                    message: "Confirm",
+                type: "sync:snapshot",
+                cursor: { epoch: RUNTIME_1, seq: seq(0) },
+                snapshot: {
+                    entriesVersion: V152,
+                    baseEntryCount: 0,
+                    entries: { mode: "inline", data: [] },
+                    state,
+                    liveMessage: null,
+                    pendingUiRequests: [],
                 },
             },
-            { type: "extension_ui_resolved", sessionId: SESSION_1, requestId: "dialog" },
             {
-                type: "extension_error",
-                sessionId: SESSION_1,
-                extensionPath: "/ext.js",
-                event: "tool_call",
-                error: "boom",
+                type: "sync:replay",
+                cursor: { epoch: RUNTIME_1, seq: seq(0) },
+                fromSeq: seq(0),
+                deltas: [],
             },
-            { type: "error", code: "invalid_json", message: "Failed to parse command JSON." },
+            {
+                type: "sync:delta",
+                cursor: { epoch: RUNTIME_1, seq: seq(1) },
+                delta: { kind: "agent_event", event: { type: "agent_start" } },
+            },
+            {
+                type: "sync:delta",
+                cursor: { epoch: RUNTIME_1, seq: seq(2) },
+                delta: {
+                    kind: "ui_request",
+                    request: {
+                        type: "extension_ui_request",
+                        id: "dialog",
+                        method: "confirm",
+                        title: "Continue?",
+                        message: "Confirm",
+                    },
+                },
+            },
+            {
+                type: "sync:delta",
+                cursor: { epoch: RUNTIME_1, seq: seq(3) },
+                delta: { kind: "ui_resolved", requestId: "dialog" },
+            },
+            {
+                type: "sync:delta",
+                cursor: { epoch: RUNTIME_1, seq: seq(4) },
+                delta: {
+                    kind: "extension_error",
+                    extensionPath: "/ext.js",
+                    event: "tool_call",
+                    error: "boom",
+                },
+            },
+            { type: "sync:resync", reason: "gap" },
+            { type: "rpc:error", code: "invalid_json", message: "Failed to parse command JSON." },
         ];
 
         for (const message of messages) {
             instance.receive(message);
         }
 
+        expect(onSyncFrame).toHaveBeenCalledTimes(messages.length - 1);
         expect(onMessage).toHaveBeenCalledTimes(messages.length);
         expect(onMessage.mock.calls.map(([message]) => message.type)).toEqual(messages.map((message) => message.type));
     });
@@ -380,12 +407,18 @@ describe("SessionSocket", () => {
 
         instance.onmessage?.({ data: "not json" } as MessageEvent);
         instance.onmessage?.({ data: JSON.stringify({ type: "unknown_message" }) } as MessageEvent);
-        instance.onmessage?.({ data: JSON.stringify({ type: "event", sessionId: "../bad", seq: 1 }) } as MessageEvent);
-        instance.receive({ type: "response", command: "abort", success: true });
-        instance.receive({ type: "error", code: "unknown", message: "No id." });
+        instance.onmessage?.({
+            data: JSON.stringify({
+                type: "sync:delta",
+                cursor: { epoch: "rt", seq: 0 },
+                delta: { kind: "ui_resolved", requestId: "x" },
+            }),
+        } as MessageEvent);
+        instance.receive({ type: "rpc:response", command: "abort", success: true });
+        instance.receive({ type: "rpc:error", code: "unknown", message: "No id." });
 
         expect(onMessage).toHaveBeenCalledOnce();
-        expect(onMessage).toHaveBeenCalledWith({ type: "error", code: "unknown", message: "No id." });
+        expect(onMessage).toHaveBeenCalledWith({ type: "rpc:error", code: "unknown", message: "No id." });
     });
 
     it("rejects new commands after a server close", async () => {

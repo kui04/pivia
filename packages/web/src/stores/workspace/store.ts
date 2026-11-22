@@ -2,10 +2,9 @@ import {
     isRecord,
     parseSessionId,
     type CatalogCursor,
+    type CatalogDelta,
     type SessionId,
     type SessionSummary,
-    type SessionSummaryPatch,
-    type WorkspaceWsCatalogEvent,
 } from "@pivia/protocol";
 import { create } from "zustand";
 import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
@@ -13,15 +12,7 @@ import { createJSONStorage, persist, type StateStorage } from "zustand/middlewar
 import type { SessionCacheStore } from "@/lib/cache/session-cache";
 import { Log } from "@/lib/log";
 
-import {
-    applyCatalogEvent as applyCatalogEventToSessions,
-    canApplyCatalogEvent,
-    canApplyCatalogSnapshot,
-    patchSession,
-    removeSession,
-    upsertSession,
-    type CatalogSyncPhase,
-} from "./model";
+import { createCatalogSyncReducer, type CatalogSyncPhase } from "./model";
 
 /** One in-memory storage so a browser context that denies localStorage still runs. */
 const FALLBACK_STORAGE = new Map<string, string>();
@@ -108,22 +99,28 @@ export interface WorkspaceStoreOptions {
     readonly cache?: WorkspaceCatalogCache | undefined;
 }
 
+/** Synced catalog snapshot/delta projection committed into {@link WorkspaceStore}. */
+export interface CommitSyncedCatalogInput {
+    readonly sessions: readonly SessionSummary[];
+    readonly updatedAtMs: number | null;
+    readonly cursor: CatalogCursor | null;
+    readonly sync?: CatalogSyncPhase | undefined;
+    readonly persistCache?: boolean | undefined;
+}
+
 /** What a caller may change in the workspace store. */
 export interface WorkspaceActions {
     /** Hydrate stale-while-revalidate catalog rows from IndexedDB before the first sync finishes. */
     hydrateCatalog: () => Promise<void>;
-    beginSync: () => void;
-    applyCatalog: (sessions: readonly SessionSummary[], updatedAtMs: number, cursor: CatalogCursor) => void;
-    applyCatalogEvent: (event: WorkspaceWsCatalogEvent) => void;
-    markReconnecting: (attempt: number) => void;
-    failSync: (message: string) => void;
+    /** Commit catalog rows and cursor produced by `SyncStreamClient` (pruning pins/selection and optionally caching). */
+    commitSyncedCatalog: (input: CommitSyncedCatalogInput) => void;
+    setSync: (sync: CatalogSyncPhase) => void;
+    /** Apply one local optimistic/eviction {@link CatalogDelta} using {@link createCatalogSyncReducer}. */
+    applyCatalogDelta: (delta: CatalogDelta) => void;
     setQuery: (query: string) => void;
     select: (id: SessionId | null) => void;
     togglePinned: (id: SessionId) => void;
     toggleFolder: (cwd: string) => void;
-    upsertSession: (session: SessionSummary) => void;
-    patchSession: (id: SessionId, patch: SessionSummaryPatch) => void;
-    removeSession: (id: SessionId) => void;
     /** Drops connection-scoped state but keeps the pins the user set. */
     reset: () => void;
 }
@@ -168,12 +165,13 @@ function persistedPins(persisted: unknown): readonly SessionId[] {
 /**
  * Creates the session catalog store of the single host.
  *
- * Pins persist in localStorage. When `options.cache` is provided, `applyCatalog` writes the catalog
- * to IndexedDB and `hydrateCatalog` loads it before the first live sync completes. Without `cache`,
- * catalog persistence is disabled and a warning is logged once.
+ * Pins persist in localStorage. When `options.cache` is provided, `commitSyncedCatalog` writes
+ * snapshots to IndexedDB and `hydrateCatalog` loads stale rows before the first live sync
+ * completes. Without `cache`, catalog persistence is disabled and a warning is logged once.
  */
 export function createWorkspaceStore(options: WorkspaceStoreOptions = {}) {
     let warnedMissingCache = false;
+    const catalogReducer = createCatalogSyncReducer();
     const resolveCache = (): WorkspaceCatalogCache | undefined => {
         if (options.cache === undefined && !warnedMissingCache) {
             warnedMissingCache = true;
@@ -204,26 +202,10 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}) {
                         updatedAtMs: cached.scannedAtMs,
                     });
                 },
-                beginSync: () =>
-                    set((state) =>
-                        state.sync.kind === "syncing"
-                            ? state
-                            : {
-                                  // The rows stay in place while the refresh runs so a failed sync keeps them visible.
-                                  sync: { kind: "syncing" },
-                              },
-                    ),
-                applyCatalog: (sessions, updatedAtMs, cursor) => {
-                    const current = get();
-                    if (!canApplyCatalogSnapshot(current.catalogCursor, cursor)) {
-                        return;
-                    }
-                    const cache = resolveCache();
+                commitSyncedCatalog: ({ sessions, updatedAtMs, cursor, sync, persistCache }) => {
+                    const cache = persistCache ? resolveCache() : undefined;
                     set((state) => {
-                        if (!canApplyCatalogSnapshot(state.catalogCursor, cursor)) {
-                            return state;
-                        }
-                        if (cache !== undefined) {
+                        if (cache !== undefined && updatedAtMs !== null) {
                             void cache.putWorkspaceCatalog(sessions, updatedAtMs);
                         }
                         const ids = new Set(sessions.map((session) => session.id));
@@ -231,7 +213,7 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}) {
                             sessions,
                             updatedAtMs,
                             catalogCursor: cursor,
-                            sync: { kind: "live" },
+                            ...(sync === undefined ? {} : { sync }),
                             // A pin for a session the complete catalog did not see belongs to a deleted session.
                             pins: state.pins.filter((id) => ids.has(id)),
                             selectedId:
@@ -239,37 +221,27 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}) {
                         };
                     });
                 },
-                applyCatalogEvent: (event) =>
+                setSync: (sync) =>
                     set((state) => {
-                        const incomingCursor: CatalogCursor = { epoch: event.catalogEpoch, seq: event.seq };
-                        if (!canApplyCatalogEvent(state.catalogCursor, incomingCursor)) {
+                        if (sync.kind === "syncing" && state.sync.kind === "syncing") {
                             return state;
                         }
-                        const nextSessions = applyCatalogEventToSessions(state.sessions, event);
-                        if (event.type === "session_removed") {
+                        return { sync };
+                    }),
+                applyCatalogDelta: (delta) =>
+                    set((state) => {
+                        const reduced = catalogReducer.applyDelta(
+                            { sessions: state.sessions, updatedAtMs: state.updatedAtMs },
+                            delta,
+                        );
+                        if (delta.op === "remove") {
                             return {
-                                sessions: nextSessions,
-                                catalogCursor: incomingCursor,
-                                pins: state.pins.filter((pinned) => pinned !== event.sessionId),
-                                selectedId: state.selectedId === event.sessionId ? null : state.selectedId,
+                                sessions: reduced.sessions,
+                                pins: state.pins.filter((pinned) => pinned !== delta.id),
+                                selectedId: state.selectedId === delta.id ? null : state.selectedId,
                             };
                         }
-                        if (nextSessions === state.sessions) {
-                            return { catalogCursor: incomingCursor };
-                        }
-                        return {
-                            sessions: nextSessions,
-                            catalogCursor: incomingCursor,
-                        };
-                    }),
-                markReconnecting: (attempt) =>
-                    set({
-                        sync: { kind: "reconnecting", attempt },
-                    }),
-                failSync: (message) =>
-                    set({
-                        // The last rows and their timestamp stay, marked with the failure.
-                        sync: { kind: "failed", message },
+                        return reduced.sessions === state.sessions ? state : { sessions: reduced.sessions };
                     }),
                 setQuery: (query) => set({ query }),
                 select: (selectedId) => set({ selectedId }),
@@ -284,22 +256,6 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}) {
                         collapsed: state.collapsed.includes(cwd)
                             ? state.collapsed.filter((collapsed) => collapsed !== cwd)
                             : [...state.collapsed, cwd],
-                    })),
-                upsertSession: (session) =>
-                    set((state) => {
-                        const next = upsertSession(state.sessions, session);
-                        return next === state.sessions ? state : { sessions: next };
-                    }),
-                patchSession: (id, patch) =>
-                    set((state) => {
-                        const next = patchSession(state.sessions, id, patch);
-                        return next === state.sessions ? state : { sessions: next };
-                    }),
-                removeSession: (id) =>
-                    set((state) => ({
-                        sessions: removeSession(state.sessions, id),
-                        pins: state.pins.filter((pinned) => pinned !== id),
-                        selectedId: state.selectedId === id ? null : state.selectedId,
                     })),
                 reset: () =>
                     set((state) => ({

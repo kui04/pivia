@@ -10,4 +10,5 @@ export {
     type SessionTranscriptProjection,
 } from "./projection.ts";
 export * from "./session-ws.ts";
+export * from "./sync/index.ts";
 export * from "./workspace-ws.ts";

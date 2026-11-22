@@ -9,22 +9,28 @@ export {
     type CatalogSeq,
 } from "./catalog.ts";
 export {
+    isFileEntryRecord,
     parseAuthLoginResponse,
     parseAuthLogoutResponse,
     parseAuthStatusResponse,
+    parseCatalogDelta,
+    parseCatalogSnapshot,
     parseCloseSessionResponse,
     parseCreateSessionResponse,
     parseDirectoryListResponse,
     parseHealthResponse,
+    parseSessionDelta,
     parseSessionDetailResponse,
     parseSessionListResponse,
     parseSessionModelInfo,
+    parseSessionSnapshot,
+    parseSessionStatePatch,
     parseSessionStateSnapshot,
     parseSessionSummary,
     parseSessionSummaryPatch,
+    parseSessionSyncFrame,
     parseSessionWsServerMessage,
     parseWorkspaceWsServerMessage,
-    isFileEntryRecord,
     type JsonDecoder,
 } from "./server-messages.ts";
 export {
@@ -37,10 +43,8 @@ export {
 export {
     commandIdOf,
     isThinkingLevel,
-    parseAfterSeq,
     parseExtensionUiResponse,
-    parseSessionWsClientCommand,
+    parseSessionRpcCommand,
+    parseSessionWsClientMessage,
     parseSessionWsHandshakeQuery,
-    type ParsedAfterSeq,
-    type ParsedSessionWsHandshakeQuery,
 } from "./ws.ts";

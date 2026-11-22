@@ -1,23 +1,31 @@
 import { useCallback, useEffect, useRef } from "react";
 
-import { assertNever, SESSION_CLOSE_CODE, type CatalogCursor, type WorkspaceWsCatalogEvent } from "@pivia/protocol";
+import {
+    assertNever,
+    SESSION_CLOSE_CODE,
+    type CatalogCursor,
+    type CatalogDelta,
+    type CatalogSnapshot,
+} from "@pivia/protocol";
 
 import { Log } from "@/lib/log";
+import {
+    createReconnectController,
+    DEFAULT_AUTH_PROBE_THRESHOLD,
+    DEFAULT_RECONNECT_DELAYS_MS,
+    SyncStreamClient,
+} from "@/lib/sync";
 import { showError } from "@/lib/toast";
 import { apiClient as defaultApiClient, type ApiClient } from "@/lib/transport/http";
 import type { SessionSocketConstructor } from "@/lib/transport/session-socket";
 import { connectWorkspaceSocket, type WorkspaceSocket } from "@/lib/transport/workspace-socket";
 import { useAuthStore as defaultAuthStore, useWorkspaceStore as defaultWorkspaceStore } from "@/stores";
-import { canApplyCatalogSnapshot, mergeRefreshSnapshot } from "@/stores/workspace/model";
+import { createCatalogSyncReducer, type CatalogSyncState } from "@/stores/workspace/model";
 
-/** Exponential backoff intervals between `/ws/workspace` reconnect attempts. */
-export const DEFAULT_RECONNECT_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 15_000] as const;
+export { DEFAULT_AUTH_PROBE_THRESHOLD, DEFAULT_RECONNECT_DELAYS_MS };
 
 /** Minimum visible duration of a manual refresh so fast local responses still show feedback. */
 export const DEFAULT_MIN_REFRESH_DURATION_MS = 300;
-
-/** Consecutive WebSocket close failures before probing `/api/auth/status` for expiry. */
-export const DEFAULT_AUTH_PROBE_THRESHOLD = 2;
 
 /** Dependencies injected into {@link createWorkspaceSyncController} and {@link useWorkspaceSync}. */
 export interface WorkspaceSyncOptions {
@@ -56,14 +64,6 @@ function defaultUnauthorized(): void {
     defaultAuthStore.getState().markUnauthorized();
 }
 
-type RefreshState =
-    | { readonly kind: "idle" }
-    | {
-          readonly kind: "in_flight";
-          readonly buffered: WorkspaceWsCatalogEvent[];
-          wsSnapshotCursor: CatalogCursor | null;
-      };
-
 /**
  * Create a framework-free controller that keeps the workspace catalog synchronized over
  * `/ws/workspace`, hydrates cached entries from IndexedDB on startup, reconnects with backoff,
@@ -79,20 +79,9 @@ export function createWorkspaceSyncController(options: WorkspaceSyncOptions = {}
     const onError = options.onError ?? defaultNotifyError;
 
     let stopped = false;
-    let refreshState: RefreshState = { kind: "idle" };
-    let probingAuth = false;
-    let attempt = 0;
-    let consecutiveCloseFailures = 0;
+    let refreshInFlight = false;
     let socket: WorkspaceSocket | null = null;
-    let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
     let refreshDelayTimer: ReturnType<typeof setTimeout> | undefined;
-
-    const clearReconnectTimer = (): void => {
-        if (reconnectTimer !== undefined) {
-            clearTimeout(reconnectTimer);
-            reconnectTimer = undefined;
-        }
-    };
 
     const clearRefreshDelayTimer = (): void => {
         if (refreshDelayTimer !== undefined) {
@@ -101,119 +90,137 @@ export function createWorkspaceSyncController(options: WorkspaceSyncOptions = {}
         }
     };
 
-    const scheduleReconnect = (): void => {
-        // A visibility change or a manual refresh may already have opened a new socket while an
-        // auth probe was in flight; that socket owns the connection state now.
-        if (stopped || reconnectTimer !== undefined || socket !== null) {
-            return;
-        }
-        attempt += 1;
-        workspaceStore.getState().markReconnecting(attempt);
-        const delayMs = reconnectDelays[Math.min(attempt - 1, reconnectDelays.length - 1)] ?? 1_000;
-        reconnectTimer = setTimeout(() => {
-            reconnectTimer = undefined;
-            if (!stopped && socket === null) {
-                openSocket();
+    const syncClient = new SyncStreamClient<"catalog", CatalogSyncState, CatalogSnapshot, CatalogDelta>({
+        initialState: { sessions: [], updatedAtMs: null },
+        reducer: createCatalogSyncReducer(),
+        onStateChange(nextState, meta) {
+            if (stopped) {
+                return;
             }
-        }, delayMs);
-    };
-
-    const probeAuthOrReconnect = (): void => {
-        if (stopped) {
-            return;
-        }
-        if (consecutiveCloseFailures < authProbeFailureThreshold) {
-            scheduleReconnect();
-            return;
-        }
-        if (probingAuth) {
-            return;
-        }
-        probingAuth = true;
-        void apiClient
-            .getAuthStatus()
-            .then((status) => {
-                probingAuth = false;
-                if (stopped) {
+            switch (meta.source) {
+                case "snapshot":
+                    workspaceStore.getState().commitSyncedCatalog({
+                        sessions: nextState.sessions,
+                        updatedAtMs: nextState.updatedAtMs ?? Date.now(),
+                        cursor: meta.cursor,
+                        ...(refreshInFlight ? {} : { sync: { kind: "live" } }),
+                        persistCache: true,
+                    });
                     return;
-                }
-                if (status.authRequired && !status.authenticated) {
-                    stopped = true;
-                    clearReconnectTimer();
-                    clearRefreshDelayTimer();
-                    onUnauthorized();
+                case "external_refresh":
+                    workspaceStore.getState().commitSyncedCatalog({
+                        sessions: nextState.sessions,
+                        updatedAtMs: nextState.updatedAtMs ?? Date.now(),
+                        cursor: meta.cursor,
+                        sync: { kind: "live" },
+                        persistCache: true,
+                    });
                     return;
-                }
-                scheduleReconnect();
-            })
-            .catch(() => {
-                probingAuth = false;
-                if (!stopped) {
-                    scheduleReconnect();
-                }
-            });
-    };
+                case "replay":
+                    workspaceStore.getState().commitSyncedCatalog({
+                        sessions: nextState.sessions,
+                        updatedAtMs: nextState.updatedAtMs,
+                        cursor: meta.cursor,
+                        ...(refreshInFlight ? {} : { sync: { kind: "live" } }),
+                    });
+                    return;
+                case "delta":
+                    workspaceStore.getState().commitSyncedCatalog({
+                        sessions: nextState.sessions,
+                        updatedAtMs: nextState.updatedAtMs,
+                        cursor: meta.cursor,
+                    });
+                    return;
+                case "hydrate":
+                case "phase":
+                    return;
+                default:
+                    assertNever(meta.source);
+            }
+        },
+        onResyncRequired(reason) {
+            if (stopped) {
+                return;
+            }
+            const current = socket;
+            socket = null;
+            current?.close(SESSION_CLOSE_CODE.normal, "Catalog resync");
+            reconnect.scheduleResync(reason);
+        },
+    });
 
     const openSocket = (): void => {
         if (stopped || socket !== null) {
             return;
         }
-        clearReconnectTimer();
-        socket = connectWorkspaceSocket({
+        syncClient.markConnecting();
+        const createdSocket = connectWorkspaceSocket({
             WebSocket: options.WebSocket,
+            cursor: syncClient.handshakeCursor(),
             handlers: {
                 onMessage(message) {
-                    if (stopped) {
+                    if (stopped || socket !== createdSocket) {
                         return;
                     }
-                    switch (message.type) {
-                        case "catalog_snapshot": {
-                            attempt = 0;
-                            consecutiveCloseFailures = 0;
-                            const cursor: CatalogCursor = { epoch: message.catalogEpoch, seq: message.catalogSeq };
-                            if (refreshState.kind === "in_flight") {
-                                // A fresh WS snapshot supersedes any events buffered before it.
-                                refreshState.buffered.length = 0;
-                                refreshState.wsSnapshotCursor = cursor;
-                            }
-                            workspaceStore.getState().applyCatalog(message.sessions, message.updatedAtMs, cursor);
-                            return;
-                        }
-                        case "session_upserted":
-                        case "session_updated":
-                        case "session_removed":
-                            if (refreshState.kind === "in_flight") {
-                                refreshState.buffered.push(message);
-                            }
-                            workspaceStore.getState().applyCatalogEvent(message);
-                            return;
-                        default:
-                            assertNever(message, "Unknown workspace socket message");
+                    if (message.type === "sync:snapshot" || message.type === "sync:replay") {
+                        reconnect.markConnected();
                     }
+                    syncClient.handleFrame(message);
                 },
                 onClose() {
+                    if (socket !== createdSocket) {
+                        return;
+                    }
                     socket = null;
                     if (!stopped) {
-                        consecutiveCloseFailures += 1;
-                        probeAuthOrReconnect();
+                        reconnect.notifyClosed();
                     }
                 },
             },
         });
+        socket = createdSocket;
     };
+
+    const reconnect = createReconnectController({
+        delaysMs: reconnectDelays,
+        authProbeFailureThreshold,
+        authProbe: () => apiClient.getAuthStatus(),
+        onUnauthorized: () => {
+            stopped = true;
+            clearRefreshDelayTimer();
+            const current = socket;
+            socket = null;
+            current?.close(SESSION_CLOSE_CODE.normal, "Unauthorized");
+            onUnauthorized();
+        },
+        onScheduled(nextAttempt) {
+            if (stopped || socket !== null) {
+                return;
+            }
+            syncClient.markReconnecting(nextAttempt);
+            if (!refreshInFlight) {
+                workspaceStore.getState().setSync({ kind: "reconnecting", attempt: nextAttempt });
+            }
+        },
+        onReconnect() {
+            openSocket();
+        },
+        listenBrowserEvents: false,
+    });
 
     return {
         start() {
             stopped = false;
-            consecutiveCloseFailures = 0;
+            refreshInFlight = false;
+            reconnect.start();
             void workspaceStore.getState().hydrateCatalog();
             openSocket();
         },
         stop() {
             stopped = true;
-            refreshState = { kind: "idle" };
-            probingAuth = false;
-            clearReconnectTimer();
+            refreshInFlight = false;
+            reconnect.stop();
+            syncClient.reset({ sessions: [], updatedAtMs: null }, null);
             clearRefreshDelayTimer();
             const current = socket;
             socket = null;
@@ -221,17 +228,17 @@ export function createWorkspaceSyncController(options: WorkspaceSyncOptions = {}
         },
         handleVisibilityChange(visible) {
             if (visible && !stopped && socket === null) {
-                clearReconnectTimer();
-                openSocket();
+                reconnect.wake();
             }
         },
         refresh() {
-            if (stopped || refreshState.kind !== "idle") {
+            if (stopped || refreshInFlight) {
                 return;
             }
-            refreshState = { kind: "in_flight", buffered: [], wsSnapshotCursor: null };
+            refreshInFlight = true;
+            syncClient.beginExternalRefresh();
             const startedAtMs = Date.now();
-            workspaceStore.getState().beginSync();
+            workspaceStore.getState().setSync({ kind: "syncing" });
 
             const afterMinDuration = (task: () => void): void => {
                 const remainingMs = Math.max(0, minRefreshDurationMs - (Date.now() - startedAtMs));
@@ -250,34 +257,33 @@ export function createWorkspaceSyncController(options: WorkspaceSyncOptions = {}
                 .listSessions()
                 .then((response) => {
                     afterMinDuration(() => {
-                        const currentRefresh = refreshState;
-                        refreshState = { kind: "idle" };
+                        refreshInFlight = false;
                         if (stopped) {
                             return;
                         }
-                        consecutiveCloseFailures = 0;
+                        reconnect.markConnected();
                         const responseCursor: CatalogCursor = {
                             epoch: response.catalogEpoch,
                             seq: response.catalogSeq,
                         };
-                        const supersededByWsSnapshot =
-                            currentRefresh.kind === "in_flight" &&
-                            currentRefresh.wsSnapshotCursor !== null &&
-                            !canApplyCatalogSnapshot(currentRefresh.wsSnapshotCursor, responseCursor);
-                        if (!supersededByWsSnapshot) {
-                            const buffered = currentRefresh.kind === "in_flight" ? currentRefresh.buffered : [];
-                            const merged = mergeRefreshSnapshot(
-                                { sessions: response.sessions, cursor: responseCursor },
-                                buffered,
-                            );
-                            workspaceStore
-                                .getState()
-                                .applyCatalog(merged.sessions, response.scannedAtMs, merged.cursor);
+                        const applied = syncClient.completeExternalRefresh(
+                            { sessions: response.sessions, updatedAtMs: response.scannedAtMs },
+                            responseCursor,
+                        );
+                        if (!applied) {
+                            const phase = syncClient.currentPhase;
+                            if (phase.kind === "live") {
+                                workspaceStore.getState().setSync({ kind: "live" });
+                            } else if (phase.kind === "reconnecting") {
+                                workspaceStore.getState().setSync({ kind: "reconnecting", attempt: phase.attempt });
+                            } else if (phase.kind === "error") {
+                                workspaceStore.getState().setSync({ kind: "failed", message: phase.message });
+                            } else {
+                                workspaceStore.getState().setSync({ kind: "idle" });
+                            }
                         }
                         if (socket === null) {
-                            attempt = 0;
-                            clearReconnectTimer();
-                            openSocket();
+                            reconnect.wake();
                         }
                     });
                 })
@@ -285,11 +291,12 @@ export function createWorkspaceSyncController(options: WorkspaceSyncOptions = {}
                     const message = error instanceof Error ? error.message : String(error);
                     Log.warn(`Cannot refresh workspace sessions: ${message}`);
                     afterMinDuration(() => {
-                        refreshState = { kind: "idle" };
+                        refreshInFlight = false;
+                        syncClient.failExternalRefresh();
                         if (stopped) {
                             return;
                         }
-                        workspaceStore.getState().failSync(message);
+                        workspaceStore.getState().setSync({ kind: "failed", message });
                         onError(message);
                     });
                 });

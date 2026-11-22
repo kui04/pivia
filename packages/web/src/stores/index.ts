@@ -32,7 +32,7 @@ export function createAppStores(options: AppStoresOptions = {}) {
         apiClient: client,
         ...(options.WebSocket === undefined ? {} : { WebSocket: options.WebSocket }),
         onSessionMissing: (sessionId) => {
-            useWorkspaceStore.getState().removeSession(sessionId);
+            useWorkspaceStore.getState().applyCatalogDelta({ op: "remove", id: sessionId });
         },
     });
 

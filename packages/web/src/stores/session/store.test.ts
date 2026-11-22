@@ -1,11 +1,15 @@
 import {
     parseEntriesVersion,
     parseSessionId,
+    parseSyncEpoch,
+    parseSyncSeq,
     SESSION_CLOSE_CODE,
     type EntriesVersion,
     type FileEntry,
     type SessionDetailResponse,
     type SessionId,
+    type SessionRuntimeId,
+    type SessionSeq,
     type SessionStateSnapshot,
     type SessionWsServerMessage,
 } from "@pivia/protocol";
@@ -26,10 +30,27 @@ function ev(raw: string): EntriesVersion {
     return parsed;
 }
 
+function rt(raw: string): SessionRuntimeId {
+    const parsed = parseSyncEpoch<"session">(raw);
+    if (parsed === null) {
+        throw new Error(`Invalid test runtime id: ${raw}`);
+    }
+    return parsed;
+}
+
+function seq(raw: number): SessionSeq {
+    const parsed = parseSyncSeq<"session">(raw);
+    if (parsed === null) {
+        throw new Error(`Invalid test session seq: ${raw}`);
+    }
+    return parsed;
+}
+
 const SESSION_1 = sid("session-1");
 const SESSION_A = sid("session-a");
 const SESSION_B = sid("session-b");
 const SESSION_BIG = sid("session-big");
+const RUNTIME_1 = rt("runtime-1");
 const V152 = ev("3:1.5.2");
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -103,19 +124,18 @@ function summary(overrides: Partial<SessionStateSnapshot> = {}): SessionStateSna
     };
 }
 
-function snapshot(seq: number): SessionWsServerMessage {
+function snapshot(seqNum: number): SessionWsServerMessage {
     return {
-        type: "snapshot",
-        sessionId: SESSION_1,
-        runtimeId: "runtime-1",
-        seq,
-        entriesVersion: V152,
-        baseEntryCount: 0,
-        entriesMode: "inline",
-        state: summary(),
-        entries: [],
-        liveMessage: null,
-        pendingUiRequests: [],
+        type: "sync:snapshot",
+        cursor: { epoch: RUNTIME_1, seq: seq(seqNum) },
+        snapshot: {
+            entriesVersion: V152,
+            baseEntryCount: 0,
+            entries: { mode: "inline", data: [] },
+            state: summary(),
+            liveMessage: null,
+            pendingUiRequests: [],
+        },
     };
 }
 
@@ -196,7 +216,7 @@ describe("createSessionStore", () => {
         expect(store.getState()).toMatchObject({
             status: "open",
             sessionId: SESSION_1,
-            seq: 4,
+            cursor: { epoch: RUNTIME_1, seq: seq(4) },
             entries: [],
             pendingUiRequests: [],
         });
@@ -220,18 +240,24 @@ describe("createSessionStore", () => {
         socket.open();
 
         const response = store.getState().sendCommand({ type: "abort", id: "abort-1" });
-        expect(JSON.parse(socket.sent[0] ?? "")).toEqual({ type: "abort", id: "abort-1" });
+        expect(JSON.parse(socket.sent[0] ?? "")).toEqual({
+            type: "rpc:command",
+            command: { type: "abort", id: "abort-1" },
+        });
 
-        socket.receive({ type: "response", id: "abort-1", command: "abort", success: true });
-        await expect(response).resolves.toMatchObject({ command: "abort" });
+        socket.receive({ type: "rpc:response", id: "abort-1", command: "abort", success: true });
+        await expect(response).resolves.toMatchObject({ type: "rpc:response", command: "abort" });
 
         await expect(
             store.getState().sendUiResponse({ type: "extension_ui_response", id: "dialog-1", cancelled: true }),
         ).resolves.toBeUndefined();
         expect(JSON.parse(socket.sent[1] ?? "")).toEqual({
-            type: "extension_ui_response",
-            id: "dialog-1",
-            cancelled: true,
+            type: "rpc:ui_response",
+            response: {
+                type: "extension_ui_response",
+                id: "dialog-1",
+                cancelled: true,
+            },
         });
     });
 
@@ -265,7 +291,7 @@ describe("createSessionStore", () => {
         await vi.advanceTimersByTimeAsync(10);
 
         expect(FakeSocket.instances).toHaveLength(2);
-        expect(lastSocket().url).toBe("ws://localhost:3141/ws/sessions/session-1?afterSeq=2&runtimeId=runtime-1");
+        expect(lastSocket().url).toBe("ws://localhost:3141/ws/sessions/session-1?epoch=runtime-1&afterSeq=2");
     });
 
     it("reconnects after a slow consumer with the last sequence", async () => {
@@ -283,22 +309,20 @@ describe("createSessionStore", () => {
 
         expect(FakeSocket.instances).toHaveLength(2);
         const second = lastSocket();
-        expect(second.url).toBe("ws://localhost:3141/ws/sessions/session-1?afterSeq=4&runtimeId=runtime-1");
+        expect(second.url).toBe("ws://localhost:3141/ws/sessions/session-1?epoch=runtime-1&afterSeq=4");
 
         second.open();
         second.receive({
-            type: "replay",
-            sessionId: SESSION_1,
-            runtimeId: "runtime-1",
-            seq: 5,
-            entriesVersion: V152,
-            state: summary({ messageCount: 1 }),
-            events: [{ seq: 5, event: { type: "agent_start" } }],
-            liveMessage: null,
-            pendingUiRequests: [],
+            type: "sync:replay",
+            cursor: { epoch: RUNTIME_1, seq: seq(5) },
+            fromSeq: seq(4),
+            deltas: [{ seq: seq(5), payload: { kind: "agent_event", event: { type: "agent_start" } } }],
         });
 
-        expect(store.getState()).toMatchObject({ status: "open", seq: 5 });
+        expect(store.getState()).toMatchObject({
+            status: "open",
+            cursor: { epoch: RUNTIME_1, seq: seq(5) },
+        });
         expect(store.getState().state?.isStreaming).toBe(true);
         expect(store.getState().liveEvents.map((entry) => entry.seq)).toEqual([5]);
     });
@@ -338,7 +362,7 @@ describe("createSessionStore", () => {
         expect(store.getState()).toMatchObject({
             status: "idle",
             sessionId: null,
-            seq: 0,
+            cursor: null,
             state: null,
             pendingUiRequests: [],
         });
@@ -349,21 +373,29 @@ describe("createSessionStore", () => {
         store.getState().connect(SESSION_1);
         const socket = lastSocket();
         socket.open();
+        socket.receive(snapshot(0));
 
         socket.receive({
-            type: "extension_ui_request",
-            sessionId: SESSION_1,
-            request: {
-                type: "extension_ui_request",
-                id: "dialog",
-                method: "confirm",
-                title: "Continue?",
-                message: "Confirm",
+            type: "sync:delta",
+            cursor: { epoch: RUNTIME_1, seq: seq(1) },
+            delta: {
+                kind: "ui_request",
+                request: {
+                    type: "extension_ui_request",
+                    id: "dialog",
+                    method: "confirm",
+                    title: "Continue?",
+                    message: "Confirm",
+                },
             },
         });
         expect(store.getState().pendingUiRequests.map((request) => request.id)).toEqual(["dialog"]);
 
-        socket.receive({ type: "extension_ui_resolved", sessionId: SESSION_1, requestId: "dialog" });
+        socket.receive({
+            type: "sync:delta",
+            cursor: { epoch: RUNTIME_1, seq: seq(2) },
+            delta: { kind: "ui_resolved", requestId: "dialog" },
+        });
         expect(store.getState().pendingUiRequests).toEqual([]);
     });
 
@@ -379,7 +411,7 @@ describe("createSessionStore", () => {
         ).rejects.toMatchObject({ classification: "client" });
     });
 
-    it("hydrates from IndexedDB and memory LRU on session switch A -> B -> A with dual anchors", async () => {
+    it("hydrates from IndexedDB and memory LRU on session switch A -> B -> A with Tier 2 anchors only", async () => {
         const cache = new IndexedDbSessionCache({ indexedDB: new IDBFactory(), keyRange: IDBKeyRange });
         const headerEntry: FileEntry = {
             type: "session",
@@ -412,20 +444,19 @@ describe("createSessionStore", () => {
         const sockA = lastSocket();
         sockA.open();
         sockA.receive({
-            type: "snapshot",
-            sessionId: SESSION_A,
-            runtimeId: "rt-a",
-            seq: 7,
-            entriesVersion: V152,
-            baseEntryCount: 2,
-            entriesMode: "inline",
-            entries: [],
-            state: summary({ sessionId: SESSION_A }),
-            liveMessage: null,
-            pendingUiRequests: [],
+            type: "sync:snapshot",
+            cursor: { epoch: rt("rt-a"), seq: seq(7) },
+            snapshot: {
+                entriesVersion: V152,
+                baseEntryCount: 2,
+                entries: { mode: "inline", data: [] },
+                state: summary({ sessionId: SESSION_A }),
+                liveMessage: null,
+                pendingUiRequests: [],
+            },
         });
 
-        // Switch to B then immediately back to A -> A hydrates synchronously from memory LRU with runtimeId & seq.
+        // Switch to B then immediately back to A -> A hydrates synchronously from memory LRU with Tier 2 anchor.
         store.getState().connect(SESSION_B);
         await vi.waitFor(() => {
             expect(FakeSocket.instances).toHaveLength(2);
@@ -433,9 +464,10 @@ describe("createSessionStore", () => {
         store.getState().connect(SESSION_A);
         expect(store.getState().entries.map((entry) => entry.id)).toEqual(["session-a", "e1"]);
         const sockA2 = lastSocket();
-        expect(sockA2.url).toContain("afterSeq=7");
-        expect(sockA2.url).toContain("runtimeId=rt-a");
+        expect(sockA2.url).not.toContain("afterSeq=");
+        expect(sockA2.url).not.toContain("epoch=");
         expect(sockA2.url).toContain("afterCount=2");
+        expect(sockA2.url).toContain("afterEntryId=e1");
     });
 
     it("loads oversized sessions via HTTP, retries transient errors, and evicts on 404/4404", async () => {
@@ -485,17 +517,16 @@ describe("createSessionStore", () => {
         const sock = lastSocket();
         sock.open();
         sock.receive({
-            type: "snapshot",
-            sessionId: SESSION_BIG,
-            runtimeId: "rt-big",
-            seq: 1,
-            entriesVersion: V152,
-            baseEntryCount: 0,
-            entriesMode: "http",
-            entryCount: 1,
-            state: summary({ sessionId: SESSION_BIG }),
-            liveMessage: null,
-            pendingUiRequests: [],
+            type: "sync:snapshot",
+            cursor: { epoch: rt("rt-big"), seq: seq(1) },
+            snapshot: {
+                entriesVersion: V152,
+                baseEntryCount: 0,
+                entries: { mode: "http", meta: { entryCount: 1 } },
+                state: summary({ sessionId: SESSION_BIG }),
+                liveMessage: null,
+                pendingUiRequests: [],
+            },
         });
 
         await vi.waitFor(() => {
@@ -533,17 +564,16 @@ describe("createSessionStore", () => {
         const sock = lastSocket();
         sock.open();
         sock.receive({
-            type: "snapshot",
-            sessionId: SESSION_1,
-            runtimeId: "runtime-1",
-            seq: 1,
-            entriesVersion: V152,
-            baseEntryCount: 0,
-            entriesMode: "http",
-            entryCount: 1,
-            state: summary(),
-            liveMessage: null,
-            pendingUiRequests: [],
+            type: "sync:snapshot",
+            cursor: { epoch: RUNTIME_1, seq: seq(1) },
+            snapshot: {
+                entriesVersion: V152,
+                baseEntryCount: 0,
+                entries: { mode: "http", meta: { entryCount: 1 } },
+                state: summary(),
+                liveMessage: null,
+                pendingUiRequests: [],
+            },
         });
 
         await vi.waitFor(() => {
@@ -586,17 +616,16 @@ describe("createSessionStore", () => {
         const sock = lastSocket();
         sock.open();
         sock.receive({
-            type: "snapshot",
-            sessionId: SESSION_1,
-            runtimeId: "runtime-1",
-            seq: 1,
-            entriesVersion: V152,
-            baseEntryCount: 0,
-            entriesMode: "http",
-            entryCount: 1,
-            state: summary(),
-            liveMessage: null,
-            pendingUiRequests: [],
+            type: "sync:snapshot",
+            cursor: { epoch: RUNTIME_1, seq: seq(1) },
+            snapshot: {
+                entriesVersion: V152,
+                baseEntryCount: 0,
+                entries: { mode: "http", meta: { entryCount: 1 } },
+                state: summary(),
+                liveMessage: null,
+                pendingUiRequests: [],
+            },
         });
 
         await vi.waitFor(() => {
@@ -627,25 +656,26 @@ describe("createSessionStore", () => {
         const first = lastSocket();
         first.open();
         first.receive({
-            type: "snapshot",
-            sessionId: SESSION_1,
-            runtimeId: "runtime-1",
-            seq: 1,
-            entriesVersion: V152,
-            baseEntryCount: 0,
-            entriesMode: "inline",
-            entries: [sessionHeader(), messageEntry("e1")],
-            state: summary(),
-            liveMessage: null,
-            pendingUiRequests: [],
+            type: "sync:snapshot",
+            cursor: { epoch: RUNTIME_1, seq: seq(1) },
+            snapshot: {
+                entriesVersion: V152,
+                baseEntryCount: 0,
+                entries: { mode: "inline", data: [sessionHeader(), messageEntry("e1")] },
+                state: summary(),
+                liveMessage: null,
+                pendingUiRequests: [],
+            },
         });
         first.receive({
-            type: "entries_appended",
-            sessionId: SESSION_1,
-            entriesVersion: V152,
-            entriesMode: "http",
-            baseEntryCount: 2,
-            entryCount: 5,
+            type: "sync:delta",
+            cursor: { epoch: RUNTIME_1, seq: seq(2) },
+            delta: {
+                kind: "entries_appended",
+                entriesVersion: V152,
+                baseEntryCount: 2,
+                entries: { mode: "http", meta: { entryCount: 5 } },
+            },
         });
         expect(getSession).toHaveBeenCalledTimes(1);
 
@@ -655,19 +685,19 @@ describe("createSessionStore", () => {
             expect(FakeSocket.instances).toHaveLength(2);
         });
         const second = lastSocket();
+        expect(second.url).toContain("epoch=runtime-1&afterSeq=1");
         second.open();
         second.receive({
-            type: "snapshot",
-            sessionId: SESSION_1,
-            runtimeId: "runtime-2",
-            seq: 0,
-            entriesVersion: V152,
-            baseEntryCount: 2,
-            entriesMode: "inline",
-            entries: [messageEntry("e2"), messageEntry("e3"), messageEntry("e4")],
-            state: summary(),
-            liveMessage: null,
-            pendingUiRequests: [],
+            type: "sync:snapshot",
+            cursor: { epoch: rt("runtime-2"), seq: seq(0) },
+            snapshot: {
+                entriesVersion: V152,
+                baseEntryCount: 2,
+                entries: { mode: "inline", data: [messageEntry("e2"), messageEntry("e3"), messageEntry("e4")] },
+                state: summary(),
+                liveMessage: null,
+                pendingUiRequests: [],
+            },
         });
         expect(store.getState().entries.map((entry) => entry.id)).toEqual(["session-1", "e1", "e2", "e3", "e4"]);
 
@@ -675,6 +705,259 @@ describe("createSessionStore", () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(store.getState().entries.map((entry) => entry.id)).toEqual(["session-1", "e1", "e2", "e3", "e4"]);
+        store.getState().disconnect();
+    });
+
+    it("hydrates HTTP-offloaded entries_appended deltas mid-stream and skips redundant fetches", async () => {
+        const getSession = vi
+            .fn<ApiClient["getSession"]>()
+            .mockResolvedValueOnce(sessionDetail(2, [messageEntry("e2"), messageEntry("e3")]));
+        const store = createSessionStore({
+            WebSocket: FakeSocket,
+            apiClient: { getSession },
+            retryDelaysMs: [],
+        });
+
+        store.getState().connect(SESSION_1);
+        await vi.waitFor(() => {
+            expect(FakeSocket.instances).toHaveLength(1);
+        });
+        const sock = lastSocket();
+        sock.open();
+        sock.receive({
+            type: "sync:snapshot",
+            cursor: { epoch: RUNTIME_1, seq: seq(1) },
+            snapshot: {
+                entriesVersion: V152,
+                baseEntryCount: 0,
+                entries: { mode: "inline", data: [sessionHeader(), messageEntry("e1")] },
+                state: summary(),
+                liveMessage: null,
+                pendingUiRequests: [],
+            },
+        });
+
+        sock.receive({
+            type: "sync:delta",
+            cursor: { epoch: RUNTIME_1, seq: seq(2) },
+            delta: {
+                kind: "entries_appended",
+                entriesVersion: V152,
+                baseEntryCount: 2,
+                entries: { mode: "http", meta: { entryCount: 4 } },
+            },
+        });
+        sock.receive({
+            type: "sync:delta",
+            cursor: { epoch: RUNTIME_1, seq: seq(3) },
+            delta: { kind: "state_patched", patch: { messageCount: 3 } },
+        });
+
+        await vi.waitFor(() => {
+            expect(store.getState().cursor).toEqual({ epoch: RUNTIME_1, seq: seq(3) });
+        });
+        expect(getSession).toHaveBeenCalledTimes(1);
+        expect(store.getState().entries.map((entry) => entry.id)).toEqual(["session-1", "e1", "e2", "e3"]);
+        expect(store.getState().state?.messageCount).toBe(3);
+
+        // Re-receiving an HTTP offload pointing at an entryCount already met skips HTTP.
+        sock.receive({
+            type: "sync:delta",
+            cursor: { epoch: RUNTIME_1, seq: seq(4) },
+            delta: {
+                kind: "entries_appended",
+                entriesVersion: V152,
+                baseEntryCount: 3,
+                entries: { mode: "http", meta: { entryCount: 4 } },
+            },
+        });
+        expect(getSession).toHaveBeenCalledTimes(1);
+        expect(store.getState().cursor).toEqual({ epoch: RUNTIME_1, seq: seq(4) });
+        store.getState().disconnect();
+    });
+
+    it("does not burn maxReconnectAttempts when sync:resync triggers client-initiated socket close", async () => {
+        const store = createSessionStore({
+            WebSocket: FakeSocket,
+            apiClient: stubApiClient,
+            reconnectDelayMs: 5,
+            maxReconnectAttempts: 1,
+        });
+
+        store.getState().connect(SESSION_1);
+        await vi.waitFor(() => {
+            expect(FakeSocket.instances).toHaveLength(1);
+        });
+        const first = lastSocket();
+        first.open();
+        first.receive({
+            type: "sync:snapshot",
+            cursor: { epoch: RUNTIME_1, seq: seq(1) },
+            snapshot: {
+                entriesVersion: V152,
+                baseEntryCount: 0,
+                entries: { mode: "inline", data: [sessionHeader()] },
+                state: summary(),
+                liveMessage: null,
+                pendingUiRequests: [],
+            },
+        });
+
+        // Two server resyncs would exhaust maxReconnectAttempts=1 if client closes fired notifyClosed().
+        first.receive({ type: "sync:resync", reason: "gap" });
+        await vi.waitFor(() => {
+            expect(FakeSocket.instances).toHaveLength(2);
+        });
+        expect(store.getState().status).not.toBe("error");
+
+        const second = lastSocket();
+        second.open();
+        second.receive(snapshot(2));
+        second.receive({ type: "sync:resync", reason: "gap" });
+        await vi.waitFor(() => {
+            expect(FakeSocket.instances).toHaveLength(3);
+        });
+        expect(store.getState().status).not.toBe("error");
+
+        store.getState().disconnect();
+    });
+
+    it("stays closed when onHydrateHttp gets 404 even if pendingOverflow occurred mid-hydration", async () => {
+        let rejectDetail: ((error: unknown) => void) | undefined;
+        const getSession = vi.fn<ApiClient["getSession"]>().mockImplementation(
+            () =>
+                new Promise((_resolve, reject) => {
+                    rejectDetail = reject;
+                }),
+        );
+        const onSessionMissing = vi.fn();
+        const store = createSessionStore({
+            WebSocket: FakeSocket,
+            apiClient: { getSession },
+            onSessionMissing,
+            retryDelaysMs: [],
+        });
+
+        store.getState().connect(SESSION_1);
+        await vi.waitFor(() => {
+            expect(FakeSocket.instances).toHaveLength(1);
+        });
+        const sock = lastSocket();
+        sock.open();
+        sock.receive({
+            type: "sync:snapshot",
+            cursor: { epoch: RUNTIME_1, seq: seq(1) },
+            snapshot: {
+                entriesVersion: V152,
+                baseEntryCount: 0,
+                entries: { mode: "http", meta: { entryCount: 10 } },
+                state: summary(),
+                liveMessage: null,
+                pendingUiRequests: [],
+            },
+        });
+
+        // Flood more than DEFAULT_MAX_PENDING_DELTAS (512) deltas while hydration HTTP is in flight.
+        for (let i = 2; i <= 520; i += 1) {
+            sock.receive({
+                type: "sync:delta",
+                cursor: { epoch: RUNTIME_1, seq: seq(i) },
+                delta: { kind: "state_patched", patch: { messageCount: i } },
+            });
+        }
+
+        rejectDetail?.(new ApiClientError({ status: 404, code: "not_found", message: "Session missing" }));
+        await vi.waitFor(() => {
+            expect(store.getState().status).toBe("closed");
+        });
+        expect(onSessionMissing).toHaveBeenCalledWith(SESSION_1);
+        expect(FakeSocket.instances).toHaveLength(1);
+    });
+
+    it("forces a fresh snapshot instead of replay when reconnecting after failed hydration", async () => {
+        const interruptedRetry = Promise.withResolvers<SessionDetailResponse>();
+        let interruptedSignal: AbortSignal | undefined;
+        const getSession = vi
+            .fn<ApiClient["getSession"]>()
+            .mockRejectedValueOnce(new Error("Temporary 503"))
+            .mockImplementationOnce((_id, opts) => {
+                interruptedSignal = opts?.signal;
+                return interruptedRetry.promise;
+            });
+        const store = createSessionStore({
+            WebSocket: FakeSocket,
+            apiClient: { getSession },
+            retryDelaysMs: [],
+            entriesSyncCooldownMs: 60_000,
+            reconnectDelayMs: 5,
+        });
+
+        store.getState().connect(SESSION_1);
+        await vi.waitFor(() => {
+            expect(FakeSocket.instances).toHaveLength(1);
+        });
+        const first = lastSocket();
+        first.open();
+        first.receive({
+            type: "sync:snapshot",
+            cursor: { epoch: RUNTIME_1, seq: seq(1) },
+            snapshot: {
+                entriesVersion: V152,
+                baseEntryCount: 0,
+                entries: { mode: "inline", data: [sessionHeader(), messageEntry("e1")] },
+                state: summary(),
+                liveMessage: null,
+                pendingUiRequests: [],
+            },
+        });
+
+        first.receive({
+            type: "sync:delta",
+            cursor: { epoch: RUNTIME_1, seq: seq(2) },
+            delta: {
+                kind: "entries_appended",
+                entriesVersion: V152,
+                baseEntryCount: 2,
+                entries: { mode: "http", meta: { entryCount: 4 } },
+            },
+        });
+        await vi.waitFor(() => {
+            expect(store.getState().entriesSync.kind).toBe("error");
+        });
+
+        // User starts manual retry right before transport drops; reconnect must omit afterSeq/epoch.
+        store.getState().retryEntriesSync();
+        expect(store.getState().entriesSync.kind).toBe("loading");
+        expect(interruptedSignal?.aborted).toBe(false);
+        first.serverClose(1006, "Drop");
+        expect(interruptedSignal?.aborted).toBe(true);
+
+        await vi.waitFor(() => {
+            expect(FakeSocket.instances).toHaveLength(2);
+        });
+        const second = lastSocket();
+        const reconnectUrl = new URL(second.url);
+        expect(reconnectUrl.searchParams.has("epoch")).toBe(false);
+        expect(reconnectUrl.searchParams.has("afterSeq")).toBe(false);
+        second.open();
+        second.receive({
+            type: "sync:snapshot",
+            cursor: { epoch: RUNTIME_1, seq: seq(3) },
+            snapshot: {
+                entriesVersion: V152,
+                baseEntryCount: 0,
+                entries: {
+                    mode: "inline",
+                    data: [sessionHeader(), messageEntry("e1"), messageEntry("e2"), messageEntry("e3")],
+                },
+                state: summary({ messageCount: 3 }),
+                liveMessage: null,
+                pendingUiRequests: [],
+            },
+        });
+
+        expect(store.getState().entriesSync.kind).toBe("idle");
+        expect(store.getState().entries.map((entry) => entry.id)).toEqual(["session-1", "e1", "e2", "e3"]);
         store.getState().disconnect();
     });
 

@@ -182,11 +182,12 @@ describe("createWorkspaceSyncController", () => {
         }
         socket.triggerOpen();
         socket.triggerMessage({
-            type: "catalog_snapshot",
-            sessions: [summary(SESSION_1)],
-            updatedAtMs: 2_000,
-            catalogEpoch: EPOCH_1,
-            catalogSeq: seq(0),
+            type: "sync:snapshot",
+            cursor: { epoch: EPOCH_1, seq: seq(0) },
+            snapshot: {
+                sessions: [summary(SESSION_1)],
+                updatedAtMs: 2_000,
+            },
         });
 
         expect(workspaceStore.getState().sync).toEqual({ kind: "live" });
@@ -194,19 +195,23 @@ describe("createWorkspaceSyncController", () => {
         expect(workspaceStore.getState().updatedAtMs).toBe(2_000);
 
         socket.triggerMessage({
-            type: "session_upserted",
-            catalogEpoch: EPOCH_1,
-            seq: seq(1),
-            session: summary(SESSION_2, { runtimeState: "streaming", attachedClients: 1 }),
+            type: "sync:delta",
+            cursor: { epoch: EPOCH_1, seq: seq(1) },
+            delta: {
+                op: "upsert",
+                item: summary(SESSION_2, { runtimeState: "streaming", attachedClients: 1 }),
+            },
         });
         expect(workspaceStore.getState().sessions.map((item) => item.id)).toEqual([SESSION_1, SESSION_2]);
 
         socket.triggerMessage({
-            type: "session_updated",
-            catalogEpoch: EPOCH_1,
-            seq: seq(2),
-            sessionId: SESSION_2,
-            patch: { runtimeState: "idle", attachedClients: 0, modifiedAtMs: 3_000 },
+            type: "sync:delta",
+            cursor: { epoch: EPOCH_1, seq: seq(2) },
+            delta: {
+                op: "patch",
+                id: SESSION_2,
+                patch: { runtimeState: "idle", attachedClients: 0, modifiedAtMs: 3_000 },
+            },
         });
         expect(workspaceStore.getState().sessions[1]).toMatchObject({
             id: SESSION_2,
@@ -217,10 +222,12 @@ describe("createWorkspaceSyncController", () => {
         });
 
         socket.triggerMessage({
-            type: "session_removed",
-            catalogEpoch: EPOCH_1,
-            seq: seq(3),
-            sessionId: SESSION_1,
+            type: "sync:delta",
+            cursor: { epoch: EPOCH_1, seq: seq(3) },
+            delta: {
+                op: "remove",
+                id: SESSION_1,
+            },
         });
         expect(workspaceStore.getState().sessions.map((item) => item.id)).toEqual([SESSION_2]);
 
@@ -263,11 +270,9 @@ describe("createWorkspaceSyncController", () => {
 
         FakeWorkspaceSocket.instances[2]?.triggerOpen();
         FakeWorkspaceSocket.instances[2]?.triggerMessage({
-            type: "catalog_snapshot",
-            sessions: [],
-            updatedAtMs: 5_000,
-            catalogEpoch: EPOCH_1,
-            catalogSeq: seq(0),
+            type: "sync:snapshot",
+            cursor: { epoch: EPOCH_1, seq: seq(0) },
+            snapshot: { sessions: [], updatedAtMs: 5_000 },
         });
         expect(workspaceStore.getState().sync).toEqual({ kind: "live" });
 
@@ -492,11 +497,9 @@ describe("createWorkspaceSyncController", () => {
         expect(FakeWorkspaceSocket.instances).toHaveLength(3);
         FakeWorkspaceSocket.instances[2]?.triggerOpen();
         FakeWorkspaceSocket.instances[2]?.triggerMessage({
-            type: "catalog_snapshot",
-            sessions: [],
-            updatedAtMs: 5_000,
-            catalogEpoch: EPOCH_1,
-            catalogSeq: seq(0),
+            type: "sync:snapshot",
+            cursor: { epoch: EPOCH_1, seq: seq(0) },
+            snapshot: { sessions: [], updatedAtMs: 5_000 },
         });
         expect(workspaceStore.getState().sync).toEqual({ kind: "live" });
 
@@ -538,11 +541,12 @@ describe("createWorkspaceSyncController", () => {
         }
         socket.triggerOpen();
         socket.triggerMessage({
-            type: "catalog_snapshot",
-            sessions: [summary(SESSION_1, { runtimeState: "idle" })],
-            updatedAtMs: 1_000,
-            catalogEpoch: EPOCH_1,
-            catalogSeq: seq(10),
+            type: "sync:snapshot",
+            cursor: { epoch: EPOCH_1, seq: seq(10) },
+            snapshot: {
+                sessions: [summary(SESSION_1, { runtimeState: "idle" })],
+                updatedAtMs: 1_000,
+            },
         });
         putWorkspaceCatalog.mockClear();
 
@@ -558,11 +562,13 @@ describe("createWorkspaceSyncController", () => {
 
         // Before the 300ms minRefreshDurationMs settles, a newer WS patch arrives at seq 11.
         socket.triggerMessage({
-            type: "session_updated",
-            catalogEpoch: EPOCH_1,
-            seq: seq(11),
-            sessionId: SESSION_1,
-            patch: { runtimeState: "streaming", attachedClients: 1, modifiedAtMs: 2_020 },
+            type: "sync:delta",
+            cursor: { epoch: EPOCH_1, seq: seq(11) },
+            delta: {
+                op: "patch",
+                id: SESSION_1,
+                patch: { runtimeState: "streaming", attachedClients: 1, modifiedAtMs: 2_020 },
+            },
         });
         expect(workspaceStore.getState().sessions[0]).toMatchObject({
             runtimeState: "streaming",
@@ -581,6 +587,122 @@ describe("createWorkspaceSyncController", () => {
         expect(workspaceStore.getState().sessions).toEqual(expectedMerged);
         expect(putWorkspaceCatalog).toHaveBeenCalledTimes(1);
         expect(putWorkspaceCatalog).toHaveBeenCalledWith(expectedMerged, 2_010);
+
+        controller.stop();
+    });
+
+    it("resumes with cursor handshake and resets cursor when server requests resync", async () => {
+        const workspaceStore = createWorkspaceStore({
+            cache: {
+                getWorkspaceCatalog: () => Promise.resolve(null),
+                putWorkspaceCatalog: () => Promise.resolve(),
+            },
+        });
+        const controller = createWorkspaceSyncController({
+            workspaceStore,
+            apiClient: { listSessions: vi.fn(), getAuthStatus: okAuthStatus },
+            WebSocket: FakeWorkspaceSocket,
+            reconnectDelaysMs: [100],
+            minRefreshDurationMs: 0,
+        });
+
+        controller.start();
+        const first = FakeWorkspaceSocket.instances[0];
+        if (first === undefined) {
+            throw new Error("expected initial socket");
+        }
+        expect(new URL(first.url).search).toBe("");
+        first.triggerOpen();
+        first.triggerMessage({
+            type: "sync:snapshot",
+            cursor: { epoch: EPOCH_1, seq: seq(4) },
+            snapshot: { sessions: [summary(SESSION_1)], updatedAtMs: 1_000 },
+        });
+        first.triggerClose(1006, "Drop", false);
+        vi.advanceTimersByTime(100);
+
+        const second = FakeWorkspaceSocket.instances[1];
+        if (second === undefined) {
+            throw new Error("expected reconnect socket");
+        }
+        expect(new URL(second.url).search).toBe(`?epoch=${EPOCH_1}&afterSeq=4`);
+        second.triggerOpen();
+        second.triggerMessage({
+            type: "sync:replay",
+            cursor: { epoch: EPOCH_1, seq: seq(5) },
+            fromSeq: seq(4),
+            deltas: [
+                {
+                    seq: seq(5),
+                    payload: { op: "patch", id: SESSION_1, patch: { runtimeState: "streaming" } },
+                },
+            ],
+        });
+        expect(workspaceStore.getState().sessions[0]?.runtimeState).toBe("streaming");
+
+        second.triggerMessage({ type: "sync:resync", reason: "gap" });
+        await flushMicrotasks();
+
+        const third = FakeWorkspaceSocket.instances[2];
+        if (third === undefined) {
+            throw new Error("expected resync socket");
+        }
+        expect(new URL(third.url).search).toBe("");
+
+        controller.stop();
+    });
+
+    it("exits syncing cleanly back to live when a manual refresh is superseded by a newer WS snapshot", async () => {
+        const workspaceStore = createWorkspaceStore({
+            cache: {
+                getWorkspaceCatalog: () => Promise.resolve(null),
+                putWorkspaceCatalog: () => Promise.resolve(),
+            },
+        });
+        const listSessions = vi.fn<() => Promise<SessionListResponse>>(() =>
+            Promise.resolve({
+                catalogEpoch: EPOCH_1,
+                catalogSeq: seq(4),
+                scannedAtMs: 2_000,
+                sessions: [summary(SESSION_1)],
+            }),
+        );
+        const controller = createWorkspaceSyncController({
+            workspaceStore,
+            apiClient: { listSessions, getAuthStatus: okAuthStatus },
+            WebSocket: FakeWorkspaceSocket,
+            minRefreshDurationMs: 300,
+        });
+
+        controller.start();
+        const sock = FakeWorkspaceSocket.instances[0];
+        if (sock === undefined) {
+            throw new Error("expected initial socket");
+        }
+        sock.triggerOpen();
+        sock.triggerMessage({
+            type: "sync:snapshot",
+            cursor: { epoch: EPOCH_1, seq: seq(2) },
+            snapshot: { sessions: [summary(SESSION_1)], updatedAtMs: 1_000 },
+        });
+
+        controller.refresh();
+        expect(workspaceStore.getState().sync).toEqual({ kind: "syncing" });
+        await flushMicrotasks();
+
+        // While HTTP minRefreshDurationMs is still pending, WS delivers a strictly newer snapshot.
+        sock.triggerMessage({
+            type: "sync:snapshot",
+            cursor: { epoch: EPOCH_1, seq: seq(10) },
+            snapshot: { sessions: [summary(SESSION_1, { runtimeState: "streaming" })], updatedAtMs: 3_000 },
+        });
+        expect(workspaceStore.getState().sync).toEqual({ kind: "syncing" });
+
+        // Once the refresh timer finishes and sees completeExternalRefresh() === false, sync returns to live.
+        vi.advanceTimersByTime(300);
+        expect(workspaceStore.getState().sync).toEqual({ kind: "live" });
+        expect(workspaceStore.getState().catalogCursor).toEqual({ epoch: EPOCH_1, seq: seq(10) });
+        expect(workspaceStore.getState().sessions[0]?.runtimeState).toBe("streaming");
 
         controller.stop();
     });
