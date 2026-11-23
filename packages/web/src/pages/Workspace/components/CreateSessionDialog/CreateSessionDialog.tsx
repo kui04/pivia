@@ -270,6 +270,7 @@ function CreateSessionBody({
                     <div className={styles.browserBox}>
                         <ScrollArea
                             label="Directories on server"
+                            landmark
                             className={styles.browserScroll}
                             contentClassName={styles.browserContent}
                         >

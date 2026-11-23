@@ -59,6 +59,6 @@ export const CollapsedInvocation: Story = {
         await expect(trigger).toHaveAttribute("aria-expanded", "true");
         await expect(canvas.getByText(/senior software architect/)).toBeVisible();
         await expect(canvas.getByText("/home/kui04/.pi/agent/skills/tydd/SKILL.md")).toBeVisible();
-        await expect(canvas.getByRole("region", { name: "tydd skill details" })).toBeVisible();
+        await expect(canvas.getByRole("group", { name: "tydd skill details" })).toBeVisible();
     },
 };

@@ -167,7 +167,7 @@ export const Default: Story = {
         await expect(canvas.getByRole("heading", { level: 1, name: "Markdown in chat" })).toBeInTheDocument();
         await expect(canvas.getByRole("link", { name: "links" })).toHaveAttribute("href", "https://example.com/docs");
 
-        const table = canvas.getByRole("region", { name: "Table" });
+        const table = canvas.getByRole("group", { name: "Table" });
         await expect(table).toHaveAttribute("data-slot", "scroll-area-viewport");
         await expect(table.querySelector("table")).not.toBeNull();
         await expect(canvas.getByRole("table")).toBeInTheDocument();

@@ -85,6 +85,7 @@ export function Transcript({
             <ScrollArea
                 label={label}
                 labelledBy={labelledBy}
+                landmark
                 viewportRef={handleViewportRef}
                 className={styles.scroll}
                 viewportClassName={cn(styles.viewport, edgeFade && styles.viewportFade)}

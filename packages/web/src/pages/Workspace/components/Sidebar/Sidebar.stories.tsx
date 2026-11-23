@@ -133,6 +133,11 @@ type Story = StoryObj<typeof meta>;
 export const Populated: Story = {
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
+        // The session list is a page-level scroller, so it keeps the landmark.
+        await expect(canvas.getByRole("region", { name: "Sessions" })).toHaveAttribute(
+            "data-slot",
+            "scroll-area-viewport",
+        );
         await expect(canvas.getByRole("button", { name: "New session" })).toBeEnabled();
         await expect(canvas.getByRole("button", { name: "Settings" })).toBeEnabled();
         await expect(canvas.getByText("Pinned")).toBeVisible();

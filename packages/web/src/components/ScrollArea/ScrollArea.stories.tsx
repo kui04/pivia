@@ -337,8 +337,26 @@ export const Fits: Story = {
         await expect(queryScrollbar(canvasElement, "horizontal")).toBeNull();
         await expect(queryCorner(canvasElement)).toBeNull();
         await expect(viewport).toHaveAttribute("tabindex", "-1");
-        await expect(viewport).toHaveAttribute("role", "region");
+        await expect(viewport).toHaveAttribute("role", "group");
         await expect(viewport).toHaveAttribute("aria-label", "Content that fits");
+    },
+};
+
+/**
+ * A page-level scroller opts into a landmark; inner scrollers stay named groups so repeated
+ * commands or notes never duplicate a landmark name.
+ */
+export const Landmark: Story = {
+    render: () => (
+        <ScrollArea landmark label="Landmark region" className={styles.frame} contentClassName={styles.content}>
+            <p className={styles.paragraph}>A scroller a reader navigates by.</p>
+        </ScrollArea>
+    ),
+    play: async ({ canvasElement }) => {
+        const viewport = getViewport(canvasElement);
+
+        await expect(viewport).toHaveAttribute("role", "region");
+        await expect(viewport).toHaveAttribute("aria-label", "Landmark region");
     },
 };
 

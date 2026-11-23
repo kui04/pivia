@@ -11,6 +11,14 @@ export type ScrollAreaProps = {
     label: string;
     /** ID of the element that names the scroll region. */
     labelledBy?: string | undefined;
+    /**
+     * Exposes the viewport as a landmark region.
+     *
+     * Only page-level scrollers a reader navigates by should opt in. An inner scroller stays a
+     * named group, because a transcript can hold repeated commands or notes whose region names
+     * would collide under the landmark rule.
+     */
+    landmark?: boolean | undefined;
     /** Class on the root, which the caller sizes. */
     className?: string | undefined;
     viewportClassName?: string | undefined;
@@ -40,6 +48,7 @@ export function ScrollArea({
     children,
     label,
     labelledBy,
+    landmark = false,
     className,
     viewportClassName,
     contentClassName,
@@ -51,7 +60,7 @@ export function ScrollArea({
             <BaseScrollArea.Viewport
                 ref={viewportRef}
                 data-slot="scroll-area-viewport"
-                role="region"
+                role={landmark ? "region" : "group"}
                 aria-label={labelledBy === undefined ? label : undefined}
                 aria-labelledby={labelledBy}
                 className={cn(styles.viewport, viewportClassName)}

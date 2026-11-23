@@ -22,7 +22,9 @@
   overflows sideways; the vertical bar shows on hover or scroll and hides after the pointer leaves and Base UI's
   scroll idle timeout (500 ms in 1.9.0). On touch devices the vertical bar stays visible while scrollable and keeps a
   wider invisible hit area. `CodeBlock`, Markdown tables and display math use it for sideways overflow; do not
-  reintroduce native `overflow-x: auto` there.
+  reintroduce native `overflow-x: auto` there. The viewport is a named group by default; only page-level scrollers (the
+  transcript, the session sidebar and the server directory browser) pass `landmark` to expose a `region`, so repeated
+  commands or notes cannot duplicate a landmark name.
 - `CodeBlock` wraps Shiki with the light-plus and dark-plus themes. `language` picks the grammar; while `streaming` is true the
   block stays plain, then highlights once the answer ends. The toolbar toggles wrapping and copies the source through
   `lib/clipboard.ts`; `lineNumbers`, `startLine`, `formatLineNumber` and `copyable` control the gutter and copy action, and

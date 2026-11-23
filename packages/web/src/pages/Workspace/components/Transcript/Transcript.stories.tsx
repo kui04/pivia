@@ -84,6 +84,102 @@ function buildLongConversation(turnCount: number): TranscriptItem[] {
 
 const longItems = buildLongConversation(8);
 
+const mixedItems: TranscriptItem[] = [
+    {
+        kind: "user",
+        id: "user-mixed",
+        text: "Review the change and run the checks.",
+        images: [],
+        timestamp: Date.parse("2026-11-17T09:00:00.000Z"),
+    },
+    {
+        kind: "skill",
+        id: "skill-mixed",
+        name: "tydd",
+        location: "/home/kui04/.pi/agent/skills/tydd/SKILL.md",
+        content: "## Role\n\nAct as a senior software architect practicing Type-Driven Development.",
+        timestamp: Date.parse("2026-11-17T09:00:01.000Z"),
+    },
+    {
+        kind: "turn",
+        id: "turn-mixed",
+        timing: { kind: "static", durationMs: 6_400 },
+        streaming: false,
+        outcome: { kind: "completed" },
+        steps: [
+            {
+                kind: "thinking",
+                id: "think-mixed",
+                thinking: "Check the transcript model before the view.",
+                redacted: false,
+                streaming: false,
+            },
+            {
+                kind: "toolCall",
+                id: "tool-mixed",
+                name: "bash",
+                toolKind: "bash",
+                label: "Bash",
+                summary: "pnpm test",
+                arguments: { command: "pnpm test" },
+                argumentsError: null,
+                status: "done",
+                output: "Test Files  28 passed (28)",
+                images: [],
+                timing: { kind: "static", durationMs: 1_200 },
+            },
+        ],
+        finalReply: "Every check passed.",
+    },
+    {
+        kind: "bash",
+        id: "bash-mixed",
+        command: "git status",
+        output: "On branch feat/transcript-p0-fidelity\nnothing to commit, working tree clean",
+        excludeFromContext: true,
+        status: { kind: "succeeded" },
+        truncation: { kind: "none" },
+        timestamp: Date.parse("2026-11-17T09:00:10.000Z"),
+    },
+    {
+        kind: "custom",
+        id: "custom-mixed",
+        customType: "task",
+        text: "The task extension finished: **3 files** changed.",
+        images: [],
+        timestamp: Date.parse("2026-11-17T09:00:11.000Z"),
+    },
+    {
+        kind: "note",
+        id: "note-mixed",
+        title: "Session compacted",
+        text: "Earlier context was summarized before this turn.",
+    },
+];
+
+const repeatedBashItems: TranscriptItem[] = [
+    {
+        kind: "bash",
+        id: "bash-repeat-first",
+        command: "pnpm test",
+        output: "Test Files  28 passed (28)\n      Tests  278 passed (278)",
+        excludeFromContext: false,
+        status: { kind: "succeeded" },
+        truncation: { kind: "none" },
+        timestamp: Date.parse("2026-11-17T09:01:00.000Z"),
+    },
+    {
+        kind: "bash",
+        id: "bash-repeat-second",
+        command: "pnpm test",
+        output: "FAIL src/stores/session/transcript.test.ts\nAssertionError: expected 1 to be 2",
+        excludeFromContext: false,
+        status: { kind: "failed", exitCode: 1 },
+        truncation: { kind: "none" },
+        timestamp: Date.parse("2026-11-17T09:01:30.000Z"),
+    },
+];
+
 const shortItems: TranscriptItem[] = [
     {
         kind: "user",
@@ -412,6 +508,56 @@ export const ExtensionMessageBetweenTurns: Story = {
         await userEvent.click(trigger);
         await expect(canvas.getByText(/3 files/)).toBeVisible();
         await expect(canvas.getByText(/Acknowledged the extension report/)).toBeVisible();
+    },
+};
+
+export const MixedItemKinds: Story = {
+    args: {
+        items: mixedItems,
+    },
+    decorators: [
+        (Story) => (
+            <div className={styles.frame}>
+                <Story />
+            </div>
+        ),
+    ],
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+
+        await expect(canvas.getByText("Review the change and run the checks.")).toBeVisible();
+        await expect(canvas.getByRole("button", { name: "[skill] tydd" })).toBeVisible();
+        await expect(canvas.getByRole("button", { name: "Worked for 6s" })).toBeVisible();
+        await expect(canvas.getByText("Every check passed.")).toBeVisible();
+        await expect(canvas.getByRole("group", { name: "git status output" })).toBeVisible();
+        await expect(canvas.getByRole("button", { name: "[task]" })).toBeVisible();
+        await expect(canvas.getByRole("button", { name: "Session compacted" })).toBeVisible();
+    },
+};
+
+/**
+ * Two `!` records of the same command.
+ *
+ * The blocks name their scroll regions after the command. Those scrollers stay groups rather than
+ * landmarks, so repeated commands cannot duplicate a landmark name.
+ */
+export const RepeatedBashCommands: Story = {
+    args: {
+        items: repeatedBashItems,
+    },
+    decorators: [
+        (Story) => (
+            <div className={styles.frame}>
+                <Story />
+            </div>
+        ),
+    ],
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+
+        await expect(canvas.getAllByText("pnpm test")).toHaveLength(2);
+        await expect(canvas.getByText(/exited 1/)).toBeVisible();
+        await expect(canvas.getAllByRole("group", { name: "pnpm test output" })).toHaveLength(2);
     },
 };
 

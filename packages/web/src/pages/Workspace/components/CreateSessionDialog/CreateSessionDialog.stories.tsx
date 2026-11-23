@@ -179,6 +179,12 @@ export const Default: Story = {
         const input = within(dialog).getByLabelText("Working directory");
         await expect(input).toHaveValue("/home/u/pivia");
 
+        // The directory browser is a page-level scroller, so it keeps the landmark.
+        await expect(within(dialog).getByRole("region", { name: "Directories on server" })).toHaveAttribute(
+            "data-slot",
+            "scroll-area-viewport",
+        );
+
         // At most 3 recent directories are shown even when more exist in the catalog.
         await expect(within(dialog).getByRole("button", { name: "/home/u/pivia" })).toBeVisible();
         await expect(within(dialog).getByRole("button", { name: "/home/u/docs" })).toBeVisible();

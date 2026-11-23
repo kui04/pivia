@@ -99,7 +99,7 @@ export const TaskMessage: Story = {
 
         await expect(canvas.getByRole("heading", { name: "Review summary" })).toBeVisible();
         await expect(canvas.getByText(/Three files changed/)).toBeVisible();
-        await expect(canvas.getByRole("region", { name: "task message details" })).toBeVisible();
+        await expect(canvas.getByRole("group", { name: "task message details" })).toBeVisible();
 
         await userEvent.click(canvas.getByRole("link", { name: "the report" }));
         await expect(args.onOpenLink).toHaveBeenCalledWith("https://example.com/report");

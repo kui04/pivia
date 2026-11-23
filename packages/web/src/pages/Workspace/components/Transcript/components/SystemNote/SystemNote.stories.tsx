@@ -63,7 +63,7 @@ export const CompactionCheckpoint: Story = {
         await userEvent.click(trigger);
         await expect(trigger).toHaveAttribute("aria-expanded", "true");
         await expect(canvas.getByText(/the reader asked for a read-only transcript view/)).toBeVisible();
-        await expect(canvas.getByRole("region", { name: "Session compacted details" })).toBeVisible();
+        await expect(canvas.getByRole("group", { name: "Session compacted details" })).toBeVisible();
     },
 };
 
@@ -76,7 +76,7 @@ export const LongSummaryScrolls: Story = {
         const trigger = canvas.getByRole("button", { name: "Branch summary" });
         await userEvent.click(trigger);
 
-        const viewport = await waitFor(() => canvas.getByRole("region", { name: "Branch summary details" }));
+        const viewport = await waitFor(() => canvas.getByRole("group", { name: "Branch summary details" }));
         await waitFor(async () => {
             await expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight);
         });

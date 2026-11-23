@@ -102,7 +102,7 @@ export const LongOutputScrolls: Story = {
     },
     play: async ({ canvasElement, args }) => {
         const canvas = within(canvasElement);
-        const viewport = canvas.getByRole("region", { name: "git log --oneline -40 output" });
+        const viewport = canvas.getByRole("group", { name: "git log --oneline -40 output" });
         const output = canvasElement.querySelector("pre");
 
         await waitFor(async () => {

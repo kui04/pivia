@@ -175,6 +175,7 @@ export function Sidebar({
             ) : (
                 <ScrollArea
                     label="Sessions"
+                    landmark
                     className={styles.scroll}
                     viewportClassName={styles.viewport}
                     contentClassName={styles.content}
