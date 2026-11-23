@@ -104,8 +104,29 @@ export const StreamingRuntime: Story = {
     },
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
-        await expect(canvas.getByText("Streaming")).toBeVisible();
+        await expect(canvas.getByRole("img", { name: "Streaming" })).toBeVisible();
         await expect(canvas.queryByText("2h")).not.toBeInTheDocument();
+    },
+};
+
+export const AttachedRuntime: Story = {
+    args: {
+        session: { ...session, attachedClients: 1 },
+    },
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+        await expect(canvas.getByRole("img", { name: "Attached" })).toBeVisible();
+        await expect(canvas.queryByText("2h")).not.toBeInTheDocument();
+    },
+};
+
+export const ClosingRuntime: Story = {
+    args: {
+        session: { ...session, runtimeState: "closing" },
+    },
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+        await expect(canvas.getByRole("img", { name: "Closing" })).toBeVisible();
     },
 };
 

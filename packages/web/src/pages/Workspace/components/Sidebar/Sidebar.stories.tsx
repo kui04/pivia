@@ -141,7 +141,7 @@ export const Populated: Story = {
         await expect(canvas.getByRole("button", { name: "New session" })).toBeEnabled();
         await expect(canvas.getByRole("button", { name: "Settings" })).toBeEnabled();
         await expect(canvas.getByText("Pinned")).toBeVisible();
-        await expect(canvas.getByText("Streaming")).toBeVisible();
+        await expect(canvas.getByRole("img", { name: "Streaming" })).toBeVisible();
     },
 };
 

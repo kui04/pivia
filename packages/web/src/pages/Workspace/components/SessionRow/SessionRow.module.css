@@ -20,7 +20,7 @@
  *   ├─ .title                      inside the button, a sibling rule here
  *   │   └─ &[data-named="false"]   a preview name, in the muted colour
  *   ├─ .age                        inside the button, a sibling rule here
- *   │   └─ &[data-status="active"] an active runtime badge
+ *   │   └─ .indicator              status dot; data-state on .age picks the variant
  *   ├─ &:hover .age
  *   ├─ &:has(:focus-visible) .age, &[data-open="true"] .age
  *   ├─ .actions (span)             pin IconButton and Menu trigger
@@ -134,7 +134,10 @@
     }
 
     .age {
+        display: flex;
         flex: none;
+        align-items: center;
+        justify-content: flex-end;
         /* The menu glyph sits 4px inside its 24px box, so the age ends on the same line. */
         padding-inline-end: var(--space-4);
         color: var(--color-on-surface-variant);
@@ -146,11 +149,39 @@
         /* Same duration as the actions, so one fades out while the other fades in. */
         transition: opacity var(--motion-duration-effects-fast) var(--motion-easing-standard);
 
-        /* A running session answers "what is it doing", not "when did it change". */
-        &[data-status="active"] {
-            color: var(--color-on-surface);
-            font-family: var(--font-sans);
-            font-weight: var(--type-label-medium-emphasized-weight);
+        /*
+         * A running session answers "what is it doing" with a dot instead of a word, so the
+         * trailing slot stays narrow and its meaning stays in the accessible name.
+         */
+        .indicator {
+            inline-size: var(--space-8);
+            block-size: var(--space-8);
+            border: var(--border-width-strong) solid transparent;
+            border-radius: var(--shape-corner-full);
+            background-color: var(--color-primary);
+            animation: status-pulse 1.6s ease-in-out infinite;
+
+            @media (prefers-reduced-motion: reduce) {
+                animation: none;
+            }
+
+            @media (forced-colors: active) {
+                background-color: CanvasText;
+                border-color: CanvasText;
+            }
+        }
+
+        /* A client is attached but idle: a hollow dot separates it from work in progress. */
+        &[data-state="attached"] .indicator {
+            background-color: transparent;
+            border-color: var(--color-on-surface-variant);
+            animation: none;
+        }
+
+        /* The runtime is shutting down: a muted fill and no pulse. */
+        &[data-state="closing"] .indicator {
+            background-color: var(--color-on-surface-variant);
+            animation: none;
         }
     }
 
@@ -224,5 +255,11 @@
         .actions {
             transition: none;
         }
+    }
+}
+
+@keyframes status-pulse {
+    50% {
+        scale: 1.2;
     }
 }

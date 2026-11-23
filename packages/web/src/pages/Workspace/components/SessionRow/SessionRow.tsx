@@ -55,7 +55,8 @@ function areSessionRowPropsEqual(prev: SessionRowProps, next: SessionRowProps): 
  *
  * The row renders one primary button plus a sibling action layer (never nested buttons) so
  * keyboard focus reaches the title and actions separately. Touch devices open the same actions
- * via a long-press context menu.
+ * via a long-press context menu. The trailing slot shows the relative age, or a status dot while
+ * the runtime is starting, streaming, compacting, closing or attached.
  */
 function SessionRowInner({
     session,
@@ -144,8 +145,12 @@ function SessionRowInner({
                 <span className={styles.title} data-named={session.named} title={session.title}>
                     {session.title}
                 </span>
-                <span className={styles.age} data-status={status.kind}>
-                    {status.kind === "idle" ? formatRelativeAge(status.modifiedAtMs, nowMs) : status.label}
+                <span className={styles.age} data-state={status.kind === "active" ? status.state : undefined}>
+                    {status.kind === "idle" ? (
+                        formatRelativeAge(status.modifiedAtMs, nowMs)
+                    ) : (
+                        <span className={styles.indicator} role="img" aria-label={status.label} />
+                    )}
                 </span>
             </button>
             <span className={styles.actions}>
