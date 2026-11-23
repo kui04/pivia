@@ -6,7 +6,7 @@
  *   .root[data-status][data-context]
  *   ├─ .header
  *   │   ├─ .icon              terminal glyph
- *   │   ├─ .command           the command plus its .status annotation
+ *   │   ├─ .command           the command plus its .status and .context annotations
  *   │   └─ .meta              wrap and copy buttons
  *   ├─ .scroll
  *   │   └─ .viewport          bounded scroller with edge fades
