@@ -7,6 +7,7 @@ import { cn } from "@/lib/cn";
 import type { TranscriptItem } from "@/stores/session/transcript";
 
 import { BashExecutionBlock } from "./components/BashExecutionBlock/BashExecutionBlock";
+import { CustomMessageBlock } from "./components/CustomMessageBlock/CustomMessageBlock";
 import { SkillInvocationBlock } from "./components/SkillInvocationBlock/SkillInvocationBlock";
 import { SystemNote } from "./components/SystemNote/SystemNote";
 import { TurnGroup } from "./components/TurnGroup/TurnGroup";
@@ -102,6 +103,14 @@ export function Transcript({
                                 );
                             case "bash":
                                 return <BashExecutionBlock key={item.id} item={item} />;
+                            case "custom":
+                                return (
+                                    <CustomMessageBlock
+                                        key={item.id}
+                                        item={item}
+                                        {...(onOpenLink !== undefined ? { onOpenLink } : {})}
+                                    />
+                                );
                             case "note":
                                 return (
                                     <SystemNote

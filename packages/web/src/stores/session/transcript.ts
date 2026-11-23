@@ -21,6 +21,7 @@ type MessageOf<TRole extends MessageEntry["message"]["role"]> = Extract<MessageE
 type AssistantEntryMessage = MessageOf<"assistant">;
 type ToolResultEntryMessage = MessageOf<"toolResult">;
 type BashExecutionRecord = MessageOf<"bashExecution">;
+type CustomMessageEntry = EntryOf<"custom_message">;
 type EditableContent = NonNullable<ProjectedEntryItem["editedContent"]>;
 
 /**
@@ -88,7 +89,7 @@ export type TranscriptReplyStep = {
 /** One chronological item inside a collapsed turn group. */
 export type TranscriptStep = TranscriptThinkingStep | TranscriptToolCallStep | TranscriptReplyStep;
 
-/** One user prompt (or displayed extension message) rendered as a bubble. */
+/** One user prompt rendered as a bubble. */
 export type TranscriptUserItem = {
     kind: "user";
     id: string;
@@ -139,6 +140,23 @@ export type TranscriptBashItem = {
     readonly timestamp: BashExecutionRecord["timestamp"];
 };
 
+/**
+ * One extension message the transcript shows.
+ *
+ * The SDK keeps these apart from user prompts: an extension decides the `customType`, the message
+ * can carry attachments without text, and the label tells the reader the words are not their own.
+ */
+export type TranscriptCustomItem = {
+    readonly kind: "custom";
+    readonly id: string;
+    /** Extension-defined message kind, rendered as the block label. */
+    readonly customType: string;
+    /** Message text as Markdown; empty when the message carried only attachments. */
+    readonly text: string;
+    readonly images: readonly ImageContent[];
+    readonly timestamp: number;
+};
+
 /** One system note between prompts, such as a compaction checkpoint or a branch summary. */
 export type TranscriptNoteItem = {
     kind: "note";
@@ -183,7 +201,12 @@ export type TranscriptTurnItem = {
 
 /** One top-level entry in the transcript list. */
 export type TranscriptItem =
-    TranscriptUserItem | TranscriptSkillItem | TranscriptBashItem | TranscriptTurnItem | TranscriptNoteItem;
+    | TranscriptUserItem
+    | TranscriptSkillItem
+    | TranscriptBashItem
+    | TranscriptCustomItem
+    | TranscriptTurnItem
+    | TranscriptNoteItem;
 
 /** Optional inputs for live transcript rendering. */
 export type BuildTranscriptOptions = {
@@ -479,7 +502,7 @@ function toToolResultBlocks(content: unknown): ToolResultBlock[] {
     return blocks;
 }
 
-/** Split a user or extension message into the bubble text and its attachments. */
+/** Split user or extension content into text and attachments. */
 function readUserContent(content: unknown): { text: string; images: ImageContent[] } {
     if (typeof content === "string") {
         return { text: content.trim(), images: [] };
@@ -561,6 +584,25 @@ function readBashItem(entryId: string, message: BashExecutionRecord): Transcript
         status: readBashStatus(message.cancelled === true, exitCode),
         truncation: message.truncated === true ? { kind: "truncated", fullOutputPath } : { kind: "none" },
         timestamp: toTimestamp(message.timestamp),
+    };
+}
+
+/**
+ * Read one displayed extension message.
+ *
+ * A legacy or hand-edited record can miss `customType` or hold content of an unexpected shape, so
+ * every field takes the same boundary checks as a user message and a missing label stays readable.
+ */
+function readCustomItem(entry: CustomMessageEntry, editedContent: EditableContent | undefined): TranscriptCustomItem {
+    const customType = typeof entry.customType === "string" ? entry.customType.trim() : "";
+    const { text, images } = readUserContent(editedContent ?? entry.content);
+    return {
+        kind: "custom",
+        id: `custom-${entry.id}`,
+        customType: customType === "" ? "extension" : customType,
+        text,
+        images,
+        timestamp: parseIsoTimestamp(entry.timestamp),
     };
 }
 
@@ -938,10 +980,12 @@ export function buildTranscript(
                     break;
                 }
                 flushTurn(false);
-                const timestamp = parseIsoTimestamp(entry.timestamp);
-                const { text, images } = readUserContent(item.editedContent ?? entry.content);
-                transcript.push({ kind: "user", id: `user-${entry.id}`, text, images, timestamp });
-                lastUserTimestamp = timestamp;
+                const customItem = readCustomItem(entry, item.editedContent);
+                transcript.push(customItem);
+                // A displayed extension message can start the next turn, so its time seeds that
+                // turn's duration the way a prompt does. An unreadable timestamp parses to 0 and
+                // must not become a start, or the next turn would count from the epoch.
+                lastUserTimestamp = customItem.timestamp > 0 ? customItem.timestamp : null;
                 break;
             }
             case "branch_summary":

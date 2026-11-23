@@ -14,8 +14,8 @@ Component conventions live in [components.md](components.md). Frontend code live
   missing, ask the user before adding it or using a raw value.
 - `--color-outline-control` is the 3:1 boundary for interactive controls (Input, Select, Checkbox and the secondary
   Button), meeting WCAG 1.4.11 in both themes. `--color-outline` stays the decorative editor separator.
-- `--color-tertiary` is the single purple accent: skill invocation headers and the border of a `!!` command record
-  use it. Keep it out of error and warning roles.
+- `--color-tertiary` is the single purple accent: skill invocation headers, extension message headers and the border
+  of a `!!` command record use it. Keep it out of error and warning roles.
 - `packages/web/src/styles/reset.css` is a trimmed Tailwind CSS Preflight. Load order in `packages/web/src/main.tsx` is
   fonts, token, reset, global; `global.css` holds only document-level rules.
 - Colors use `light-dark()` with `color-scheme`. Set `data-theme="light"` or `data-theme="dark"` on `<html>` to
@@ -150,16 +150,18 @@ in step with the file: a new nested rule updates the sketch in the same change.
 - The transcript never walks the entry tree. `projectSessionTranscript` from `@pivia/protocol` resolves the active
   branch, the compaction boundary and `context_edit` replacements; `buildTranscript` in
   `packages/web/src/stores/session/transcript.ts` folds those items into user bubbles, skill invocation rows, bash
-  execution blocks, system notes and `Worked for Xs` turn groups. One `/skill:` user entry becomes a collapsed
-  `[skill] name` row followed by the prompt bubble when the reader typed one. A `!` command record becomes its own
-  block between turns, with its output, exit state and the truncation path. `liveAssistantMessage` joins the same
-  aggregation, so a streamed answer renders before its entry lands.
+  execution blocks, labeled extension message blocks, system notes and `Worked for Xs` turn groups. One `/skill:`
+  user entry becomes a collapsed `[skill] name` row followed by the prompt bubble when the reader typed one. A `!`
+  command record becomes its own block between turns, with its output, exit state and the truncation path. A displayed
+  `custom_message` becomes a collapsed row labeled `[customType]` that shares the system-note shell; expanding it shows
+  the message as Markdown and its images through the shared viewer, so an extension message never reads as the reader's
+  own words. `liveAssistantMessage` joins the same aggregation, so a streamed answer renders before its entry lands.
 - Page states in order: missing or invalid session, first snapshot pending, entry-sync failure with a Retry action,
   terminal connection error, empty session, transcript. A failed entry sync with cached rows keeps the transcript
   and adds a status banner instead of replacing it.
 - `packages/web/src/pages/Workspace/components/Transcript/` holds the read-only view (user bubbles, skill invocation
-  blocks, bash execution blocks, turn groups, thinking and tool blocks, system notes, auto-scroll) and the live-duration
-  hook. The composer slot below it is still a placeholder.
+  blocks, bash execution blocks, extension message blocks, turn groups, thinking and tool blocks, system notes,
+  auto-scroll) and the live-duration hook. The composer slot below it is still a placeholder.
 - A transcript item's timing is a discriminated union: a settled turn or tool call carries its final duration, a
   running one carries its start time and the component samples the clock. The two shapes are exclusive so a caller
   cannot add a live elapsed time to a snapshot duration twice. Only the trailing turn of an active runtime may report

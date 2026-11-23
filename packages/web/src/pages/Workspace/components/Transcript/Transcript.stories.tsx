@@ -374,6 +374,47 @@ export const NoteBetweenTurns: Story = {
     },
 };
 
+export const ExtensionMessageBetweenTurns: Story = {
+    args: {
+        items: [
+            ...shortItems,
+            {
+                kind: "custom",
+                id: "custom-task",
+                customType: "task",
+                text: "The task extension finished: **3 files** changed and `pnpm test` passed.",
+                images: [],
+                timestamp: Date.parse("2026-11-17T08:01:00.000Z"),
+            },
+            {
+                kind: "turn",
+                id: "turn-after-custom",
+                timing: { kind: "static", durationMs: 2_000 },
+                streaming: false,
+                outcome: { kind: "completed" },
+                steps: [],
+                finalReply: "Acknowledged the extension report.",
+            },
+        ],
+    },
+    decorators: [
+        (Story) => (
+            <div className={styles.frame}>
+                <Story />
+            </div>
+        ),
+    ],
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+        const trigger = canvas.getByRole("button", { name: "[task]" });
+
+        await expect(trigger).toHaveAttribute("aria-expanded", "false");
+        await userEvent.click(trigger);
+        await expect(canvas.getByText(/3 files/)).toBeVisible();
+        await expect(canvas.getByText(/Acknowledged the extension report/)).toBeVisible();
+    },
+};
+
 export const EdgeFadeEnabled: Story = {
     decorators: [
         (Story) => (

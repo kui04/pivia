@@ -177,6 +177,50 @@ function corruptToolResultEntry(content: unknown): FileEntry {
     } as FileEntry;
 }
 
+type CustomContent =
+    | string
+    | (
+          | { readonly type: "text"; readonly text: string }
+          | { readonly type: "image"; readonly data: string; readonly mimeType: string }
+      )[];
+
+type CustomOverrides = Partial<{
+    customType: string;
+    display: boolean;
+    timestamp: string;
+}>;
+
+/** Build an extension message the session appends for `sendCustomMessage`. */
+function customMessageEntry(
+    id: string,
+    parentId: string | null,
+    content: CustomContent,
+    overrides: CustomOverrides = {},
+): FileEntry {
+    return {
+        type: "custom_message",
+        id,
+        parentId,
+        timestamp: overrides.timestamp ?? "2026-04-01T00:00:01.000Z",
+        customType: overrides.customType ?? "task",
+        content,
+        display: overrides.display ?? true,
+    };
+}
+
+/** Build an extension message whose label and content violate the SDK type, to test the boundary. */
+function corruptCustomMessageEntry(customType: unknown, content: unknown): FileEntry {
+    return {
+        type: "custom_message",
+        id: "c-bad",
+        parentId: null,
+        timestamp: "2026-04-01T00:00:01.000Z",
+        customType,
+        content,
+        display: true,
+    } as FileEntry;
+}
+
 function project(entries: readonly FileEntry[]) {
     return projectSessionTranscript([HEADER, ...entries]).items;
 }
@@ -332,36 +376,104 @@ describe("buildTranscript", () => {
         ]);
     });
 
-    it("renders only displayed extension messages as user bubbles", () => {
+    it("renders only displayed extension messages, labeled with their custom type", () => {
         const items = buildTranscript(
             project([
+                customMessageEntry("c1", null, "Visible extension message"),
+                customMessageEntry("c2", "c1", "Hidden extension message", { display: false }),
+            ]),
+        );
+
+        expect(items).toEqual([
+            {
+                kind: "custom",
+                id: "custom-c1",
+                customType: "task",
+                text: "Visible extension message",
+                images: [],
+                timestamp: Date.parse("2026-04-01T00:00:01.000Z"),
+            },
+        ]);
+    });
+
+    it("keeps attachments on an extension message that carries no text", () => {
+        const items = buildTranscript(
+            project([customMessageEntry("c1", null, [{ type: "image", data: "AAAA", mimeType: "image/png" }])]),
+        );
+
+        expect(items).toEqual([
+            {
+                kind: "custom",
+                id: "custom-c1",
+                customType: "task",
+                text: "",
+                images: [{ type: "image", data: "AAAA", mimeType: "image/png" }],
+                timestamp: Date.parse("2026-04-01T00:00:01.000Z"),
+            },
+        ]);
+    });
+
+    it("prefers a context_edit replacement over the stored extension message", () => {
+        const items = buildTranscript(
+            project([
+                customMessageEntry("c1", null, "Original extension text"),
                 {
-                    type: "custom_message",
-                    id: "c1",
-                    parentId: null,
-                    timestamp: "2026-04-01T00:00:01.000Z",
-                    customType: "task",
-                    content: "Visible extension message",
-                    display: true,
-                },
-                {
-                    type: "custom_message",
-                    id: "c2",
+                    type: "context_edit",
+                    id: "e1",
                     parentId: "c1",
-                    timestamp: "2026-04-01T00:00:02.000Z",
-                    customType: "task",
-                    content: "Hidden extension message",
-                    display: false,
+                    timestamp: "2026-04-01T00:00:03.000Z",
+                    targetId: "c1",
+                    replacement: { content: "Edited extension text" },
                 },
             ]),
         );
 
-        expect(items).toHaveLength(1);
-        expect(items[0]).toMatchObject({
-            kind: "user",
-            text: "Visible extension message",
-            timestamp: Date.parse("2026-04-01T00:00:01.000Z"),
-        });
+        expect(items).toMatchObject([{ kind: "custom", text: "Edited extension text" }]);
+    });
+
+    it("degrades a corrupt extension record instead of dropping it", () => {
+        const items = buildTranscript(project([corruptCustomMessageEntry(undefined, { text: "not content" })]));
+
+        expect(items).toEqual([
+            {
+                kind: "custom",
+                id: "custom-c-bad",
+                customType: "extension",
+                text: "",
+                images: [],
+                timestamp: Date.parse("2026-04-01T00:00:01.000Z"),
+            },
+        ]);
+    });
+
+    it("does not seed the next turn from an unreadable extension timestamp", () => {
+        const items = buildTranscript(
+            project([
+                customMessageEntry("c1", null, "Note", { timestamp: "not-a-date" }),
+                assistantEntry("m2", "c1", [{ type: "text", text: "Answer" }], { timestamp: 2_000 }),
+            ]),
+        );
+
+        expect(items[0]).toMatchObject({ kind: "custom", timestamp: 0 });
+        expect(turnOf(items, 1).timing).toEqual({ kind: "static", durationMs: 0 });
+    });
+
+    it("ends the pending turn at an extension message and seeds the next duration", () => {
+        const start = Date.parse("2026-04-01T00:00:01.000Z");
+        const items = buildTranscript(
+            project([
+                userEntry("m1", null, "First prompt", start),
+                assistantEntry("m2", "m1", [{ type: "text", text: "First answer" }], { timestamp: start + 500 }),
+                customMessageEntry("c1", "m2", "Extension note", {
+                    timestamp: "2026-04-01T00:00:03.000Z",
+                }),
+                assistantEntry("m4", "c1", [{ type: "text", text: "Second answer" }], { timestamp: start + 4_000 }),
+            ]),
+        );
+
+        expect(items.map((item) => item.kind)).toEqual(["user", "turn", "custom", "turn"]);
+        expect(turnOf(items, 1).timing).toEqual({ kind: "static", durationMs: 500 });
+        expect(turnOf(items, 3).timing).toEqual({ kind: "static", durationMs: 2_000 });
     });
 
     it("splits a skill invocation into its own block before the typed prompt", () => {

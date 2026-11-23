@@ -1,0 +1,37 @@
+/*
+ * Attachments under an expanded extension message.
+ *
+ * The nesting this file styles:
+ *
+ *   .images
+ *
+ * Classes passed to child components stay top-level so CSS Modules keep one class of specificity:
+ *
+ *   .imageTrigger
+ *   .image
+ */
+.images {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-8);
+
+    /* Markdown drops the bottom margin of its last child, so the row owns the gap above it. */
+    margin-block-start: var(--space-8);
+
+    /* An attachment-only message starts the panel; the content body already pads its edge. */
+    &:first-child {
+        margin-block-start: 0;
+    }
+}
+
+.imageTrigger {
+    border: var(--border-width) solid var(--color-outline-variant);
+    border-radius: var(--shape-corner-small);
+}
+
+.image {
+    max-inline-size: calc(var(--space-64) * 3);
+    max-block-size: calc(var(--space-64) * 3);
+    border-radius: var(--shape-corner-small);
+    object-fit: cover;
+}

@@ -8,7 +8,7 @@ import styles from "./UserMessage.module.css";
 
 /** Props of {@link UserMessage}. */
 export type UserMessageProps = {
-    /** User prompt (or displayed extension message) projected by the transcript model. */
+    /** User prompt projected by the transcript model. */
     item: TranscriptUserItem;
     /** Optional class name on the outer container. */
     className?: string | undefined;

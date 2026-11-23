@@ -5,7 +5,7 @@
  * The nesting this file styles:
  *
  *   .root
- *   ├─ [data-tone="accent"]    purple header for skill invocations
+ *   ├─ [data-tone="accent"]    purple header for injected content rows
  *   ├─ .trigger                  button row with the leading icon, label and chevron
  *   │   └─ .label                title; shimmers while the block streams
  *   └─ .collapse                 animated 0fr -> 1fr grid container (data-open)
