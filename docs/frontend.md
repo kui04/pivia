@@ -139,6 +139,28 @@ in step with the file: a new nested rule updates the sketch in the same change.
   loading skeleton and disables the refresh button with `focusableWhenDisabled` so focus is preserved. While
   `reconnecting` or `failed`, the last known rows stay visible under a status banner.
 
+## Session view
+
+- `WorkspacePage` owns the routed chat column. Its page hook `useWorkspaceSession` parses `:sessionId` with
+  `parseSessionId`, calls `connect(parsedId)` in an effect and `disconnect()` on route change and unmount, and
+  disconnects instead of connecting for a missing or invalid segment. The page takes an optional `sessionStore` prop
+  so stories and tests drive an isolated store.
+- The transcript never walks the entry tree. `projectSessionTranscript` from `@pivia/protocol` resolves the active
+  branch, the compaction boundary and `context_edit` replacements; `buildTranscript` in
+  `packages/web/src/stores/session/transcript.ts` folds those items into user bubbles, system notes and
+  `Worked for Xs` turn groups. `liveAssistantMessage` joins the same aggregation, so a streamed answer renders
+  before its entry lands.
+- Page states in order: missing or invalid session, first snapshot pending, entry-sync failure with a Retry action,
+  terminal connection error, empty session, transcript. A failed entry sync with cached rows keeps the transcript
+  and adds a status banner instead of replacing it.
+- `packages/web/src/pages/Workspace/components/Transcript/` holds the read-only view (user bubbles, turn groups,
+  thinking and tool blocks, system notes, auto-scroll) and the live-duration hook. The composer slot below it is
+  still a placeholder.
+- A transcript item's timing is a discriminated union: a settled turn or tool call carries its final duration, a
+  running one carries its start time and the component samples the clock. The two shapes are exclusive so a caller
+  cannot add a live elapsed time to a snapshot duration twice. Only the trailing turn of an active runtime may report
+  an unmatched tool call as running; a historical call without its result is interrupted.
+
 ## Toasts
 
 - `packages/web/src/lib/toast.ts` owns the app's single toast manager plus `showError` and `showWarning`.

@@ -1,0 +1,12 @@
+/*
+ * The fallback note inside a thinking body, used when the block is empty or redacted.
+ *
+ *   .placeholder
+ */
+.placeholder {
+    margin: 0;
+    color: var(--color-on-surface-variant);
+    font-size: var(--type-body-medium-size);
+    letter-spacing: var(--type-body-medium-tracking);
+    line-height: var(--type-body-medium-line-height);
+}

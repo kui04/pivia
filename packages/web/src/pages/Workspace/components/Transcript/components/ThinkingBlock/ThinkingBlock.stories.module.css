@@ -1,0 +1,18 @@
+/*
+ * Story container sizing ThinkingBlock against a transcript column width.
+ *
+ *   .frame
+ *   └─ .meta    controls above the interactive stories
+ */
+.frame {
+    max-inline-size: calc(var(--space-64) * 8);
+    padding: var(--space-12);
+    background-color: var(--color-surface);
+
+    .meta {
+        display: flex;
+        align-items: center;
+        gap: var(--space-8);
+        margin-block-end: var(--space-8);
+    }
+}

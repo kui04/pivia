@@ -1,0 +1,20 @@
+/*
+ * Story container sizing ToolCallBlock against a transcript column width.
+ *
+ *   .frame
+ *   .stack     one tool row per built-in kind
+ */
+.frame {
+    max-inline-size: calc(var(--space-64) * 9);
+    padding: var(--space-12);
+    background-color: var(--color-surface);
+}
+
+.stack {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    max-inline-size: calc(var(--space-64) * 9);
+    padding: var(--space-12);
+    background-color: var(--color-surface);
+}

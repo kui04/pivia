@@ -1,0 +1,52 @@
+/*
+ * The active-turn row: an indeterminate spinner and a shimmering "Working..." label.
+ *
+ * The nesting this file styles:
+ *
+ *   .root
+ *   └─ .label    status text carrying the shared shimmer sweep
+ */
+.root {
+    display: flex;
+    align-items: center;
+    gap: var(--space-8);
+    min-block-size: var(--space-32);
+    padding-block: var(--space-4);
+    padding-inline: var(--space-4);
+    color: var(--color-on-surface-variant);
+
+    .label {
+        /*
+         * CSS Modules localizes a bare animation name to a scoped keyframe that token.css does not
+         * define, so the global name travels through a custom property. The property must not end in
+         * "animation" or "animation-name", or its value would be localized too.
+         */
+        --shimmer-keyframes: shimmer;
+
+        font-size: var(--type-body-medium-size);
+        font-weight: var(--type-body-medium-emphasized-weight);
+        letter-spacing: var(--type-body-medium-tracking);
+        line-height: var(--type-body-medium-line-height);
+        background-image: var(--shimmer-gradient);
+        background-size: var(--shimmer-size);
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+        animation-name: var(--shimmer-keyframes);
+        animation-duration: var(--shimmer-duration);
+        animation-timing-function: linear;
+        animation-iteration-count: infinite;
+
+        /* Forced colors removes the gradient that paints the glyphs, so fall back to text color. */
+        @media (forced-colors: active) {
+            background-image: none;
+            -webkit-text-fill-color: currentColor;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            background-image: none;
+            -webkit-text-fill-color: currentColor;
+            animation: none;
+        }
+    }
+}

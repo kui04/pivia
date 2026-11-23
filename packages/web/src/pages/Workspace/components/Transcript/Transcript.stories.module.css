@@ -1,0 +1,26 @@
+/*
+ * Story layouts sizing Transcript in a bounded workspace pane and a streaming container.
+ *
+ *   .frame              constrained column matching the workspace chat pane
+ *   .streamingShell     column stacking live controls above a bounded Transcript
+ *   └─ .controls        action bar that simulates arriving streaming chunks
+ */
+.frame {
+    block-size: calc(var(--space-64) * 7.5);
+    background-color: var(--color-surface);
+}
+
+.streamingShell {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-12);
+    block-size: calc(var(--space-64) * 8);
+    background-color: var(--color-surface);
+
+    .controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--space-8);
+        padding: var(--space-12) var(--space-16) 0;
+    }
+}

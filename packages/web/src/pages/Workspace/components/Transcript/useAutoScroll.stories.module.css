@@ -1,0 +1,44 @@
+/*
+ * Story frame for the auto-scroll hook.
+ *
+ * Every rule is top-level; the DOM parents are named below.
+ *
+ *   .frame
+ *   .panel
+ *   .viewport    DOM child of .panel; the bounded scroller the hook observes
+ *   .line        DOM child of .viewport
+ *   .value       DOM child of .panel; the bottom-pin state
+ */
+.frame {
+    max-inline-size: calc(var(--space-64) * 9);
+    padding: var(--space-12);
+    background-color: var(--color-surface);
+}
+
+.panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-8);
+}
+
+.viewport {
+    block-size: calc(var(--space-64) * 4);
+    padding: var(--space-8);
+    overflow-y: auto;
+    border: var(--border-width) solid var(--color-outline-variant);
+    border-radius: var(--shape-corner-small);
+    background-color: var(--color-surface-container);
+}
+
+.line {
+    color: var(--color-on-surface);
+    font-size: var(--type-body-medium-size);
+    line-height: var(--type-body-medium-line-height);
+}
+
+.value {
+    color: var(--color-on-surface-variant);
+    font-family: var(--font-mono);
+    font-size: var(--type-label-medium-size);
+    line-height: var(--type-label-medium-line-height);
+}

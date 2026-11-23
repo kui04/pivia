@@ -1,0 +1,248 @@
+/*
+ * One collapsible secondary row in a turn timeline: the trigger, the animated panel and the
+ * bounded body shared by thinking blocks and system notes.
+ *
+ * The nesting this file styles:
+ *
+ *   .root
+ *   ├─ .trigger                  button row with the leading icon, label and chevron
+ *   │   └─ .label                title; shimmers while the block streams
+ *   └─ .collapse                 animated 0fr -> 1fr grid container (data-open)
+ *       └─ .collapseInner        overflow hidden and inert while closed
+ *           └─ .body             2-column grid that aligns the rail under the icon
+ *               └─ .rail         vertical guide line
+ *
+ * Classes passed to child components stay top-level so CSS Modules keep one class of specificity:
+ *
+ *   .icon
+ *   .chevron                     rotates 90deg when data-open="true"
+ *   .scroll
+ *   .viewport                    bounded scroller with top and bottom mask fades
+ *   .fadeTop
+ *   .fadeBottom
+ *   .content
+ *   .contentBody                 wrapper around the panel content
+ *       └─ [data-slot="markdown"]  Markdown root; receives the muted transcript colors
+ */
+.root {
+    min-inline-size: 0;
+
+    .trigger {
+        display: flex;
+        align-items: center;
+        gap: var(--space-8);
+        inline-size: 100%;
+        min-block-size: var(--space-32);
+        padding-block: var(--space-4);
+        padding-inline: var(--space-4);
+        border-radius: var(--shape-corner-small);
+        background-color: transparent;
+        color: var(--color-on-surface-variant);
+        cursor: pointer;
+        text-align: start;
+        transition:
+            background-color var(--motion-duration-effects-fast) var(--motion-easing-standard),
+            color var(--motion-duration-effects-fast) var(--motion-easing-standard);
+
+        @media (hover: hover) {
+            &:hover {
+                background-color: var(--state-hover);
+                color: var(--color-on-surface);
+            }
+        }
+
+        &:active {
+            background-color: var(--state-pressed);
+        }
+
+        &[aria-expanded="true"] {
+            color: var(--color-on-surface);
+        }
+
+        @media (pointer: coarse) {
+            min-block-size: var(--space-48);
+        }
+
+        .label {
+            min-inline-size: 0;
+            overflow: hidden;
+            font-size: var(--type-body-medium-size);
+            font-weight: var(--type-body-medium-emphasized-weight);
+            letter-spacing: var(--type-body-medium-tracking);
+            line-height: var(--type-body-medium-line-height);
+            text-overflow: ellipsis;
+            white-space: nowrap;
+
+            /* A narrow label scopes the shimmer sweep directly across "Thinking...". */
+            &[data-streaming="true"] {
+                /*
+                 * CSS Modules localizes a bare animation name to a scoped keyframe that token.css
+                 * does not define, so the global name travels through a custom property. The
+                 * property must not end in "animation" or "animation-name", or its value would be
+                 * localized too.
+                 */
+                --shimmer-keyframes: shimmer;
+
+                background-image: var(--shimmer-gradient);
+                background-size: var(--shimmer-size);
+                -webkit-background-clip: text;
+                background-clip: text;
+                -webkit-text-fill-color: transparent;
+                animation-name: var(--shimmer-keyframes);
+                animation-duration: var(--shimmer-duration);
+                animation-timing-function: linear;
+                animation-iteration-count: infinite;
+
+                /* Forced colors removes the gradient that paints the glyphs, so fall back to text color. */
+                @media (forced-colors: active) {
+                    background-image: none;
+                    -webkit-text-fill-color: currentColor;
+                }
+            }
+        }
+    }
+
+    .collapse {
+        display: grid;
+        grid-template-rows: 0fr;
+        visibility: hidden;
+        transition:
+            grid-template-rows var(--motion-duration-effects-default) var(--motion-easing-standard),
+            visibility 0s linear var(--motion-duration-effects-default);
+
+        &[data-open="true"] {
+            grid-template-rows: 1fr;
+            visibility: visible;
+            transition:
+                grid-template-rows var(--motion-duration-effects-default) var(--motion-easing-standard),
+                visibility 0s linear;
+        }
+
+        .collapseInner {
+            min-block-size: 0;
+            overflow: hidden;
+        }
+
+        .body {
+            display: grid;
+            grid-template-columns: var(--space-16) minmax(0, 1fr);
+            column-gap: var(--space-8);
+            min-inline-size: 0;
+            padding-inline-start: var(--space-4);
+
+            /*
+             * A 1px track inside a 16px box snaps off-center because 15px is odd. Start at 2px so
+             * the box sits symmetrically on the 8px midpoint, then scale it to 1px around its
+             * center.
+             */
+            .rail {
+                inline-size: var(--border-width-strong);
+                block-size: 100%;
+                justify-self: center;
+                background-color: var(--color-outline-variant);
+                transform: scaleX(0.5);
+            }
+        }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .trigger,
+        .collapse {
+            transition: none;
+        }
+
+        .trigger .label[data-streaming="true"] {
+            background-image: none;
+            -webkit-text-fill-color: currentColor;
+            animation: none;
+        }
+    }
+}
+
+.icon {
+    flex: none;
+    color: var(--color-on-surface-variant);
+}
+
+.chevron {
+    flex: none;
+    margin-inline-start: auto;
+    color: var(--color-on-surface-variant);
+    transition: transform var(--motion-duration-effects-fast) var(--motion-easing-standard);
+
+    &[data-open="true"] {
+        transform: rotate(90deg);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        transition: none;
+    }
+}
+
+.scroll {
+    min-inline-size: 0;
+    max-block-size: calc(var(--space-64) * 3.5);
+    margin-block: var(--space-4) var(--space-8);
+}
+
+/*
+ * The viewport carries the maximum height so short content stays compact while long content is
+ * bounded. scroll-padding-block matches the fade, so a keyboard-focused link never stops partially
+ * faded under an edge.
+ */
+.viewport {
+    --fade-size: var(--space-24);
+    --fade-top: black;
+    --fade-bottom: black;
+
+    max-block-size: calc(var(--space-64) * 3.5);
+    scroll-padding-block: var(--fade-size);
+    -webkit-mask-image: linear-gradient(
+        to bottom,
+        var(--fade-top) 0,
+        black var(--fade-size),
+        black calc(100% - var(--fade-size)),
+        var(--fade-bottom) 100%
+    );
+    mask-image: linear-gradient(
+        to bottom,
+        var(--fade-top) 0,
+        black var(--fade-size),
+        black calc(100% - var(--fade-size)),
+        var(--fade-bottom) 100%
+    );
+}
+
+.fadeTop {
+    --fade-top: transparent;
+}
+
+.fadeBottom {
+    --fade-bottom: transparent;
+}
+
+/*
+ * Base UI writes min-width: fit-content inline on the content element; only an important
+ * declaration keeps the panel at the viewport width so a wide code block scrolls inside its own
+ * container instead of widening the row.
+ */
+.content {
+    box-sizing: border-box;
+    inline-size: 100%;
+    min-inline-size: 0 !important;
+    padding-block: var(--space-2);
+    padding-inline-end: var(--space-12);
+}
+
+/*
+ * Markdown declares --md-text on its own root, so a value inherited from an ancestor is shadowed
+ * by that declaration. Target the Markdown element itself to keep secondary text muted; the
+ * derived --md-border-strong, --md-inline-bg and --md-header-bg follow the same computed value.
+ */
+.contentBody {
+    min-inline-size: 0;
+
+    [data-slot="markdown"] {
+        --md-text: var(--color-on-surface-variant);
+    }
+}

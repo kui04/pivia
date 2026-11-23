@@ -1,0 +1,11 @@
+/*
+ * Story frame that gives the routed page a bounded workspace column.
+ *
+ *   .frame
+ */
+.frame {
+    display: flex;
+    flex-direction: column;
+    block-size: calc(var(--space-64) * 10);
+    background-color: var(--color-surface);
+}

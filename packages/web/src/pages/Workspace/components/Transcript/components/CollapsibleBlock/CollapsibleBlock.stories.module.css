@@ -1,0 +1,18 @@
+/*
+ * Story frame for the shared collapsible shell.
+ *
+ *   .frame
+ *   .paragraph    the body content of the story block
+ */
+.frame {
+    max-inline-size: calc(var(--space-64) * 9);
+    padding: var(--space-12);
+    background-color: var(--color-surface);
+}
+
+.paragraph {
+    margin: 0;
+    color: var(--color-on-surface-variant);
+    font-size: var(--type-body-medium-size);
+    line-height: var(--type-body-medium-line-height);
+}

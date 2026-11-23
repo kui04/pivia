@@ -1,0 +1,56 @@
+/*
+ * Right-aligned user prompt bubble with optional attached images.
+ *
+ * The nesting this file styles:
+ *
+ *   .root
+ *   ├─ .images          wrapped row of attachments, aligned to the end edge
+ *   └─ .bubble          primary message bubble
+ *
+ * Classes passed to child components stay top-level so CSS Modules keep one class of specificity:
+ *
+ *   .imageTrigger       Image button around one attachment
+ *   .image              the attachment image itself
+ */
+.root {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: var(--space-8);
+    min-inline-size: 0;
+
+    .images {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: var(--space-8);
+        max-inline-size: 85%;
+    }
+
+    .bubble {
+        max-inline-size: 85%;
+        padding-block: var(--space-8);
+        padding-inline: var(--space-16);
+        border-radius: var(--shape-corner-large-increased);
+        background-color: var(--color-primary);
+        color: var(--color-on-primary);
+        font-size: var(--type-body-medium-size);
+        font-weight: var(--type-body-medium-weight);
+        letter-spacing: var(--type-body-medium-tracking);
+        line-height: var(--type-body-medium-line-height);
+        white-space: pre-wrap;
+        overflow-wrap: break-word;
+    }
+}
+
+.imageTrigger {
+    border: var(--border-width) solid var(--color-outline-variant);
+    border-radius: var(--shape-corner-small);
+}
+
+.image {
+    max-inline-size: calc(var(--space-64) * 3);
+    max-block-size: calc(var(--space-64) * 3);
+    border-radius: var(--shape-corner-small);
+    object-fit: cover;
+}

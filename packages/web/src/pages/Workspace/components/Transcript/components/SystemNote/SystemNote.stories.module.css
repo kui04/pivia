@@ -1,0 +1,10 @@
+/*
+ * Story container sizing SystemNote against a transcript column width.
+ *
+ *   .frame
+ */
+.frame {
+    max-inline-size: calc(var(--space-64) * 9);
+    padding: var(--space-12);
+    background-color: var(--color-surface);
+}

@@ -16,6 +16,7 @@ import { ToastProvider } from "@/components/Toast/Toast";
 import { toastManager } from "@/lib/toast";
 import type { SessionSocketConstructor, SessionSocketLike } from "@/lib/transport/session-socket";
 import { createAuthStore, type AuthClient } from "@/stores/auth/store";
+import { createSessionStore } from "@/stores/session/store";
 import { createWorkspaceStore, type WorkspaceCatalogCache } from "@/stores/workspace/store";
 
 import { WorkspaceLayout, type WorkspaceApiClient } from "./WorkspaceLayout";
@@ -66,6 +67,35 @@ const noopAuthClient: AuthClient = {
     login: () => Promise.resolve({ authenticated: true }),
     logout: () => Promise.resolve({ authenticated: false }),
 };
+
+/**
+ * A session socket that opens and then stays silent.
+ *
+ * The layout stories only exercise the shell, so the routed page must not reach a real
+ * `/ws/sessions/:id` endpoint or a real HTTP entry request.
+ */
+class QuietSessionSocket implements SessionSocketLike {
+    readonly url: string;
+    readyState = 0;
+    onopen: (() => void) | null = null;
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    onclose: ((event: CloseEvent) => void) | null = null;
+    onerror: (() => void) | null = null;
+
+    constructor(url: string) {
+        this.url = url;
+        queueMicrotask(() => {
+            this.readyState = 1;
+            this.onopen?.();
+        });
+    }
+
+    send(): void {}
+
+    close(): void {
+        this.readyState = 3;
+    }
+}
 
 interface HarnessSocketController {
     readonly WebSocket: SessionSocketConstructor;
@@ -142,7 +172,16 @@ function WorkspaceHarness({
         const socket = socketController ?? createFakeWorkspaceSocket(initialSessions);
         const workspaceStore = createWorkspaceStore({ cache: noopCache });
         const authStore = createAuthStore(noopAuthClient);
-        return { socket, workspaceStore, authStore };
+        const sessionStore = createSessionStore({
+            WebSocket: QuietSessionSocket,
+            apiClient: {
+                getSession: () => Promise.reject(new Error("The layout story does not load session entries.")),
+            },
+            reconnectDelayMs: 0,
+            maxReconnectAttempts: 0,
+            retryDelaysMs: [],
+        });
+        return { socket, workspaceStore, authStore, sessionStore };
     });
 
     return (
@@ -162,8 +201,8 @@ function WorkspaceHarness({
                                 />
                             }
                         >
-                            <Route index element={<WorkspacePage />} />
-                            <Route path=":sessionId" element={<WorkspacePage />} />
+                            <Route index element={<WorkspacePage sessionStore={setup.sessionStore} />} />
+                            <Route path=":sessionId" element={<WorkspacePage sessionStore={setup.sessionStore} />} />
                         </Route>
                     </Routes>
                 </div>
@@ -231,7 +270,8 @@ export const CreateSessionNavigates: Story = {
 
         await userEvent.click(within(dialog).getByRole("button", { name: "Create session" }));
         await expect(await canvas.findByRole("heading", { level: 1, name: "Created session" })).toBeVisible();
-        await expect(await canvas.findByText(S2)).toBeVisible();
+        // The sidebar row proves the catalog delta landed next to the route change.
+        await expect(await canvas.findByRole("button", { name: /Created session/ })).toBeVisible();
     },
 };
 

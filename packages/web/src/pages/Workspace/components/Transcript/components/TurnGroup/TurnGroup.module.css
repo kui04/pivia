@@ -1,0 +1,219 @@
+/*
+ * Collapsible container for one complete agent turn (`Worked for Xs`) plus its extracted final
+ * assistant reply below the fold.
+ *
+ * The nesting this file styles:
+ *
+ *   .root
+ *   ├─ .group
+ *   │   ├─ .trigger              button row with Layers icon, Worked/Working label and chevron
+ *   │   │   └─ .label            turn summary text
+ *   │   └─ .collapse             animated 0fr -> 1fr grid container (data-open)
+ *   │       └─ .collapseInner    overflow hidden and inert while closed
+ *   │           └─ .timeline     vertical stack of steps linked by centered guide rails
+ *   │               ├─ .connector
+ *   │               │   └─ .connectorLine  vertical link aligned on the icon center
+ *   │               └─ .replyStep          2-column grid for intermediate assistant text
+ *   │                   ├─ .replyTrack     left column holding the message icon and rail
+ *   │                   │   └─ .rail       vertical guide line
+ *   │                   └─ .replyBody      intermediate Markdown reply
+ *   ├─ .finalReply               final reply rendered directly below the group
+ *   └─ .error                    error alert rendered when the turn ended with an error
+ *
+ * Classes passed to child components stay top-level so CSS Modules keep one class of specificity:
+ *
+ *   .icon
+ *   .chevron                     rotates 90deg when data-open="true"
+ *   .markdown
+ */
+.root {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-8);
+    min-inline-size: 0;
+
+    .group {
+        min-inline-size: 0;
+
+        .trigger {
+            display: flex;
+            align-items: center;
+            gap: var(--space-8);
+            inline-size: 100%;
+            min-block-size: var(--space-32);
+            padding-block: var(--space-4);
+            padding-inline: var(--space-4);
+            border-radius: var(--shape-corner-small);
+            background-color: transparent;
+            color: var(--color-on-surface-variant);
+            cursor: pointer;
+            text-align: start;
+            transition:
+                background-color var(--motion-duration-effects-fast) var(--motion-easing-standard),
+                color var(--motion-duration-effects-fast) var(--motion-easing-standard);
+
+            @media (hover: hover) {
+                &:hover {
+                    background-color: var(--state-hover);
+                    color: var(--color-on-surface);
+                }
+            }
+
+            &:active {
+                background-color: var(--state-pressed);
+            }
+
+            &[aria-expanded="true"] {
+                color: var(--color-on-surface);
+            }
+
+            @media (pointer: coarse) {
+                min-block-size: var(--space-48);
+            }
+
+            .label {
+                flex: 1;
+                min-inline-size: 0;
+                font-size: var(--type-body-medium-size);
+                font-weight: var(--type-body-medium-emphasized-weight);
+                font-variant-numeric: tabular-nums;
+                letter-spacing: var(--type-body-medium-tracking);
+                line-height: var(--type-body-medium-line-height);
+            }
+        }
+
+        .collapse {
+            display: grid;
+            grid-template-rows: 0fr;
+            visibility: hidden;
+            transition:
+                grid-template-rows var(--motion-duration-effects-default) var(--motion-easing-standard),
+                visibility 0s linear var(--motion-duration-effects-default);
+
+            &[data-open="true"] {
+                grid-template-rows: 1fr;
+                visibility: visible;
+                transition:
+                    grid-template-rows var(--motion-duration-effects-default) var(--motion-easing-standard),
+                    visibility 0s linear;
+            }
+
+            .collapseInner {
+                min-block-size: 0;
+                overflow: hidden;
+            }
+
+            .timeline {
+                display: flex;
+                flex-direction: column;
+                min-inline-size: 0;
+
+                .connector {
+                    display: flex;
+                    justify-content: center;
+                    inline-size: var(--space-16);
+                    block-size: var(--space-8);
+                    margin-inline-start: var(--space-4);
+
+                    /*
+                     * The line fills this 8px connector row only, so it starts and ends exactly on a
+                     * row boundary. A hovered row therefore never has the guide line crossing into
+                     * its background. Match the 2px-scaled-to-1px rail geometry so segments align.
+                     */
+                    .connectorLine {
+                        inline-size: var(--border-width-strong);
+                        block-size: 100%;
+                        background-color: var(--color-outline-variant);
+                        transform: scaleX(0.5);
+                    }
+                }
+
+                /*
+                 * One reply row uses the same 32px rhythm as a thinking or tool trigger, so every
+                 * step is separated by the same connector and the guide lines stay equal.
+                 */
+                .replyStep {
+                    display: grid;
+                    grid-template-columns: var(--space-16) minmax(0, 1fr);
+                    column-gap: var(--space-8);
+                    min-inline-size: 0;
+                    min-block-size: var(--space-32);
+                    padding-inline-start: var(--space-4);
+
+                    .replyTrack {
+                        display: flex;
+                        flex-direction: column;
+                        align-items: center;
+                        padding-block-start: var(--space-8);
+
+                        /*
+                         * Keeps the same 8px gap under the icon as the other rows, then fills the
+                         * rest of the row so a multi-line reply keeps the rail solid down to the
+                         * next connector.
+                         */
+                        .rail {
+                            flex: 1;
+                            inline-size: var(--border-width-strong);
+                            margin-block-start: var(--space-8);
+                            background-color: var(--color-outline-variant);
+                            transform: scaleX(0.5);
+                        }
+                    }
+
+                    .replyBody {
+                        min-inline-size: 0;
+                        padding-block: var(--space-4);
+                    }
+                }
+            }
+        }
+    }
+
+    .finalReply {
+        min-inline-size: 0;
+        padding-inline: var(--space-4);
+    }
+
+    .error {
+        padding: var(--space-8) var(--space-12);
+        border: var(--border-width) solid color-mix(in srgb, var(--color-error) 45%, var(--color-outline-variant));
+        border-radius: var(--shape-corner-small);
+        background-color: var(--color-surface-container);
+        color: var(--color-error);
+        font-size: var(--type-body-medium-size);
+        letter-spacing: var(--type-body-medium-tracking);
+        line-height: var(--type-body-medium-line-height);
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .group .trigger,
+        .group .collapse {
+            transition: none;
+        }
+    }
+}
+
+.icon {
+    flex: none;
+    color: var(--color-on-surface-variant);
+}
+
+.chevron {
+    flex: none;
+    color: var(--color-on-surface-variant);
+    transition: transform var(--motion-duration-effects-fast) var(--motion-easing-standard);
+
+    &[data-open="true"] {
+        transform: rotate(90deg);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        transition: none;
+    }
+}
+
+.markdown {
+    min-inline-size: 0;
+}
