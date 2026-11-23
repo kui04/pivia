@@ -13,6 +13,12 @@ export type SkillInvocationBlockProps = {
     item: TranscriptSkillItem;
     /** Forwarded to Markdown links inside the skill body. */
     onOpenLink?: ((href: string) => void) | undefined;
+    /** Initial expanded state for uncontrolled usage. */
+    defaultOpen?: boolean | undefined;
+    /** Controlled expanded state. */
+    open?: boolean | undefined;
+    /** Called when the user toggles the block. */
+    onOpenChange?: ((open: boolean) => void) | undefined;
     /** Optional class name on the outer container. */
     className?: string | undefined;
 };
@@ -25,13 +31,23 @@ export type SkillInvocationBlockProps = {
  *
  * @param props - Skill item and an optional class for the surrounding row.
  */
-export function SkillInvocationBlock({ item, onOpenLink, className }: SkillInvocationBlockProps): ReactElement {
+export function SkillInvocationBlock({
+    item,
+    onOpenLink,
+    defaultOpen = false,
+    open,
+    onOpenChange,
+    className,
+}: SkillInvocationBlockProps): ReactElement {
     return (
         <CollapsibleBlock
             label={`[skill] ${item.name}`}
             icon={Sparkles}
             scrollLabel={`${item.name} skill details`}
             tone="accent"
+            defaultOpen={defaultOpen}
+            open={open}
+            onOpenChange={onOpenChange}
             className={className}
         >
             <Markdown {...(onOpenLink !== undefined ? { onOpenLink } : {})}>{item.content}</Markdown>

@@ -4,13 +4,11 @@
  * The nesting this file styles:
  *
  *   .root
- *   ├─ .images          wrapped row of attachments, aligned to the end edge
  *   └─ .bubble          primary message bubble
  *
  * Classes passed to child components stay top-level so CSS Modules keep one class of specificity:
  *
- *   .imageTrigger       Image button around one attachment
- *   .image              the attachment image itself
+ *   .images             alignment of the shared attachment row
  */
 .root {
     display: flex;
@@ -18,14 +16,6 @@
     align-items: flex-end;
     gap: var(--space-8);
     min-inline-size: 0;
-
-    .images {
-        display: flex;
-        flex-wrap: wrap;
-        justify-content: flex-end;
-        gap: var(--space-8);
-        max-inline-size: 85%;
-    }
 
     .bubble {
         max-inline-size: 85%;
@@ -43,14 +33,7 @@
     }
 }
 
-.imageTrigger {
-    border: var(--border-width) solid var(--color-outline-variant);
-    border-radius: var(--shape-corner-small);
-}
-
-.image {
-    max-inline-size: calc(var(--space-64) * 3);
-    max-block-size: calc(var(--space-64) * 3);
-    border-radius: var(--shape-corner-small);
-    object-fit: cover;
+.images {
+    justify-content: flex-end;
+    max-inline-size: 85%;
 }

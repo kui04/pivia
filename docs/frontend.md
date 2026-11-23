@@ -152,10 +152,12 @@ in step with the file: a new nested rule updates the sketch in the same change.
   `packages/web/src/stores/session/transcript.ts` folds those items into user bubbles, skill invocation rows, bash
   execution blocks, labeled extension message blocks, system notes and `Worked for Xs` turn groups. One `/skill:`
   user entry becomes a collapsed `[skill] name` row followed by the prompt bubble when the reader typed one. A `!`
-  command record becomes its own block between turns, with its output, exit state and the truncation path. A displayed
-  `custom_message` becomes a collapsed row labeled `[customType]` that shares the system-note shell; expanding it shows
-  the message as Markdown and its images through the shared viewer, so an extension message never reads as the reader's
-  own words. `liveAssistantMessage` joins the same aggregation, so a streamed answer renders before its entry lands.
+  command record becomes its own block between turns, with its output, exit state, the truncation path and, for a `!!`
+  command, a visible `not in context` suffix next to its accent border. A displayed `custom_message` becomes a
+  collapsible row labeled `[customType]` that shares the system-note shell and opens by default; it shows the message
+  as Markdown and its images through the shared viewer, and an empty record shows a muted placeholder, so an extension
+  message never reads as the reader's own words and never opens on a blank panel. `liveAssistantMessage` joins the
+  same aggregation, so a streamed answer renders before its entry lands.
 - Page states in order: missing or invalid session, first snapshot pending, entry-sync failure with a Retry action,
   terminal connection error, empty session, transcript. A failed entry sync with cached rows keeps the transcript
   and adds a status banner instead of replacing it.

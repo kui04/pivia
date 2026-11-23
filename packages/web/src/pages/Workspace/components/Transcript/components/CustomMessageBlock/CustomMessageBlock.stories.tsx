@@ -93,16 +93,17 @@ export const TaskMessage: Story = {
         const canvas = within(canvasElement);
         const trigger = canvas.getByRole("button", { name: "[task]" });
 
-        await expect(trigger).toHaveAttribute("aria-expanded", "false");
-        await userEvent.click(trigger);
+        // An extension message sent to the reader arrives open, like the terminal client.
         await expect(trigger).toHaveAttribute("aria-expanded", "true");
-
         await expect(canvas.getByRole("heading", { name: "Review summary" })).toBeVisible();
         await expect(canvas.getByText(/Three files changed/)).toBeVisible();
         await expect(canvas.getByRole("group", { name: "task message details" })).toBeVisible();
 
         await userEvent.click(canvas.getByRole("link", { name: "the report" }));
         await expect(args.onOpenLink).toHaveBeenCalledWith("https://example.com/report");
+
+        await userEvent.click(trigger);
+        await expect(trigger).toHaveAttribute("aria-expanded", "false");
     },
 };
 
@@ -113,7 +114,6 @@ export const WithImages: Story = {
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
 
-        await userEvent.click(canvas.getByRole("button", { name: "[playwright]" }));
         await userEvent.click(canvas.getByRole("button", { name: "Inspect [playwright] image 2" }));
 
         const body = within(document.body);
@@ -141,7 +141,19 @@ export const ImageOnly: Story = {
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
 
-        await userEvent.click(canvas.getByRole("button", { name: "[screenshot]" }));
         await expect(canvas.getByRole("button", { name: "Inspect [screenshot] image 1" })).toBeVisible();
+    },
+};
+
+export const EmptyMessage: Story = {
+    args: {
+        item: { ...taskMessageItem, id: "custom-empty", text: "", images: [] },
+    },
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+
+        // An empty record still explains itself instead of opening on a blank panel.
+        await expect(canvas.getByRole("button", { name: "[task]" })).toHaveAttribute("aria-expanded", "true");
+        await expect(canvas.getByText("Empty message")).toBeVisible();
     },
 };

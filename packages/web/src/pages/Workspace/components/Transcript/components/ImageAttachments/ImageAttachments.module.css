@@ -1,0 +1,29 @@
+/*
+ * Wrapped thumbnail row shared by prompts and extension messages.
+ *
+ * The nesting this file styles:
+ *
+ *   .images             one row of attachment buttons
+ *
+ * Classes passed to child components stay top-level so CSS Modules keep one class of specificity:
+ *
+ *   .imageTrigger       Image button around one attachment
+ *   .image              the attachment image itself
+ */
+.images {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-8);
+}
+
+.imageTrigger {
+    border: var(--border-width) solid var(--color-outline-variant);
+    border-radius: var(--shape-corner-small);
+}
+
+.image {
+    max-inline-size: calc(var(--space-64) * 3);
+    max-block-size: calc(var(--space-64) * 3);
+    border-radius: var(--shape-corner-small);
+    object-fit: cover;
+}

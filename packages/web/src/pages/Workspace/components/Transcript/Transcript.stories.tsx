@@ -504,9 +504,12 @@ export const ExtensionMessageBetweenTurns: Story = {
         const canvas = within(canvasElement);
         const trigger = canvas.getByRole("button", { name: "[task]" });
 
-        await expect(trigger).toHaveAttribute("aria-expanded", "false");
-        await userEvent.click(trigger);
+        // A displayed extension message arrives open, like the terminal client.
+        await expect(trigger).toHaveAttribute("aria-expanded", "true");
         await expect(canvas.getByText(/3 files/)).toBeVisible();
+
+        await userEvent.click(trigger);
+        await expect(trigger).toHaveAttribute("aria-expanded", "false");
         await expect(canvas.getByText(/Acknowledged the extension report/)).toBeVisible();
     },
 };
