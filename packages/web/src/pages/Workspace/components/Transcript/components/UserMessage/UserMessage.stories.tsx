@@ -21,7 +21,6 @@ const shortPromptItem: TranscriptUserItem = {
     id: "user-short",
     text: "Ship the transcript view.",
     images: [],
-    timestamp: Date.parse("2026-11-17T06:00:00.000Z"),
 };
 
 const multilinePromptItem: TranscriptUserItem = {
@@ -34,7 +33,6 @@ const multilinePromptItem: TranscriptUserItem = {
         "3. Render intermediate replies as Markdown.",
     ].join("\n"),
     images: [],
-    timestamp: Date.parse("2026-11-17T06:01:00.000Z"),
 };
 
 const withImagesItem: TranscriptUserItem = {
@@ -42,7 +40,6 @@ const withImagesItem: TranscriptUserItem = {
     id: "user-images",
     text: "Look at this screenshot and match the button radius.",
     images: [{ type: "image", mimeType: "image/svg+xml", data: SAMPLE_IMAGE_BASE64 }],
-    timestamp: Date.parse("2026-11-17T06:02:00.000Z"),
 };
 
 const meta = {

@@ -3,11 +3,12 @@ import type { Stats } from "node:fs";
 import { mkdir, realpath, stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
 import {
+    type AgentSession,
     type AgentSessionEvent,
     type ExtensionCommandContextActions,
-    type ExtensionError,
-    type ExtensionUIContext,
     type FileEntry,
     getAgentDir,
     type JsonAgentSessionEvent,
@@ -23,13 +24,13 @@ import {
     SESSION_CLOSE_CODE,
 } from "@pivia/protocol";
 import type {
-    AssistantMessage,
     CatalogDelta,
     CatalogSnapshot,
-    ImageContent,
+    CreateSessionOptions,
     SessionCloseCode,
     SessionDelta,
     SessionDetailResponse,
+    SessionHandshake,
     SessionId,
     SessionListResponse,
     SessionModelInfo,
@@ -45,8 +46,8 @@ import type {
     SessionWsClientMessage,
     SessionWsCommandName,
     SessionWsServerMessage,
+    StrictOmit,
     SyncHandshake,
-    ThinkingLevel,
 } from "@pivia/protocol";
 
 import { SessionUiBridge } from "./extension-ui.ts";
@@ -80,11 +81,7 @@ export interface SessionRegistryLogger {
 /** Error codes that HTTP and WebSocket routes map to client-visible responses. */
 export type SessionRegistryErrorCode = "invalid_request" | "not_found" | "directory_not_found";
 
-/** Options for {@link SessionRegistry.createSession}. */
-export interface CreateSessionOptions {
-    /** When true, creates the target working directory recursively if it does not exist. */
-    readonly createDirectory?: boolean | undefined;
-}
+export type { CreateSessionOptions };
 
 /** Raised for request-level failures that the routes translate into protocol errors. */
 export class SessionRegistryError extends Error {
@@ -98,23 +95,19 @@ export class SessionRegistryError extends Error {
 }
 
 /** State exposed by a managed session runtime. */
-export type ManagedSessionState = Omit<SessionStateSnapshot, "sessionId" | "cwd" | "name">;
+export type ManagedSessionState = StrictOmit<SessionStateSnapshot, "sessionId" | "cwd" | "name">;
 
-/** Options for one managed prompt. */
-export interface ManagedPromptOptions {
-    readonly images?: PromptOptions["images"];
-    readonly streamingBehavior?: PromptOptions["streamingBehavior"];
-    /** Called once the prompt is accepted, queued, or handled; not called when the prompt is rejected. */
-    readonly preflightResult: NonNullable<PromptOptions["preflightResult"]>;
-}
+/** Options for one managed prompt, derived from the SDK {@link PromptOptions}. */
+export type ManagedPromptOptions = Readonly<
+    Pick<PromptOptions, "images" | "streamingBehavior"> & Required<Pick<PromptOptions, "preflightResult">>
+>;
+
+type SdkExtensionBindings = Parameters<AgentSession["bindExtensions"]>[0];
 
 /** Extension bindings the registry installs on every managed session. */
-export interface ManagedExtensionBindings {
-    readonly uiContext: ExtensionUIContext;
-    readonly commandContextActions: ExtensionCommandContextActions;
-    readonly shutdownHandler: () => void;
-    readonly onError: (error: ExtensionError) => void;
-}
+export type ManagedExtensionBindings = Readonly<
+    Required<Pick<SdkExtensionBindings, "uiContext" | "commandContextActions" | "shutdownHandler" | "onError">>
+>;
 
 /**
  * Minimal session surface owned by the registry.
@@ -132,22 +125,22 @@ export interface ManagedSession {
     /** Subscribe to synchronous `SessionManager` entry appends for microtask catch-up broadcasts. */
     onEntryAppended?(listener: () => void): () => void;
     getState(): ManagedSessionState;
-    subscribe(listener: (event: AgentSessionEvent) => void): () => void;
+    subscribe: AgentSession["subscribe"];
     bindExtensions(bindings: ManagedExtensionBindings): Promise<void>;
     prompt(text: string, options: ManagedPromptOptions): Promise<void>;
     steer(text: string, images?: ImageContent[]): Promise<SessionQueuedInputDisposition>;
     followUp(text: string, images?: ImageContent[]): Promise<SessionQueuedInputDisposition>;
-    abort(): Promise<void>;
-    clearQueue(): { readonly steering: readonly string[]; readonly followUp: readonly string[] };
-    waitForIdle(): Promise<void>;
+    abort: AgentSession["abort"];
+    clearQueue: AgentSession["clearQueue"];
+    waitForIdle: AgentSession["waitForIdle"];
     reload(): Promise<void>;
     getAvailableModels(): readonly SessionModelInfo[];
     /** Returns the selected model, or throws when the model is unknown or has no credentials. */
     setModel(provider: string, modelId: string): Promise<SessionModelInfo>;
     getAvailableThinkingLevels(): readonly ThinkingLevel[];
     setThinkingLevel(level: ThinkingLevel): void;
-    setSessionName(name: string): void;
-    compact(customInstructions?: string): Promise<unknown>;
+    setSessionName: AgentSession["setSessionName"];
+    compact: AgentSession["compact"];
 }
 
 /** One runtime and its session. `dispose()` must emit `session_shutdown` before releasing resources. */
@@ -224,7 +217,7 @@ export interface CloseSessionOptions {
 }
 
 /** Options for {@link SessionRegistry.attach}. */
-export type SessionAttachOptions = SyncHandshake<"session", SessionPrefixAnchor>;
+export type SessionAttachOptions = SessionHandshake;
 
 /** One attached client's RPC command channel. */
 export interface SessionAttachment {
@@ -254,10 +247,9 @@ interface ActiveSession {
     idleTimer: NodeJS.Timeout | undefined;
     lastBroadcastEntryCount: number;
     lastTrackedState: {
-        messageCount: number;
-        steeringMode: SessionStateSnapshot["steeringMode"];
-        followUpMode: SessionStateSnapshot["followUpMode"];
-        autoCompactionEnabled: boolean;
+        -readonly [
+            K in "messageCount" | "steeringMode" | "followUpMode" | "autoCompactionEnabled"
+        ]: SessionStateSnapshot[K];
     };
     flushScheduled: boolean;
     liveMessage: AssistantMessage | null;
@@ -709,7 +701,7 @@ export class SessionRegistry {
                 cursor: this.catalogBuffer.currentCursor,
                 snapshot: {
                     sessions,
-                    updatedAtMs: disk.scannedAtMs,
+                    updatedAtMs: disk.updatedAtMs,
                 },
             };
         }
@@ -720,10 +712,8 @@ export class SessionRegistry {
     async list(): Promise<SessionListResponse> {
         const { cursor, snapshot } = await this.getCatalogSnapshot();
         return {
-            sessions: snapshot.sessions,
-            scannedAtMs: snapshot.updatedAtMs,
-            catalogEpoch: cursor.epoch,
-            catalogSeq: cursor.seq,
+            ...snapshot,
+            cursor,
         };
     }
 

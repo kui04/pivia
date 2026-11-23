@@ -6,10 +6,11 @@ import {
     SESSION_CLOSE_CODE,
     type EntriesVersion,
     type SessionId,
-    type SessionRuntimeId,
-    type SessionSeq,
+    type SessionRpcServerMessage,
     type SessionSyncFrame,
     type SessionWsServerMessage,
+    type SyncEpoch,
+    type SyncSeq,
 } from "@pivia/protocol";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -29,7 +30,7 @@ function ev(raw: string): EntriesVersion {
     return parsed;
 }
 
-function rt(raw: string): SessionRuntimeId {
+function rt(raw: string): SyncEpoch<"session"> {
     const parsed = parseSyncEpoch<"session">(raw);
     if (parsed === null) {
         throw new Error(`Invalid test runtime id: ${raw}`);
@@ -37,7 +38,7 @@ function rt(raw: string): SessionRuntimeId {
     return parsed;
 }
 
-function seq(raw: number): SessionSeq {
+function seq(raw: number): SyncSeq<"session"> {
     const parsed = parseSyncSeq<"session">(raw);
     if (parsed === null) {
         throw new Error(`Invalid test session seq: ${raw}`);
@@ -141,13 +142,13 @@ describe("buildSessionSocketUrl", () => {
         );
     });
 
-    it("encodes the session id and appends cursor and prefixAnchor", () => {
+    it("encodes the session id and appends cursor and hint", () => {
         expect(
             buildSessionSocketUrl(
                 sid("session.1_a-b"),
                 {
                     cursor: { epoch: rt("runtime-1"), seq: seq(12) },
-                    prefixAnchor: { entriesVersion: V152, afterCount: 3, afterEntryId: "e3" },
+                    hint: { entriesVersion: V152, afterCount: 3, afterEntryId: "e3" },
                 },
                 "http://127.0.0.1:3141/workspace?x=1#top",
             ),
@@ -313,8 +314,8 @@ describe("SessionSocket", () => {
 
     it("delivers sync frames and unmatched rpc errors to callbacks", () => {
         const onSyncFrame = vi.fn<(frame: SessionSyncFrame) => void>();
-        const onMessage = vi.fn<(message: SessionWsServerMessage) => void>();
-        const { instance } = openSocket({ onSyncFrame, onMessage });
+        const onRpcError = vi.fn<(error: Extract<SessionRpcServerMessage, { type: "rpc:error" }>) => void>();
+        const { instance } = openSocket({ onSyncFrame, onRpcError });
         instance.open();
 
         const state = {
@@ -329,7 +330,6 @@ describe("SessionSocket", () => {
             followUpMode: "one-at-a-time" as const,
             autoCompactionEnabled: false,
             messageCount: 0,
-            pendingMessageCount: 0,
             steeringMessages: [],
             followUpMessages: [],
         };
@@ -396,13 +396,17 @@ describe("SessionSocket", () => {
         }
 
         expect(onSyncFrame).toHaveBeenCalledTimes(messages.length - 1);
-        expect(onMessage).toHaveBeenCalledTimes(messages.length);
-        expect(onMessage.mock.calls.map(([message]) => message.type)).toEqual(messages.map((message) => message.type));
+        expect(onRpcError).toHaveBeenCalledOnce();
+        expect(onRpcError).toHaveBeenCalledWith({
+            type: "rpc:error",
+            code: "invalid_json",
+            message: "Failed to parse command JSON.",
+        });
     });
 
     it("ignores malformed JSON and responses without a pending command", () => {
-        const onMessage = vi.fn<(message: SessionWsServerMessage) => void>();
-        const { instance } = openSocket({ onMessage });
+        const onRpcError = vi.fn<(error: Extract<SessionRpcServerMessage, { type: "rpc:error" }>) => void>();
+        const { instance } = openSocket({ onRpcError });
         instance.open();
 
         instance.onmessage?.({ data: "not json" } as MessageEvent);
@@ -417,8 +421,8 @@ describe("SessionSocket", () => {
         instance.receive({ type: "rpc:response", command: "abort", success: true });
         instance.receive({ type: "rpc:error", code: "unknown", message: "No id." });
 
-        expect(onMessage).toHaveBeenCalledOnce();
-        expect(onMessage).toHaveBeenCalledWith({ type: "rpc:error", code: "unknown", message: "No id." });
+        expect(onRpcError).toHaveBeenCalledOnce();
+        expect(onRpcError).toHaveBeenCalledWith({ type: "rpc:error", code: "unknown", message: "No id." });
     });
 
     it("rejects new commands after a server close", async () => {

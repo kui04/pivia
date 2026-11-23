@@ -4,10 +4,9 @@ import {
     parseSessionWsClientMessage,
     parseSessionWsHandshakeQuery,
     SESSION_CLOSE_CODE,
+    type SessionHandshake,
     type SessionId,
-    type SessionPrefixAnchor,
     type SessionWsClientMessage,
-    type SyncHandshake,
 } from "@pivia/protocol";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 
@@ -53,7 +52,7 @@ interface WsSessionQuery {
 
 interface OpenedWsSession {
     readonly handle: ActiveSessionHandle;
-    readonly handshake: SyncHandshake<"session", SessionPrefixAnchor>;
+    readonly handshake: SessionHandshake;
 }
 
 /** Decode one text frame from the `ws` raw data union without `[object Object]` fallbacks. */

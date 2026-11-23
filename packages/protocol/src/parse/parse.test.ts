@@ -3,14 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
     assertNever,
     commandIdOf,
-    INITIAL_CATALOG_SEQ,
     isRecord,
-    nextCatalogSeq,
     parseAuthLoginResponse,
     parseAuthLogoutResponse,
     parseAuthStatusResponse,
-    parseCatalogEpoch,
-    parseCatalogSeq,
     parseCloseSessionResponse,
     parseCreateSessionResponse,
     parseDirectoryListResponse,
@@ -195,31 +191,27 @@ describe("protocol parse helpers", () => {
         expect(
             parseSessionListResponse({
                 sessions: [summary],
-                scannedAtMs: 5000,
-                catalogEpoch: "epoch-1",
-                catalogSeq: 0,
+                updatedAtMs: 5000,
+                cursor: { epoch: "epoch-1", seq: 0 },
             }),
         ).toEqual({
             sessions: [summary],
-            scannedAtMs: 5000,
-            catalogEpoch: "epoch-1",
-            catalogSeq: 0,
+            updatedAtMs: 5000,
+            cursor: { epoch: "epoch-1", seq: 0 },
         });
-        expect(parseSessionListResponse({ sessions: [summary], scannedAtMs: 5000 })).toBeNull();
+        expect(parseSessionListResponse({ sessions: [summary], updatedAtMs: 5000 })).toBeNull();
         expect(
             parseSessionListResponse({
                 sessions: [summary],
-                scannedAtMs: 5000,
-                catalogEpoch: "",
-                catalogSeq: 0,
+                updatedAtMs: 5000,
+                cursor: { epoch: "", seq: 0 },
             }),
         ).toBeNull();
         expect(
             parseSessionListResponse({
                 sessions: [summary],
-                scannedAtMs: 5000,
-                catalogEpoch: "epoch-1",
-                catalogSeq: -1,
+                updatedAtMs: 5000,
+                cursor: { epoch: "epoch-1", seq: -1 },
             }),
         ).toBeNull();
         expect(parseCreateSessionResponse({ session: summary })).toEqual({ session: summary });
@@ -272,7 +264,6 @@ describe("protocol parse helpers", () => {
             followUpMode: "all",
             autoCompactionEnabled: true,
             messageCount: 0,
-            pendingMessageCount: 0,
             steeringMessages: [],
             followUpMessages: [],
         };
@@ -400,13 +391,6 @@ describe("protocol parse helpers", () => {
             runtimeState: "idle",
             attachedClients: 1,
         };
-
-        expect(parseCatalogEpoch("epoch-1")).toBe("epoch-1");
-        expect(parseCatalogEpoch("")).toBeNull();
-        expect(parseCatalogSeq(0)).toBe(0);
-        expect(parseCatalogSeq(-1)).toBeNull();
-        expect(parseCatalogSeq(1.5)).toBeNull();
-        expect(nextCatalogSeq(INITIAL_CATALOG_SEQ)).toBe(1);
 
         expect(
             parseWorkspaceWsServerMessage({

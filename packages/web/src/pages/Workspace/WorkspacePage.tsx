@@ -1,8 +1,9 @@
-import { assertNever, projectSessionTranscript } from "@pivia/protocol";
+import { assertNever } from "@pivia/protocol";
 import { useMemo, type ReactElement } from "react";
 
 import { Button, LoadingIndicator } from "@components";
 import { useSessionStore as defaultSessionStore } from "@/stores";
+import { projectSessionTranscript } from "@/stores/session/projection";
 import { buildTranscript, type TranscriptItem } from "@/stores/session/transcript";
 
 import { Transcript } from "./components/Transcript/Transcript";
@@ -122,7 +123,6 @@ export function WorkspacePage(props: WorkspacePageProps = {}): ReactElement {
 
     const status = sessionStore((state) => state.status);
     const activeSessionId = sessionStore((state) => state.sessionId);
-    const cursor = sessionStore((state) => state.cursor);
     const entries = sessionStore((state) => state.entries);
     const entriesSync = sessionStore((state) => state.entriesSync);
     const liveMessage = sessionStore((state) => state.liveMessage);
@@ -138,7 +138,7 @@ export function WorkspacePage(props: WorkspacePageProps = {}): ReactElement {
 
     // Projecting the branch walks every entry, so it must not run again for each streamed token.
     const projectedItems = useMemo(
-        () => (routeMatchesStore ? projectSessionTranscript(entries).items : []),
+        () => (routeMatchesStore ? projectSessionTranscript(entries) : []),
         [entries, routeMatchesStore],
     );
     const items = useMemo(
@@ -155,7 +155,6 @@ export function WorkspacePage(props: WorkspacePageProps = {}): ReactElement {
         status,
         entriesSync,
         hasTranscript: items.length > 0,
-        hasSnapshot: cursor !== null,
     });
 
     const composerArea = (

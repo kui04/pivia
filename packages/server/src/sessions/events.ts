@@ -3,19 +3,8 @@ import type { AgentSessionEvent, JsonAgentSessionEvent } from "@earendil-works/p
 /** Streaming event type whose cumulative snapshots must not reach the wire. */
 type MessageUpdateEvent = Extract<AgentSessionEvent, { type: "message_update" }>;
 
-type AssistantMessageOf<T> = Extract<T, { role: "assistant" }>;
-
-type WithoutPartial<T> = T extends { partial: unknown } ? Omit<T, "partial"> : T;
-
-type WireAssistantMessageEvent<T> = T extends { type: "toolcall_start"; partial: unknown }
-    ? WithoutPartial<T> & { id: string; toolName: string }
-    : WithoutPartial<T>;
-
-type WireMessageUpdateEvent = {
-    type: "message_update";
-    usage: AssistantMessageOf<MessageUpdateEvent["message"]>["usage"];
-    assistantMessageEvent: WireAssistantMessageEvent<MessageUpdateEvent["assistantMessageEvent"]>;
-};
+/** Wire shape of a `message_update` event derived directly from the SDK `JsonAgentSessionEvent`. */
+type WireMessageUpdateEvent = Extract<JsonAgentSessionEvent, { type: "message_update" }>;
 
 function toWireAssistantMessageEvent(
     event: MessageUpdateEvent["assistantMessageEvent"],

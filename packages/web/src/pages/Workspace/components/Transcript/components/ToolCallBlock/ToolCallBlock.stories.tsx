@@ -21,7 +21,6 @@ const longBashOutput = Array.from(
 const bashStep: TranscriptToolCallStep = {
     kind: "toolCall",
     id: "tool-bash",
-    name: "bash",
     toolKind: "bash",
     label: "Bash",
     summary: "git log --oneline -20",
@@ -36,7 +35,6 @@ const bashStep: TranscriptToolCallStep = {
 const runningStep: TranscriptToolCallStep = {
     kind: "toolCall",
     id: "tool-running",
-    name: "bash",
     toolKind: "bash",
     label: "Bash",
     summary: "pnpm test:unit",
@@ -51,7 +49,6 @@ const runningStep: TranscriptToolCallStep = {
 const errorStep: TranscriptToolCallStep = {
     kind: "toolCall",
     id: "tool-error",
-    name: "edit",
     toolKind: "edit",
     label: "Edit",
     summary: "src/App.tsx",

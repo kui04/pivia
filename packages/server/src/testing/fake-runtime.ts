@@ -1,15 +1,11 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
-import type { AgentSessionEvent, FileEntry, SessionManager } from "@earendil-works/pi-coding-agent";
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { ImageContent } from "@earendil-works/pi-ai";
+import type { AgentSessionEvent, CompactionResult, FileEntry, SessionManager } from "@earendil-works/pi-coding-agent";
 
-import {
-    parseSessionId,
-    type ImageContent,
-    type SessionId,
-    type SessionModelInfo,
-    type ThinkingLevel,
-} from "@pivia/protocol";
+import { parseSessionId, type SessionId, type SessionModelInfo } from "@pivia/protocol";
 
 import type {
     ManagedExtensionBindings,
@@ -36,7 +32,6 @@ function defaultState(): ManagedSessionState {
         followUpMode: "one-at-a-time",
         autoCompactionEnabled: true,
         messageCount: 0,
-        pendingMessageCount: 0,
         steeringMessages: [],
         followUpMessages: [],
     };
@@ -160,10 +155,10 @@ export class FakeSession implements ManagedSession {
         return Promise.resolve();
     }
 
-    clearQueue(): { readonly steering: readonly string[]; readonly followUp: readonly string[] } {
+    clearQueue(): { steering: string[]; followUp: string[] } {
         const steering = [...this.state.steeringMessages];
         const followUp = [...this.state.followUpMessages];
-        this.setState({ steeringMessages: [], followUpMessages: [], pendingMessageCount: 0 });
+        this.setState({ steeringMessages: [], followUpMessages: [] });
         return { steering, followUp };
     }
 
@@ -198,13 +193,13 @@ export class FakeSession implements ManagedSession {
         this.name = name;
     }
 
-    compact(customInstructions?: string): Promise<unknown> {
+    compact(customInstructions?: string): Promise<CompactionResult> {
         this.compactCalls.push(customInstructions);
         return Promise.resolve({
             summary: "fake compaction",
             firstKeptEntryId: "entry-0",
             tokensBefore: 1000,
-            estimatedTokensAfter: 100,
+            details: undefined,
         });
     }
 }

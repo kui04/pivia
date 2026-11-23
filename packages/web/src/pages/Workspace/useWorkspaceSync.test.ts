@@ -1,13 +1,13 @@
 import {
-    parseCatalogEpoch,
-    parseCatalogSeq,
     parseSessionId,
+    parseSyncEpoch,
+    parseSyncSeq,
     type AuthStatusResponse,
-    type CatalogEpoch,
-    type CatalogSeq,
     type SessionId,
     type SessionListResponse,
     type SessionSummary,
+    type SyncEpoch,
+    type SyncSeq,
 } from "@pivia/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -19,16 +19,16 @@ function sid(raw: string): SessionId {
     return parsed;
 }
 
-function epoch(raw: string): CatalogEpoch {
-    const parsed = parseCatalogEpoch(raw);
+function epoch(raw: string): SyncEpoch<"catalog"> {
+    const parsed = parseSyncEpoch<"catalog">(raw);
     if (parsed === null) {
         throw new Error(`Invalid test catalog epoch: ${raw}`);
     }
     return parsed;
 }
 
-function seq(raw: number): CatalogSeq {
-    const parsed = parseCatalogSeq(raw);
+function seq(raw: number): SyncSeq<"catalog"> {
+    const parsed = parseSyncSeq<"catalog">(raw);
     if (parsed === null) {
         throw new Error(`Invalid test catalog seq: ${raw}`);
     }
@@ -159,7 +159,7 @@ describe("createWorkspaceSyncController", () => {
     it("hydrates IndexedDB cache on start and applies live snapshot and incremental events", async () => {
         const cache: WorkspaceCatalogCache = {
             getWorkspaceCatalog: vi.fn(() =>
-                Promise.resolve({ key: "default" as const, sessions: [summary(CACHED)], scannedAtMs: 500 }),
+                Promise.resolve({ key: "default" as const, sessions: [summary(CACHED)], updatedAtMs: 500 }),
             ),
             putWorkspaceCatalog: vi.fn(() => Promise.resolve()),
         };
@@ -327,9 +327,8 @@ describe("createWorkspaceSyncController", () => {
 
         resolveRefresh?.({
             sessions: [summary(SESSION_1)],
-            scannedAtMs: 8_000,
-            catalogEpoch: EPOCH_1,
-            catalogSeq: seq(1),
+            updatedAtMs: 8_000,
+            cursor: { epoch: EPOCH_1, seq: seq(1) },
         });
         await flushMicrotasks();
 
@@ -375,9 +374,8 @@ describe("createWorkspaceSyncController", () => {
 
         resolveRefresh?.({
             sessions: [summary(SESSION_1)],
-            scannedAtMs: 9_000,
-            catalogEpoch: EPOCH_1,
-            catalogSeq: seq(1),
+            updatedAtMs: 9_000,
+            cursor: { epoch: EPOCH_1, seq: seq(1) },
         });
         await flushMicrotasks();
 
@@ -397,9 +395,8 @@ describe("createWorkspaceSyncController", () => {
                 listSessions: () =>
                     Promise.resolve({
                         sessions: [summary(SESSION_1)],
-                        scannedAtMs: 8_000,
-                        catalogEpoch: EPOCH_1,
-                        catalogSeq: seq(1),
+                        updatedAtMs: 8_000,
+                        cursor: { epoch: EPOCH_1, seq: seq(1) },
                     }),
                 getAuthStatus: okAuthStatus,
             },
@@ -554,9 +551,8 @@ describe("createWorkspaceSyncController", () => {
         controller.refresh();
         resolveRefresh?.({
             sessions: [summary(SESSION_1, { runtimeState: "idle" })],
-            scannedAtMs: 2_010,
-            catalogEpoch: EPOCH_1,
-            catalogSeq: seq(10),
+            updatedAtMs: 2_010,
+            cursor: { epoch: EPOCH_1, seq: seq(10) },
         });
         await flushMicrotasks();
 
@@ -583,7 +579,6 @@ describe("createWorkspaceSyncController", () => {
             summary(SESSION_1, { runtimeState: "streaming", attachedClients: 1, modifiedAtMs: 2_020 }),
         ];
         expect(workspaceStore.getState().sync).toEqual({ kind: "live" });
-        expect(workspaceStore.getState().catalogCursor).toEqual({ epoch: EPOCH_1, seq: seq(11) });
         expect(workspaceStore.getState().sessions).toEqual(expectedMerged);
         expect(putWorkspaceCatalog).toHaveBeenCalledTimes(1);
         expect(putWorkspaceCatalog).toHaveBeenCalledWith(expectedMerged, 2_010);
@@ -661,9 +656,8 @@ describe("createWorkspaceSyncController", () => {
         });
         const listSessions = vi.fn<() => Promise<SessionListResponse>>(() =>
             Promise.resolve({
-                catalogEpoch: EPOCH_1,
-                catalogSeq: seq(4),
-                scannedAtMs: 2_000,
+                cursor: { epoch: EPOCH_1, seq: seq(4) },
+                updatedAtMs: 2_000,
                 sessions: [summary(SESSION_1)],
             }),
         );
@@ -701,7 +695,6 @@ describe("createWorkspaceSyncController", () => {
         // Once the refresh timer finishes and sees completeExternalRefresh() === false, sync returns to live.
         vi.advanceTimersByTime(300);
         expect(workspaceStore.getState().sync).toEqual({ kind: "live" });
-        expect(workspaceStore.getState().catalogCursor).toEqual({ epoch: EPOCH_1, seq: seq(10) });
         expect(workspaceStore.getState().sessions[0]?.runtimeState).toBe("streaming");
 
         controller.stop();

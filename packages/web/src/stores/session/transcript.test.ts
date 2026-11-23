@@ -1,7 +1,8 @@
-import type { AssistantMessage, FileEntry } from "@pivia/protocol";
-import { projectSessionTranscript } from "@pivia/protocol";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { FileEntry } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 
+import { projectSessionTranscript } from "./projection";
 import { buildTranscript, describeToolCall, formatToolDuration, formatTurnDuration } from "./transcript";
 
 const EMPTY_USAGE = {
@@ -233,7 +234,7 @@ function corruptUserMessageEntry(timestamp: unknown): FileEntry {
 }
 
 function project(entries: readonly FileEntry[]) {
-    return projectSessionTranscript([HEADER, ...entries]).items;
+    return projectSessionTranscript([HEADER, ...entries]);
 }
 
 function turnOf(items: ReturnType<typeof buildTranscript>, index: number) {
@@ -286,7 +287,6 @@ describe("buildTranscript", () => {
             id: "user-m1",
             text: "Submit the change",
             images: [],
-            timestamp: 1_000,
         });
 
         const turn = turnOf(items, 1);
@@ -377,7 +377,7 @@ describe("buildTranscript", () => {
         );
 
         expect(items).toEqual([
-            { kind: "user", id: "user-m1", text: "Prompt", images: [], timestamp: 1_000 },
+            { kind: "user", id: "user-m1", text: "Prompt", images: [] },
             {
                 kind: "note",
                 id: "note-b1",
@@ -402,7 +402,6 @@ describe("buildTranscript", () => {
                 customType: "task",
                 text: "Visible extension message",
                 images: [],
-                timestamp: Date.parse("2026-04-01T00:00:01.000Z"),
             },
         ]);
     });
@@ -419,7 +418,6 @@ describe("buildTranscript", () => {
                 customType: "task",
                 text: "",
                 images: [{ type: "image", data: "AAAA", mimeType: "image/png" }],
-                timestamp: Date.parse("2026-04-01T00:00:01.000Z"),
             },
         ]);
     });
@@ -452,7 +450,6 @@ describe("buildTranscript", () => {
                 customType: "extension",
                 text: "",
                 images: [],
-                timestamp: Date.parse("2026-04-01T00:00:01.000Z"),
             },
         ]);
     });
@@ -465,7 +462,7 @@ describe("buildTranscript", () => {
             ]),
         );
 
-        expect(items[0]).toMatchObject({ kind: "custom", timestamp: 0 });
+        expect(items[0]).toMatchObject({ kind: "custom" });
         expect(turnOf(items, 1).timing).toEqual({ kind: "static", durationMs: 0 });
     });
 
@@ -477,7 +474,7 @@ describe("buildTranscript", () => {
             ]),
         );
 
-        expect(items[0]).toMatchObject({ kind: "user", timestamp: 0 });
+        expect(items[0]).toMatchObject({ kind: "user" });
         expect(turnOf(items, 1).timing).toEqual({ kind: "static", durationMs: 0 });
     });
 
@@ -514,14 +511,12 @@ describe("buildTranscript", () => {
             name: "tydd",
             location: "/skills/tydd/SKILL.md",
             content: "References are relative to /skills/tydd.\n\n# tydd",
-            timestamp: 1_000,
         });
         expect(items[1]).toEqual({
             kind: "user",
             id: "user-m1",
             text: "Review this diff",
             images: [],
-            timestamp: 1_000,
         });
         // The turn still starts at the prompt entry, not at the assistant reply.
         expect(turnOf(items, 2).timing).toEqual({ kind: "static", durationMs: 1_000 });
@@ -565,16 +560,13 @@ describe("buildTranscript", () => {
             id: "user-m1",
             text: "",
             images: [{ type: "image", data: "AAAA", mimeType: "image/png" }],
-            timestamp: 1_000,
         });
     });
 
     it("keeps a prompt that only mentions the skill tag as a user bubble", () => {
         const items = buildTranscript(project([userEntry("m1", null, "Explain the <skill> tag", 1_000)]));
 
-        expect(items).toEqual([
-            { kind: "user", id: "user-m1", text: "Explain the <skill> tag", images: [], timestamp: 1_000 },
-        ]);
+        expect(items).toEqual([{ kind: "user", id: "user-m1", text: "Explain the <skill> tag", images: [] }]);
     });
 
     it("renders a persisted `!` command between the turns it ran between", () => {
@@ -596,7 +588,6 @@ describe("buildTranscript", () => {
             excludeFromContext: false,
             status: { kind: "succeeded" },
             truncation: { kind: "none" },
-            timestamp: 1_500,
         });
         // The command ends the turn before it and must not seed the next turn's duration.
         expect(turnOf(items, 1).timing).toEqual({ kind: "static", durationMs: 200 });
@@ -670,7 +661,6 @@ describe("buildTranscript", () => {
             excludeFromContext: false,
             status: { kind: "noExitCode" },
             truncation: { kind: "none" },
-            timestamp: 0,
         });
     });
 
@@ -1088,48 +1078,48 @@ describe("buildTranscript boundary handling", () => {
 describe("describeToolCall", () => {
     it("classifies built-in tools with labels and single-line summaries", () => {
         expect(describeToolCall("bash", { command: "git status\n  --short" })).toEqual({
-            kind: "bash",
+            toolKind: "bash",
             label: "Bash",
             summary: "git status --short",
         });
         expect(describeToolCall("powershell", { command: "Get-ChildItem   -Force" })).toEqual({
-            kind: "powershell",
+            toolKind: "powershell",
             label: "PowerShell",
             summary: "Get-ChildItem -Force",
         });
         expect(describeToolCall("read", { path: "src/main.tsx" })).toEqual({
-            kind: "read",
+            toolKind: "read",
             label: "Read",
             summary: "src/main.tsx",
         });
         expect(describeToolCall("write", { path: "plan.md" })).toEqual({
-            kind: "write",
+            toolKind: "write",
             label: "Write",
             summary: "plan.md",
         });
         expect(describeToolCall("edit", { path: "src/App.tsx" })).toEqual({
-            kind: "edit",
+            toolKind: "edit",
             label: "Edit",
             summary: "src/App.tsx",
         });
         expect(describeToolCall("grep", { pattern: "useSessionStore", path: "src" })).toEqual({
-            kind: "grep",
+            toolKind: "grep",
             label: "Grep",
             summary: "useSessionStore in src",
         });
         expect(describeToolCall("find", { pattern: "*.stories.tsx" })).toEqual({
-            kind: "find",
+            toolKind: "find",
             label: "Find",
             summary: "*.stories.tsx",
         });
-        expect(describeToolCall("ls", {})).toEqual({ kind: "ls", label: "Ls", summary: "." });
+        expect(describeToolCall("ls", {})).toEqual({ toolKind: "ls", label: "Ls", summary: "." });
         expect(describeToolCall("codemode", { code: "\n  // run checks\n  return 1;" })).toEqual({
-            kind: "codemode",
+            toolKind: "codemode",
             label: "Codemode",
             summary: "// run checks",
         });
         expect(describeToolCall("tool_search", { query: "github pull request" })).toEqual({
-            kind: "tool_search",
+            toolKind: "tool_search",
             label: "Tool search",
             summary: "github pull request",
         });
@@ -1138,8 +1128,8 @@ describe("describeToolCall", () => {
     it("falls back to generic with the original name and first scalar argument", () => {
         expect(
             describeToolCall("mcp__github__get_issue", { nested: { ignored: true }, issue_number: 42, repo: "pivia" }),
-        ).toEqual({ kind: "generic", label: "mcp__github__get_issue", summary: "42" });
-        expect(describeToolCall("custom_ping", {})).toEqual({ kind: "generic", label: "custom_ping", summary: "" });
+        ).toEqual({ toolKind: "generic", label: "mcp__github__get_issue", summary: "42" });
+        expect(describeToolCall("custom_ping", {})).toEqual({ toolKind: "generic", label: "custom_ping", summary: "" });
     });
 });
 

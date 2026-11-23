@@ -1,12 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 
-import {
-    assertNever,
-    SESSION_CLOSE_CODE,
-    type CatalogCursor,
-    type CatalogDelta,
-    type CatalogSnapshot,
-} from "@pivia/protocol";
+import { assertNever, SESSION_CLOSE_CODE, type CatalogDelta, type CatalogSnapshot } from "@pivia/protocol";
 
 import { Log } from "@/lib/log";
 import {
@@ -102,7 +96,6 @@ export function createWorkspaceSyncController(options: WorkspaceSyncOptions = {}
                     workspaceStore.getState().commitSyncedCatalog({
                         sessions: nextState.sessions,
                         updatedAtMs: nextState.updatedAtMs ?? Date.now(),
-                        cursor: meta.cursor,
                         ...(refreshInFlight ? {} : { sync: { kind: "live" } }),
                         persistCache: true,
                     });
@@ -111,7 +104,6 @@ export function createWorkspaceSyncController(options: WorkspaceSyncOptions = {}
                     workspaceStore.getState().commitSyncedCatalog({
                         sessions: nextState.sessions,
                         updatedAtMs: nextState.updatedAtMs ?? Date.now(),
-                        cursor: meta.cursor,
                         sync: { kind: "live" },
                         persistCache: true,
                     });
@@ -120,7 +112,6 @@ export function createWorkspaceSyncController(options: WorkspaceSyncOptions = {}
                     workspaceStore.getState().commitSyncedCatalog({
                         sessions: nextState.sessions,
                         updatedAtMs: nextState.updatedAtMs,
-                        cursor: meta.cursor,
                         ...(refreshInFlight ? {} : { sync: { kind: "live" } }),
                     });
                     return;
@@ -128,7 +119,6 @@ export function createWorkspaceSyncController(options: WorkspaceSyncOptions = {}
                     workspaceStore.getState().commitSyncedCatalog({
                         sessions: nextState.sessions,
                         updatedAtMs: nextState.updatedAtMs,
-                        cursor: meta.cursor,
                     });
                     return;
                 case "hydrate":
@@ -262,13 +252,9 @@ export function createWorkspaceSyncController(options: WorkspaceSyncOptions = {}
                             return;
                         }
                         reconnect.markConnected();
-                        const responseCursor: CatalogCursor = {
-                            epoch: response.catalogEpoch,
-                            seq: response.catalogSeq,
-                        };
                         const applied = syncClient.completeExternalRefresh(
-                            { sessions: response.sessions, updatedAtMs: response.scannedAtMs },
-                            responseCursor,
+                            { sessions: response.sessions, updatedAtMs: response.updatedAtMs },
+                            response.cursor,
                         );
                         if (!applied) {
                             const phase = syncClient.currentPhase;

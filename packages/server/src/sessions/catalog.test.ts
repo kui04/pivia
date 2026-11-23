@@ -243,7 +243,7 @@ describe("SessionCatalog", () => {
 
         const result = await catalog.list();
 
-        expect(result.scannedAtMs).toBe(4242);
+        expect(result.updatedAtMs).toBe(4242);
         expect(result.sessions.map((session) => session.id)).toEqual(["session-newer", "session-older"]);
         expect(result.sessions[0]).toEqual({
             id: "session-newer",
@@ -480,7 +480,7 @@ describe("SessionCatalog", () => {
         const result = await createCatalog({ agentDir, logger }).list();
 
         expect(result.sessions).toEqual([]);
-        expect(Number.isFinite(result.scannedAtMs)).toBe(true);
+        expect(Number.isFinite(result.updatedAtMs)).toBe(true);
     });
 
     it("keeps a session whose header has a parent session", async () => {

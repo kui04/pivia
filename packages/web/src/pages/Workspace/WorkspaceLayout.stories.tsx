@@ -1,11 +1,11 @@
 import {
-    INITIAL_CATALOG_SEQ,
-    nextCatalogSeq,
-    parseCatalogEpoch,
+    initialSyncSeq,
+    nextSyncSeq,
     parseSessionId,
-    type CatalogEpoch,
+    parseSyncEpoch,
     type SessionId,
     type SessionSummary,
+    type SyncEpoch,
 } from "@pivia/protocol";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useState, type ReactElement } from "react";
@@ -33,8 +33,9 @@ function sid(raw: string): SessionId {
 
 const S1 = sid("session-1");
 const S2 = sid("session-2");
-const STORY_EPOCH: CatalogEpoch = (() => {
-    const parsed = parseCatalogEpoch("story-epoch-1");
+const INITIAL_SEQ = initialSyncSeq<"catalog">();
+const STORY_EPOCH: SyncEpoch<"catalog"> = (() => {
+    const parsed = parseSyncEpoch<"catalog">("story-epoch-1");
     if (parsed === null) {
         throw new Error("Invalid story catalog epoch");
     }
@@ -126,7 +127,7 @@ function createFakeWorkspaceSocket(initialSessions: readonly SessionSummary[]): 
                 this.onmessage?.({
                     data: JSON.stringify({
                         type: "sync:snapshot",
-                        cursor: { epoch: STORY_EPOCH, seq: INITIAL_CATALOG_SEQ },
+                        cursor: { epoch: STORY_EPOCH, seq: INITIAL_SEQ },
                         snapshot: {
                             sessions: initialSessions,
                             updatedAtMs: 10_000,
@@ -216,9 +217,11 @@ function createMockApiClient(overrides: Partial<WorkspaceApiClient> = {}): Works
         listSessions: fn(() =>
             Promise.resolve({
                 sessions: [summary(S1)],
-                scannedAtMs: 10_000,
-                catalogEpoch: STORY_EPOCH,
-                catalogSeq: INITIAL_CATALOG_SEQ,
+                updatedAtMs: 10_000,
+                cursor: {
+                    epoch: STORY_EPOCH,
+                    seq: INITIAL_SEQ,
+                },
             }),
         ),
         getAuthStatus: fn(() => Promise.resolve({ authRequired: false, authenticated: true })),
@@ -340,7 +343,7 @@ export const RemovedSessionClearsRoute: Story = {
 
         removedSocket.emitMessage({
             type: "sync:delta",
-            cursor: { epoch: STORY_EPOCH, seq: nextCatalogSeq(INITIAL_CATALOG_SEQ) },
+            cursor: { epoch: STORY_EPOCH, seq: nextSyncSeq(INITIAL_SEQ) },
             delta: { op: "remove", id: S1 },
         });
 

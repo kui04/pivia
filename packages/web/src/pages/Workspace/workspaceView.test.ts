@@ -10,7 +10,6 @@ function input(overrides: Partial<WorkspaceViewInput> = {}): WorkspaceViewInput 
         status: "open",
         entriesSync: IDLE_SYNC,
         hasTranscript: false,
-        hasSnapshot: true,
         ...overrides,
     };
 }
@@ -24,7 +23,7 @@ describe("selectWorkspaceView", () => {
                     input({
                         routeMatchesStore: false,
                         status,
-                        entriesSync: { kind: "error", baseEntryCount: 0, targetEntryCount: 2, message: "old" },
+                        entriesSync: { kind: "error", message: "old" },
                     }),
                 ),
             ).toEqual({ kind: "loading" });
@@ -32,14 +31,12 @@ describe("selectWorkspaceView", () => {
     });
 
     it("reports loading while the first snapshot is pending", () => {
-        expect(selectWorkspaceView(input({ hasSnapshot: false, status: "open" }))).toEqual({ kind: "loading" });
-        expect(selectWorkspaceView(input({ hasSnapshot: false, status: "connecting" }))).toEqual({ kind: "loading" });
+        expect(selectWorkspaceView(input({ status: "idle" }))).toEqual({ kind: "loading" });
+        expect(selectWorkspaceView(input({ status: "connecting" }))).toEqual({ kind: "loading" });
     });
 
     it("reports loading while entries hydrate", () => {
-        expect(
-            selectWorkspaceView(input({ entriesSync: { kind: "loading", baseEntryCount: 0, targetEntryCount: 4 } })),
-        ).toEqual({ kind: "loading" });
+        expect(selectWorkspaceView(input({ entriesSync: { kind: "loading" } }))).toEqual({ kind: "loading" });
     });
 
     it("keeps the transcript and reports the sync error when rows exist", () => {
@@ -47,7 +44,7 @@ describe("selectWorkspaceView", () => {
             selectWorkspaceView(
                 input({
                     hasTranscript: true,
-                    entriesSync: { kind: "error", baseEntryCount: 0, targetEntryCount: 4, message: "Cannot read" },
+                    entriesSync: { kind: "error", message: "Cannot read" },
                 }),
             ),
         ).toEqual({ kind: "transcript", syncError: "Cannot read" });
@@ -57,7 +54,7 @@ describe("selectWorkspaceView", () => {
         expect(
             selectWorkspaceView(
                 input({
-                    entriesSync: { kind: "error", baseEntryCount: 0, targetEntryCount: 4, message: "Cannot read" },
+                    entriesSync: { kind: "error", message: "Cannot read" },
                 }),
             ),
         ).toEqual({ kind: "syncError", message: "Cannot read" });
@@ -73,7 +70,7 @@ describe("selectWorkspaceView", () => {
     });
 
     it("never offers an entry retry once the session is terminal", () => {
-        const entriesSync = { kind: "error", baseEntryCount: 0, targetEntryCount: 4, message: "Cannot read" } as const;
+        const entriesSync = { kind: "error", message: "Cannot read" } as const;
 
         expect(selectWorkspaceView(input({ status: "closed", hasTranscript: true, entriesSync }))).toEqual({
             kind: "transcript",

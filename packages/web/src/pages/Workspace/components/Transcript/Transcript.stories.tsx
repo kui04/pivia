@@ -29,7 +29,6 @@ function hasMaskFade(viewport: HTMLElement): boolean {
 
 function buildLongConversation(turnCount: number): TranscriptItem[] {
     const items: TranscriptItem[] = [];
-    const baseTime = Date.parse("2026-11-17T08:00:00.000Z");
 
     for (let index = 1; index <= turnCount; index += 1) {
         items.push({
@@ -40,7 +39,6 @@ function buildLongConversation(turnCount: number): TranscriptItem[] {
                     ? "Ship it."
                     : `Step ${index}: check the workspace transcript rules and report the verified output.`,
             images: [],
-            timestamp: baseTime + index * 60_000,
         });
 
         items.push({
@@ -60,7 +58,6 @@ function buildLongConversation(turnCount: number): TranscriptItem[] {
                 {
                     kind: "toolCall",
                     id: `tool-${index}`,
-                    name: "bash",
                     toolKind: "bash",
                     label: "Bash",
                     summary: `pnpm test:unit -- --run step-${index}`,
@@ -90,7 +87,6 @@ const mixedItems: TranscriptItem[] = [
         id: "user-mixed",
         text: "Review the change and run the checks.",
         images: [],
-        timestamp: Date.parse("2026-11-17T09:00:00.000Z"),
     },
     {
         kind: "skill",
@@ -98,7 +94,6 @@ const mixedItems: TranscriptItem[] = [
         name: "tydd",
         location: "/home/kui04/.pi/agent/skills/tydd/SKILL.md",
         content: "## Role\n\nAct as a senior software architect practicing Type-Driven Development.",
-        timestamp: Date.parse("2026-11-17T09:00:01.000Z"),
     },
     {
         kind: "turn",
@@ -117,7 +112,6 @@ const mixedItems: TranscriptItem[] = [
             {
                 kind: "toolCall",
                 id: "tool-mixed",
-                name: "bash",
                 toolKind: "bash",
                 label: "Bash",
                 summary: "pnpm test",
@@ -139,7 +133,6 @@ const mixedItems: TranscriptItem[] = [
         excludeFromContext: true,
         status: { kind: "succeeded" },
         truncation: { kind: "none" },
-        timestamp: Date.parse("2026-11-17T09:00:10.000Z"),
     },
     {
         kind: "custom",
@@ -147,7 +140,6 @@ const mixedItems: TranscriptItem[] = [
         customType: "task",
         text: "The task extension finished: **3 files** changed.",
         images: [],
-        timestamp: Date.parse("2026-11-17T09:00:11.000Z"),
     },
     {
         kind: "note",
@@ -166,7 +158,6 @@ const repeatedBashItems: TranscriptItem[] = [
         excludeFromContext: false,
         status: { kind: "succeeded" },
         truncation: { kind: "none" },
-        timestamp: Date.parse("2026-11-17T09:01:00.000Z"),
     },
     {
         kind: "bash",
@@ -176,7 +167,6 @@ const repeatedBashItems: TranscriptItem[] = [
         excludeFromContext: false,
         status: { kind: "failed", exitCode: 1 },
         truncation: { kind: "none" },
-        timestamp: Date.parse("2026-11-17T09:01:30.000Z"),
     },
 ];
 
@@ -186,7 +176,6 @@ const shortItems: TranscriptItem[] = [
         id: "user-single",
         text: "Inspect the token configuration and confirm the shimmer duration.",
         images: [],
-        timestamp: Date.parse("2026-11-17T08:00:00.000Z"),
     },
     {
         kind: "turn",
@@ -198,7 +187,6 @@ const shortItems: TranscriptItem[] = [
             {
                 kind: "toolCall",
                 id: "tool-single",
-                name: "read",
                 toolKind: "read",
                 label: "Read",
                 summary: "src/styles/token.css",
@@ -480,7 +468,6 @@ export const ExtensionMessageBetweenTurns: Story = {
                 customType: "task",
                 text: "The task extension finished: **3 files** changed and `pnpm test` passed.",
                 images: [],
-                timestamp: Date.parse("2026-11-17T08:01:00.000Z"),
             },
             {
                 kind: "turn",

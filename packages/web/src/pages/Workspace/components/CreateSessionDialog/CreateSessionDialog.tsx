@@ -1,4 +1,4 @@
-import type { DirectoryListResponse, SessionSummary } from "@pivia/protocol";
+import type { CreateSessionOptions, DirectoryListResponse, SessionSummary } from "@pivia/protocol";
 import { ArrowUp, Clock, Folder } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactElement } from "react";
 
@@ -23,9 +23,7 @@ import styles from "./CreateSessionDialog.module.css";
 const MAX_RECENT_CWDS = 3;
 
 /** Options forwarded when creating a session on the server. */
-export interface CreateSessionSubmitOptions {
-    readonly createDirectory?: boolean | undefined;
-}
+export type CreateSessionSubmitOptions = CreateSessionOptions;
 
 /** Outcome returned by the caller creating a session on the server. */
 export type CreateSessionResult =

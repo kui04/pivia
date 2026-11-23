@@ -9,42 +9,20 @@ import type {
 /**
  * Browser-safe transcript projection produced from raw `FileEntry[]`.
  *
- * Mirrors the active-branch and compaction rules of the SDK `SessionManager` without importing
- * Node-only modules (`node:fs`, `readline`).
+ * Mirrors the active-branch, compaction, and `context_edit` rules of the SDK `SessionManager`
+ * without importing Node-only modules (`node:fs`, `readline`).
  */
 export type ProjectedTranscriptItem =
     | {
           readonly kind: "entry";
           readonly entry: SessionEntry;
-          /** Resolved latest bookmark label targeting `entry.id`, if any. */
-          readonly label?: string | undefined;
           /** Content replacement applied by the latest `context_edit` targeting `entry.id`. */
           readonly editedContent?: ContextEditableContent | undefined;
       }
     | {
           readonly kind: "compaction";
           readonly entry: CompactionEntry;
-          /** Active-branch entries summarized away before `entry.firstKeptEntryId`. */
-          readonly compactedBefore: readonly SessionEntry[];
       };
-
-/** Complete projection of the active branch in a session transcript. */
-export interface SessionTranscriptProjection {
-    /** Items along the active branch from root to `leafId`, with the latest compaction folded. */
-    readonly items: readonly ProjectedTranscriptItem[];
-    /** Entries omitted from active context because they precede `compaction.firstKeptEntryId`. */
-    readonly compactedBefore: readonly SessionEntry[];
-    /** Latest compaction entry on the active branch, or `null` when none exists. */
-    readonly compaction: CompactionEntry | null;
-    /** Active, compaction-aware raw entries matching `SessionManager.buildContextEntries()`. */
-    readonly activeEntries: readonly SessionEntry[];
-    /** Latest resolved bookmark labels keyed by target entry id. */
-    readonly labelsById: ReadonlyMap<string, string>;
-    /** Latest non-empty session name from `session_info` entries, or `null`. */
-    readonly sessionName: string | null;
-    /** Resolved leaf entry id used as the branch tip, or `null` when the session has no entries. */
-    readonly leafId: string | null;
-}
 
 /** Options controlling how {@link projectSessionTranscript} walks the entry tree. */
 export interface ProjectTranscriptOptions {
@@ -59,13 +37,13 @@ function buildEntryPath(
     sessionEntries: readonly SessionEntry[],
     byId: ReadonlyMap<string, SessionEntry>,
     leafIdOption: string | null | undefined,
-): { readonly path: readonly SessionEntry[]; readonly leafId: string | null } {
+): readonly SessionEntry[] {
     if (leafIdOption === null) {
-        return { path: [], leafId: null };
+        return [];
     }
     const leaf = (leafIdOption !== undefined ? byId.get(leafIdOption) : undefined) ?? sessionEntries.at(-1);
     if (leaf === undefined) {
-        return { path: [], leafId: null };
+        return [];
     }
     const reversed: SessionEntry[] = [];
     const visited = new Set<string>();
@@ -76,7 +54,7 @@ function buildEntryPath(
         current = current.parentId !== null ? byId.get(current.parentId) : undefined;
     }
     reversed.reverse();
-    return { path: reversed, leafId: leaf.id };
+    return reversed;
 }
 
 /**
@@ -118,16 +96,14 @@ function resolveEditedContent(
 }
 
 /**
- * Project raw `FileEntry[]` into a compaction-aware, context-edit-aware transcript for UI rendering.
+ * Project raw `FileEntry[]` into a compaction-aware, context-edit-aware item list for UI rendering.
  */
 export function projectSessionTranscript(
     entries: readonly FileEntry[],
     options?: ProjectTranscriptOptions,
-): SessionTranscriptProjection {
+): readonly ProjectedTranscriptItem[] {
     const sessionEntries: SessionEntry[] = [];
     const byId = new Map<string, SessionEntry>();
-    const labelsById = new Map<string, string>();
-    let sessionName: string | null = null;
 
     for (const entry of entries) {
         if (entry.type === "session") {
@@ -135,19 +111,9 @@ export function projectSessionTranscript(
         }
         sessionEntries.push(entry);
         byId.set(entry.id, entry);
-        if (entry.type === "label") {
-            if (entry.label) {
-                labelsById.set(entry.targetId, entry.label);
-            } else {
-                labelsById.delete(entry.targetId);
-            }
-        } else if (entry.type === "session_info") {
-            const trimmed = entry.name?.trim();
-            sessionName = trimmed ? trimmed : null;
-        }
     }
 
-    const { path, leafId } = buildEntryPath(sessionEntries, byId, options?.leafId);
+    const path = buildEntryPath(sessionEntries, byId, options?.leafId);
 
     let compaction: CompactionEntry | null = null;
     let compactionIdx = -1;
@@ -159,7 +125,6 @@ export function projectSessionTranscript(
         }
     }
 
-    const compactedBefore: SessionEntry[] = [];
     const activeEntries: SessionEntry[] = [];
 
     if (compaction === null || compactionIdx < 0) {
@@ -175,9 +140,7 @@ export function projectSessionTranscript(
             if (candidate.id === compaction.firstKeptEntryId) {
                 foundFirstKept = true;
             }
-            if (!foundFirstKept) {
-                compactedBefore.push(candidate);
-            } else if (!(candidate.type === "message" && candidate.message.role === "system")) {
+            if (foundFirstKept && !(candidate.type === "message" && candidate.message.role === "system")) {
                 activeEntries.push(candidate);
             }
         }
@@ -198,31 +161,19 @@ export function projectSessionTranscript(
             continue;
         }
         if (index === 0 && compaction !== null && entry.id === compaction.id) {
-            items.push({ kind: "compaction", entry: compaction, compactedBefore });
+            items.push({ kind: "compaction", entry: compaction });
             continue;
         }
         const editResult = resolveEditedContent(entry, editsByTargetId.get(entry.id));
         if (editResult.omitted) {
             continue;
         }
-        const label = labelsById.get(entry.id);
         items.push({
             kind: "entry",
             entry,
-            ...(label === undefined ? {} : { label }),
             ...(editResult.editedContent === undefined ? {} : { editedContent: editResult.editedContent }),
         });
     }
 
-    return {
-        items,
-        compactedBefore,
-        compaction,
-        activeEntries,
-        labelsById,
-        sessionName,
-        leafId,
-    };
+    return items;
 }
-
-export type { CompactionEntry, ContextEditableContent, ContextEditEntry };

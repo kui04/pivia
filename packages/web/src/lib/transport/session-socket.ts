@@ -1,24 +1,19 @@
+import type { RpcExtensionUIResponse } from "@earendil-works/pi-coding-agent";
 import {
     assertNever,
     classifySessionClose,
     parseSessionWsServerMessage,
     SESSION_CLOSE_CODE,
-    type RpcExtensionUIResponse,
     type SessionCloseReason,
-    type SessionCursor,
+    type SessionHandshake,
     type SessionId,
-    type SessionPrefixAnchor,
     type SessionRpcCommand,
     type SessionRpcServerMessage,
     type SessionSyncFrame,
     type SessionWsClientMessage,
-    type SessionWsServerMessage,
 } from "@pivia/protocol";
 
 import { Log } from "@/lib/log";
-
-/** A control command. UI answers travel through {@link SessionSocket.sendUiResponse}. */
-export type SessionCommand = SessionRpcCommand;
 
 /** RPC response envelope returned by {@link SessionSocket.sendCommand}. */
 export type SessionRpcResponseMessage = Extract<SessionRpcServerMessage, { readonly type: "rpc:response" }>;
@@ -26,14 +21,11 @@ export type SessionRpcResponseMessage = Extract<SessionRpcServerMessage, { reado
 /** RPC protocol error envelope delivered over `/ws/sessions/:id`. */
 export type SessionRpcErrorMessage = Extract<SessionRpcServerMessage, { readonly type: "rpc:error" }>;
 
-/** Why a session socket closed, from the browser client's point of view. */
-export type SessionSocketCloseReason = SessionCloseReason;
-
 /** One close event with the classification the store uses to decide about a reconnect. */
 export interface SessionSocketClose {
     readonly code: number;
     readonly reason: string;
-    readonly classification: SessionSocketCloseReason;
+    readonly classification: SessionCloseReason;
     readonly wasClean: boolean;
 }
 
@@ -51,17 +43,11 @@ export interface SessionSocketLike {
 /** Constructor for an injectable WebSocket implementation. */
 export type SessionSocketConstructor = new (url: string) => SessionSocketLike;
 
-/** Handshake parameters sent on `/ws/sessions/:id` connect and reconnect. */
-export interface SessionSocketHandshakeParams {
-    readonly cursor?: SessionCursor | undefined;
-    readonly prefixAnchor?: SessionPrefixAnchor | undefined;
-}
-
 /** Options for {@link SessionSocket}. */
 export interface SessionSocketOptions {
     readonly sessionId: SessionId;
-    /** Optional Tier 1/2 handshake anchors (`cursor`, `prefixAnchor`). */
-    readonly handshake?: SessionSocketHandshakeParams | undefined;
+    /** Optional Tier 1/2 handshake anchors (`cursor`, `hint`). */
+    readonly handshake?: SessionHandshake | undefined;
     /** Absolute `ws://` or `wss://` URL. Defaults to the current origin and `/ws/sessions/:id`. */
     readonly url?: string | undefined;
     /** WebSocket constructor. Defaults to `globalThis.WebSocket`. */
@@ -69,8 +55,8 @@ export interface SessionSocketOptions {
     readonly onOpen?: (() => void) | undefined;
     /** Receives decoded Sync lane frames (`sync:*`). */
     readonly onSyncFrame?: ((frame: SessionSyncFrame) => void) | undefined;
-    /** Receives non-command server messages (Sync lane frames and unmatched RPC errors). */
-    readonly onMessage?: ((message: SessionWsServerMessage) => void) | undefined;
+    /** Receives uncorrelated RPC protocol errors (such as a rejected extension UI response). */
+    readonly onRpcError?: ((error: SessionRpcErrorMessage) => void) | undefined;
     readonly onClose?: ((close: SessionSocketClose) => void) | undefined;
     /** Receives transport errors. A close event normally follows. */
     readonly onError?: ((message: string) => void) | undefined;
@@ -78,9 +64,9 @@ export interface SessionSocketOptions {
 
 /** A command that never received its response because the socket closed. */
 export class SessionSocketClosedError extends Error {
-    readonly classification: SessionSocketCloseReason;
+    readonly classification: SessionCloseReason;
 
-    constructor(classification: SessionSocketCloseReason) {
+    constructor(classification: SessionCloseReason) {
         super(`The session socket closed (${classification}).`);
         this.name = "SessionSocketClosedError";
         this.classification = classification;
@@ -109,11 +95,7 @@ interface PendingCommand {
 const WS_READY_STATE_OPEN = 1;
 
 /** Builds the default endpoint from a page URL and optional Tier 1/2 handshake anchors. */
-export function buildSessionSocketUrl(
-    sessionId: SessionId,
-    handshake?: SessionSocketHandshakeParams,
-    pageUrl?: string,
-): string {
+export function buildSessionSocketUrl(sessionId: SessionId, handshake?: SessionHandshake, pageUrl?: string): string {
     const source = pageUrl ?? globalThis.location?.href;
     if (source === undefined) {
         throw new Error("A WebSocket URL is required outside the browser.");
@@ -128,10 +110,10 @@ export function buildSessionSocketUrl(
         url.searchParams.set("epoch", params.cursor.epoch);
         url.searchParams.set("afterSeq", String(params.cursor.seq));
     }
-    if (params.prefixAnchor !== undefined) {
-        url.searchParams.set("entriesVersion", params.prefixAnchor.entriesVersion);
-        url.searchParams.set("afterCount", String(params.prefixAnchor.afterCount));
-        url.searchParams.set("afterEntryId", params.prefixAnchor.afterEntryId);
+    if (params.hint !== undefined) {
+        url.searchParams.set("entriesVersion", params.hint.entriesVersion);
+        url.searchParams.set("afterCount", String(params.hint.afterCount));
+        url.searchParams.set("afterEntryId", params.hint.afterEntryId);
     }
     return url.toString();
 }
@@ -165,18 +147,18 @@ function defaultSocketConstructor(): SessionSocketConstructor {
  */
 export class SessionSocket {
     private readonly sessionId: SessionId;
-    private readonly handshake: SessionSocketHandshakeParams;
+    private readonly handshake: SessionHandshake;
     private readonly url: string | undefined;
     private readonly socketConstructor: SessionSocketConstructor | undefined;
     private readonly onOpen: (() => void) | undefined;
     private readonly onSyncFrame: ((frame: SessionSyncFrame) => void) | undefined;
-    private readonly onMessage: ((message: SessionWsServerMessage) => void) | undefined;
+    private readonly onRpcError: ((error: SessionRpcErrorMessage) => void) | undefined;
     private readonly onClose: ((close: SessionSocketClose) => void) | undefined;
     private readonly onError: ((message: string) => void) | undefined;
 
     private socket: SessionSocketLike | null = null;
     private closed = false;
-    private closeReason: SessionSocketCloseReason | null = null;
+    private closeReason: SessionCloseReason | null = null;
     private readonly outbox: string[] = [];
     private readonly pending = new Map<string, PendingCommand>();
 
@@ -187,7 +169,7 @@ export class SessionSocket {
         this.socketConstructor = options.WebSocket;
         this.onOpen = options.onOpen;
         this.onSyncFrame = options.onSyncFrame;
-        this.onMessage = options.onMessage;
+        this.onRpcError = options.onRpcError;
         this.onClose = options.onClose;
         this.onError = options.onError;
     }
@@ -232,7 +214,7 @@ export class SessionSocket {
      * A command without an `id` gets one; a supplied `id` is reused so a caller can correlate a
      * command with its own state. Commands sent before the socket opens are queued in order.
      */
-    sendCommand(command: SessionCommand): Promise<SessionRpcResponseMessage> {
+    sendCommand(command: SessionRpcCommand): Promise<SessionRpcResponseMessage> {
         if (this.closed) {
             return Promise.reject(new SessionSocketClosedError(this.closeReason ?? "client"));
         }
@@ -243,7 +225,7 @@ export class SessionSocket {
             );
         }
 
-        const payload = { ...command, id } satisfies SessionCommand;
+        const payload = { ...command, id } satisfies SessionRpcCommand;
         const envelope = { type: "rpc:command", command: payload } satisfies SessionWsClientMessage;
         const promise = new Promise<SessionRpcResponseMessage>((resolve, reject) => {
             this.pending.set(id, { command: command.type, resolve, reject });
@@ -356,7 +338,6 @@ export class SessionSocket {
             case "sync:delta":
             case "sync:resync":
                 this.onSyncFrame?.(message);
-                this.onMessage?.(message);
                 return;
             default:
                 return assertNever(message);
@@ -394,7 +375,7 @@ export class SessionSocket {
         }
         // A UI answer carries the request id, not a command id, and the server reports a rejected
         // one as a protocol error. Deliver it so the caller can surface the failure.
-        this.onMessage?.(message);
+        this.onRpcError?.(message);
     }
 
     private handleServerClose(event: CloseEvent): void {

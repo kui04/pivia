@@ -1,8 +1,9 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
-import type { FileEntry } from "@earendil-works/pi-coding-agent";
+import type { FileEntry, SessionInfo } from "@earendil-works/pi-coding-agent";
 
-import type { CatalogEpoch, CatalogSeq } from "./parse/catalog.ts";
+import type { StrictOmit } from "./parse/primitives.ts";
 import type { EntriesVersion, SessionId } from "./parse/session.ts";
+import type { CatalogCursor, CatalogSnapshot } from "./workspace-ws.ts";
 
 /** Health status payload returned by `GET /api/health`. */
 export interface HealthResponse {
@@ -64,16 +65,10 @@ export type SessionModelInfo = Pick<Model<Api>, "provider" | "id" | "name">;
  * sessions override the disk fields with in-memory state, including sessions whose file has not
  * been written yet.
  */
-export interface SessionSummary {
+export interface SessionSummary extends Readonly<Pick<SessionInfo, "cwd" | "firstMessage" | "messageCount">> {
     readonly id: SessionId;
-    /** Working directory recorded in the session header; empty for sessions from old versions. */
-    readonly cwd: string;
     /** Latest display name set by the user, or `null` when the session has no name. */
     readonly name: string | null;
-    /** First user message text, or the SDK placeholder when the session has no messages. */
-    readonly firstMessage: string;
-    /** Number of conversation messages; live sessions report the in-memory count. */
-    readonly messageCount: number;
     readonly createdAtMs: number;
     readonly modifiedAtMs: number;
     /** True when the session header names a parent session (forked session). */
@@ -88,14 +83,9 @@ export interface SessionSummary {
 }
 
 /** Response payload returned by `GET /api/sessions`. */
-export interface SessionListResponse {
-    readonly sessions: readonly SessionSummary[];
-    /** Time the server finished the discovery pass, in Unix epoch milliseconds. */
-    readonly scannedAtMs: number;
-    /** Server registry lifetime identifier paired with `catalogSeq`. */
-    readonly catalogEpoch: CatalogEpoch;
-    /** Monotonic catalog sequence covered by this snapshot. */
-    readonly catalogSeq: CatalogSeq;
+export interface SessionListResponse extends CatalogSnapshot {
+    /** Server catalog cursor covered by this snapshot. */
+    readonly cursor: CatalogCursor;
 }
 
 /**
@@ -126,6 +116,9 @@ export interface CreateSessionRequest {
     /** When true, creates the directory recursively if it does not exist yet. */
     readonly createDirectory?: boolean | undefined;
 }
+
+/** Optional flags for creating a session when `cwd` is supplied separately. */
+export type CreateSessionOptions = StrictOmit<CreateSessionRequest, "cwd">;
 
 /** Response payload returned by `POST /api/sessions` on success. */
 export interface CreateSessionResponse {

@@ -1,27 +1,25 @@
-import type { QueueMode, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type {
     AgentSession,
+    ExtensionError,
     FileEntry,
     JsonAgentSessionEvent,
     RpcCommand,
     RpcExtensionUIRequest,
     RpcExtensionUIResponse,
-    RpcResponse,
+    RpcSessionState,
 } from "@earendil-works/pi-coding-agent";
 
-import type { SessionModelInfo } from "./http.ts";
+import type { SessionModelInfo, SessionPrefixAnchor } from "./http.ts";
+import type { PatchOf, StrictOmit } from "./parse/primitives.ts";
 import type { EntriesVersion, SessionId } from "./parse/session.ts";
-import type { Delivery, SyncCursor, SyncEpoch, SyncFrame, SyncSeq } from "./sync/index.ts";
-
-/** Domain epoch identifier for one live session runtime. */
-export type SessionRuntimeId = SyncEpoch<"session">;
-
-/** Domain sequence number strictly monotonic within one {@link SessionRuntimeId}. */
-export type SessionSeq = SyncSeq<"session">;
+import type { Delivery, SyncCursor, SyncFrame, SyncHandshake } from "./sync/index.ts";
 
 /** Logical clock cursor for one session stream. */
 export type SessionCursor = SyncCursor<"session">;
+
+/** Handshake parameters sent on `/ws/sessions/:id` connect and reconnect. */
+export type SessionHandshake = SyncHandshake<"session", SessionPrefixAnchor>;
 
 /** WebSocket close codes shared by the session server and the browser client. */
 export const SESSION_CLOSE_CODE = {
@@ -61,34 +59,23 @@ export function classifySessionClose(code: number): SessionRemoteCloseReason {
     }
 }
 
-/** Command outcome for `prompt`, derived from the SDK RPC response type. */
-export type SessionPromptDisposition = Extract<
-    RpcResponse,
-    { command: "prompt"; success: true }
->["data"]["disposition"];
-
 /** Command outcome for `steer` and `follow_up`, derived from the SDK session methods. */
 export type SessionQueuedInputDisposition = Awaited<ReturnType<AgentSession["steer"]>>;
 
 /**
- * State snapshot of one open session runtime.
+ * State snapshot of one open session runtime, derived from the SDK {@link RpcSessionState}.
  *
- * The snapshot deliberately omits the session file path so clients never learn host filesystem
- * locations. `name` is `null` when the session has no display name.
+ * The snapshot deliberately omits `sessionFile` so clients never learn host filesystem locations,
+ * and omits `pendingMessageCount` because `steeringMessages` and `followUpMessages` already carry
+ * the exact queue contents. `name` is `null` when the session has no display name.
  */
-export interface SessionStateSnapshot {
+export interface SessionStateSnapshot extends Readonly<
+    StrictOmit<RpcSessionState, "model" | "sessionFile" | "sessionId" | "sessionName" | "pendingMessageCount">
+> {
     readonly sessionId: SessionId;
     readonly cwd: string;
     readonly name: string | null;
     readonly model: SessionModelInfo | null;
-    readonly thinkingLevel: ThinkingLevel;
-    readonly isStreaming: boolean;
-    readonly isCompacting: boolean;
-    readonly steeringMode: QueueMode;
-    readonly followUpMode: QueueMode;
-    readonly autoCompactionEnabled: boolean;
-    readonly messageCount: number;
-    readonly pendingMessageCount: number;
     readonly steeringMessages: readonly string[];
     readonly followUpMessages: readonly string[];
 }
@@ -98,11 +85,15 @@ export interface SessionEntriesHttpMeta {
     readonly entryCount: number;
 }
 
-/** Full or prefix-anchored session snapshot replicated over the Sync lane. */
-export interface SessionSnapshot {
+/** Versioned entry slice carried by session snapshots and `entries_appended` deltas. */
+export interface SessionEntrySlice {
     readonly entriesVersion: EntriesVersion;
     readonly baseEntryCount: number;
     readonly entries: Delivery<readonly FileEntry[], SessionEntriesHttpMeta>;
+}
+
+/** Full or prefix-anchored session snapshot replicated over the Sync lane. */
+export interface SessionSnapshot extends SessionEntrySlice {
     readonly state: SessionStateSnapshot;
     readonly liveMessage: AssistantMessage | null;
     /** Dialog requests that are still waiting for a response. */
@@ -113,32 +104,19 @@ export interface SessionSnapshot {
  * Incremental patch for {@link SessionStateSnapshot} fields mutated outside `AgentSessionEvent`
  * (such as `set_model` or message count updates).
  */
-export interface SessionStatePatch {
-    readonly model?: SessionModelInfo | null | undefined;
-    readonly messageCount?: number | undefined;
-    readonly autoCompactionEnabled?: boolean | undefined;
-    readonly steeringMode?: QueueMode | undefined;
-    readonly followUpMode?: QueueMode | undefined;
-}
+export type SessionStatePatch = PatchOf<
+    SessionStateSnapshot,
+    "model" | "messageCount" | "autoCompactionEnabled" | "steeringMode" | "followUpMode"
+>;
 
-/** Causal session state mutations replicated on the unified `SessionSeq` clock. */
+/** Causal session state mutations replicated on the unified session sync clock. */
 export type SessionDelta =
     | { readonly kind: "agent_event"; readonly event: JsonAgentSessionEvent }
-    | {
-          readonly kind: "entries_appended";
-          readonly entriesVersion: EntriesVersion;
-          readonly baseEntryCount: number;
-          readonly entries: Delivery<readonly FileEntry[], SessionEntriesHttpMeta>;
-      }
+    | ({ readonly kind: "entries_appended" } & SessionEntrySlice)
     | { readonly kind: "state_patched"; readonly patch: SessionStatePatch }
     | { readonly kind: "ui_request"; readonly request: RpcExtensionUIRequest }
     | { readonly kind: "ui_resolved"; readonly requestId: string }
-    | {
-          readonly kind: "extension_error";
-          readonly extensionPath: string;
-          readonly event: string;
-          readonly error: string;
-      };
+    | ({ readonly kind: "extension_error" } & Readonly<StrictOmit<ExtensionError, "stack">>);
 
 /** Server-to-client Sync lane frames for `/ws/sessions/:id`. */
 export type SessionSyncFrame = SyncFrame<"session", SessionSnapshot, SessionDelta>;

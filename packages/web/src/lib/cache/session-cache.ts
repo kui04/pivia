@@ -1,11 +1,12 @@
+import type { FileEntry } from "@earendil-works/pi-coding-agent";
 import {
     isFileEntryRecord,
     isRecord,
+    parseCatalogSnapshot,
     parseEntriesVersion,
     parseSessionId,
-    parseSessionSummary,
+    type CatalogSnapshot,
     type EntriesVersion,
-    type FileEntry,
     type SessionId,
     type SessionSummary,
 } from "@pivia/protocol";
@@ -32,10 +33,8 @@ export interface SessionCacheEntryRow {
 }
 
 /** Cached workspace catalog snapshot stored in `workspace_catalog` under key `"default"`. */
-export interface WorkspaceCatalogCacheRecord {
+export interface WorkspaceCatalogCacheRecord extends CatalogSnapshot {
     readonly key: "default";
-    readonly sessions: readonly SessionSummary[];
-    readonly scannedAtMs: number;
 }
 
 /** Result of loading a cached session from {@link SessionCacheStore}. */
@@ -76,7 +75,7 @@ export interface SessionCacheStore {
     ): Promise<CacheWriteOutcome>;
     deleteSession(sessionId: SessionId): Promise<void>;
     getWorkspaceCatalog(): Promise<WorkspaceCatalogCacheRecord | null>;
-    putWorkspaceCatalog(sessions: readonly SessionSummary[], scannedAtMs: number): Promise<void>;
+    putWorkspaceCatalog(sessions: readonly SessionSummary[], updatedAtMs: number): Promise<void>;
     clearAll(): Promise<void>;
 }
 
@@ -211,28 +210,11 @@ function partitionSessionCacheMetas(raw: unknown): {
 }
 
 function parseWorkspaceCatalogRecord(raw: unknown): WorkspaceCatalogCacheRecord | null {
-    if (
-        !isRecord(raw) ||
-        raw.key !== "default" ||
-        !Array.isArray(raw.sessions) ||
-        typeof raw.scannedAtMs !== "number" ||
-        !Number.isFinite(raw.scannedAtMs)
-    ) {
+    if (!isRecord(raw) || raw.key !== "default") {
         return null;
     }
-    const sessions: SessionSummary[] = [];
-    for (const item of raw.sessions) {
-        const parsed = parseSessionSummary(item);
-        if (parsed === null) {
-            return null;
-        }
-        sessions.push(parsed);
-    }
-    return {
-        key: "default",
-        sessions,
-        scannedAtMs: raw.scannedAtMs,
-    };
+    const snapshot = parseCatalogSnapshot(raw);
+    return snapshot === null ? null : { key: "default", ...snapshot };
 }
 
 function isQuotaExceededError(error: unknown): boolean {
@@ -513,8 +495,8 @@ export class IndexedDbSessionCache implements SessionCacheStore {
         }
     }
 
-    async putWorkspaceCatalog(sessions: readonly SessionSummary[], scannedAtMs: number): Promise<void> {
-        const record: WorkspaceCatalogCacheRecord = { key: "default", sessions, scannedAtMs };
+    async putWorkspaceCatalog(sessions: readonly SessionSummary[], updatedAtMs: number): Promise<void> {
+        const record: WorkspaceCatalogCacheRecord = { key: "default", sessions, updatedAtMs };
         const db = await this.openDb();
         if (db === null) {
             this.memCatalog = record;

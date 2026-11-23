@@ -1,20 +1,20 @@
+import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { FileEntry } from "@earendil-works/pi-coding-agent";
 import {
     parseEntriesVersion,
     parseSessionId,
     parseSyncEpoch,
     parseSyncSeq,
     SESSION_CLOSE_CODE,
-    type AssistantMessage,
     type EntriesVersion,
-    type FileEntry,
     type SessionDelta,
     type SessionDetailResponse,
     type SessionId,
-    type SessionRuntimeId,
-    type SessionSeq,
     type SessionStateSnapshot,
     type SessionSummary,
     type SessionWsServerMessage,
+    type SyncEpoch,
+    type SyncSeq,
 } from "@pivia/protocol";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useEffect, useRef, useState, type ReactElement } from "react";
@@ -43,7 +43,7 @@ function ev(raw: string): EntriesVersion {
     return parsed;
 }
 
-function runtimeId(raw: string): SessionRuntimeId {
+function runtimeId(raw: string): SyncEpoch<"session"> {
     const parsed = parseSyncEpoch<"session">(raw);
     if (parsed === null) {
         throw new Error(`Invalid story runtime id: ${raw}`);
@@ -51,7 +51,7 @@ function runtimeId(raw: string): SessionRuntimeId {
     return parsed;
 }
 
-function seq(raw: number): SessionSeq {
+function seq(raw: number): SyncSeq<"session"> {
     const parsed = parseSyncSeq<"session">(raw);
     if (parsed === null) {
         throw new Error(`Invalid story session seq: ${raw}`);
@@ -99,7 +99,6 @@ function sessionState(overrides: Partial<SessionStateSnapshot> = {}): SessionSta
         followUpMode: "one-at-a-time",
         autoCompactionEnabled: true,
         messageCount: 4,
-        pendingMessageCount: 0,
         steeringMessages: [],
         followUpMessages: [],
         ...overrides,

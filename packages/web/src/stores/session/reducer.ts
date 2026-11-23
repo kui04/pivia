@@ -1,23 +1,17 @@
+import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { FileEntry, JsonAgentSessionEvent, RpcExtensionUIRequest } from "@earendil-works/pi-coding-agent";
 import {
     assertNever,
-    parseSyncSeq,
-    type AssistantMessage,
     type EntriesVersion,
-    type FileEntry,
     type HydratableSyncReducer,
-    type RpcExtensionUIRequest,
     type SessionCloseReason,
-    type SessionCursor,
     type SessionDelta,
     type SessionId,
     type SessionPrefixAnchor,
-    type SessionSeq,
     type SessionSnapshot,
     type SessionStatePatch,
     type SessionStateSnapshot,
 } from "@pivia/protocol";
-
-export type SessionEvent = Extract<SessionDelta, { readonly kind: "agent_event" }>["event"];
 
 /** Connection lifecycle of the one session the workspace currently shows. */
 export type SessionConnectionStatus = "idle" | "connecting" | "open" | "reconnecting" | "closed" | "error";
@@ -41,46 +35,23 @@ export type LiveMessageState =
  * duplicated in UI store state.
  */
 export type EntriesSyncState =
-    | { readonly kind: "idle" }
-    | {
-          readonly kind: "loading";
-          readonly baseEntryCount: number;
-          readonly targetEntryCount: number;
-      }
-    | {
-          readonly kind: "error";
-          readonly baseEntryCount: number;
-          readonly targetEntryCount: number;
-          readonly message: string;
-      };
-
-/** One structural runtime event kept with the stream sequence that produced it. */
-export interface SequencedSessionEvent {
-    readonly seq: SessionSeq;
-    readonly event: SessionEvent;
-}
+    { readonly kind: "idle" } | { readonly kind: "loading" } | { readonly kind: "error"; readonly message: string };
 
 /** HTTP hydration descriptor returned to `SyncStreamClient` when session entries offload to HTTP. */
 export interface SessionHttpHydrationDescriptor {
     readonly kind: "snapshot" | "delta";
-    readonly entriesVersion: EntriesVersion;
     readonly baseEntryCount: number;
-    readonly targetEntryCount: number;
 }
 
 /** Everything the session view needs from the active runtime. */
 export interface SessionState {
     readonly status: SessionConnectionStatus;
     readonly sessionId: SessionId | null;
-    /** Domain clock cursor (`epoch` = runtime id, `seq` = stream counter) of the applied state. */
-    readonly cursor: SessionCursor | null;
     /** Composite `${sessionVersion}:${sdkVersion}`, or `null` when uncached/unmigrated. */
     readonly entriesVersion: EntriesVersion | null;
     readonly state: SessionStateSnapshot | null;
     readonly entries: readonly FileEntry[];
     readonly entriesSync: EntriesSyncState;
-    /** Structural events kept for the live view; message deltas live in `liveMessage`. */
-    readonly liveEvents: readonly SequencedSessionEvent[];
     /** Assistant message being streamed or awaiting its persisted entry; deltas fold into it. */
     readonly liveMessage: LiveMessageState;
     readonly pendingUiRequests: readonly RpcExtensionUIRequest[];
@@ -93,19 +64,16 @@ export interface SessionLocalHydrationInput {
     readonly entriesVersion: EntriesVersion | null;
     readonly entries: readonly FileEntry[];
     readonly state?: SessionStateSnapshot | null | undefined;
-    readonly liveEvents?: readonly SequencedSessionEvent[] | undefined;
 }
 
 /** The session state before a socket exists. */
 export const initialSessionState: SessionState = {
     status: "idle",
     sessionId: null,
-    cursor: null,
     entriesVersion: null,
     state: null,
     entries: [],
     entriesSync: { kind: "idle" },
-    liveEvents: [],
     liveMessage: { kind: "none" },
     pendingUiRequests: [],
     lastError: null,
@@ -129,15 +97,7 @@ export function buildSessionPrefixAnchor(state: SessionState): SessionPrefixAnch
     };
 }
 
-type AssistantDelta = Extract<SessionEvent, { type: "message_update" }>["assistantMessageEvent"];
-
-/**
- * Upper bound for structural events kept in memory.
- *
- * Streaming deltas do not enter this list; they fold into `liveMessage`. The bound still stops
- * tool updates and queue changes from growing without limit.
- */
-const MAX_LIVE_EVENTS = 512;
+type AssistantDelta = Extract<JsonAgentSessionEvent, { type: "message_update" }>["assistantMessageEvent"];
 
 const INTERACTIVE_METHODS: ReadonlySet<RpcExtensionUIRequest["method"]> = new Set([
     "select",
@@ -152,20 +112,6 @@ function isDialogRequest(request: RpcExtensionUIRequest): boolean {
 
 function filterInteractiveUiRequests(requests: readonly RpcExtensionUIRequest[]): readonly RpcExtensionUIRequest[] {
     return requests.filter(isDialogRequest);
-}
-
-function isStructuralEvent(event: SessionEvent): boolean {
-    return event.type !== "message_update";
-}
-
-function appendLiveEvent(
-    events: readonly SequencedSessionEvent[],
-    event: SequencedSessionEvent,
-): readonly SequencedSessionEvent[] {
-    if (events.length < MAX_LIVE_EVENTS) {
-        return [...events, event];
-    }
-    return [...events.slice(events.length - MAX_LIVE_EVENTS + 1), event];
 }
 
 function replaceContent(message: AssistantMessage, index: number, block: AssistantMessage["content"][number]) {
@@ -235,7 +181,7 @@ function toLiveMessageState(message: AssistantMessage | null): LiveMessageState 
  * `message_start` starts streaming; `message_end` transitions to `"settled"` so the finalized
  * message stays rendered until the matching persisted entry arrives in `entries`.
  */
-function applyAssistantEvent(live: LiveMessageState, event: SessionEvent): LiveMessageState {
+function applyAssistantEvent(live: LiveMessageState, event: JsonAgentSessionEvent): LiveMessageState {
     switch (event.type) {
         case "message_start":
             return event.message.role === "assistant"
@@ -305,7 +251,10 @@ export function mergeAppendedEntries(
  * `model` and `messageCount` arrive via {@link SessionDelta} `state_patched` frames so replays remain
  * deterministic.
  */
-function applySessionEvent(summary: SessionStateSnapshot | null, event: SessionEvent): SessionStateSnapshot | null {
+function applySessionEvent(
+    summary: SessionStateSnapshot | null,
+    event: JsonAgentSessionEvent,
+): SessionStateSnapshot | null {
     if (summary === null) {
         return null;
     }
@@ -329,7 +278,6 @@ function applySessionEvent(summary: SessionStateSnapshot | null, event: SessionE
                 ...summary,
                 steeringMessages: event.steering,
                 followUpMessages: event.followUp,
-                pendingMessageCount: event.steering.length + event.followUp.length,
             };
         default:
             return summary;
@@ -393,7 +341,6 @@ export function applyLocalSessionHydration(state: SessionState, input: SessionLo
         entriesVersion: input.entriesVersion,
         entries: input.entries,
         state: input.state ?? state.state,
-        liveEvents: input.liveEvents ?? state.liveEvents,
         // Keep liveMessage empty when hydrating locally until the WS handshake confirms live state.
         liveMessage: { kind: "none" },
     };
@@ -456,12 +403,7 @@ export function createSessionSyncReducer(): HydratableSyncReducer<
                     entriesVersion: snapshot.entriesVersion,
                     state: snapshot.state,
                     entries: basePrefix,
-                    entriesSync: {
-                        kind: "loading",
-                        baseEntryCount: snapshot.baseEntryCount,
-                        targetEntryCount: snapshot.entries.meta.entryCount,
-                    },
-                    liveEvents: [],
+                    entriesSync: { kind: "loading" },
                     liveMessage: toLiveMessageState(snapshot.liveMessage),
                     pendingUiRequests: filterInteractiveUiRequests(snapshot.pendingUiRequests),
                     lastError: null,
@@ -479,7 +421,6 @@ export function createSessionSyncReducer(): HydratableSyncReducer<
                 state: snapshot.state,
                 entries: nextEntries,
                 entriesSync: { kind: "idle" },
-                liveEvents: [],
                 liveMessage: toLiveMessageState(snapshot.liveMessage),
                 pendingUiRequests: filterInteractiveUiRequests(snapshot.pendingUiRequests),
                 lastError: null,
@@ -491,9 +432,7 @@ export function createSessionSyncReducer(): HydratableSyncReducer<
             }
             return {
                 kind: "snapshot",
-                entriesVersion: snapshot.entriesVersion,
                 baseEntryCount: snapshot.baseEntryCount,
-                targetEntryCount: snapshot.entries.meta.entryCount,
             };
         },
         inspectDelta(delta, state) {
@@ -509,44 +448,33 @@ export function createSessionSyncReducer(): HydratableSyncReducer<
             }
             return {
                 kind: "delta",
-                entriesVersion: delta.entriesVersion,
                 baseEntryCount: Math.min(state.entries.length, delta.baseEntryCount),
-                targetEntryCount: delta.entries.meta.entryCount,
             };
         },
-        recoverHydrationFailure(prevState, descriptor, message) {
+        recoverHydrationFailure(prevState, _descriptor, message) {
             return prevState.status === "closed"
                 ? prevState
                 : {
                       ...prevState,
                       entriesSync: {
                           kind: "error",
-                          baseEntryCount: descriptor.baseEntryCount,
-                          targetEntryCount: descriptor.targetEntryCount,
                           message,
                       },
                   };
         },
-        applyDelta(prev, delta, seq) {
+        applyDelta(prev, delta) {
             if (prev.status === "closed") {
                 return prev;
             }
             switch (delta.kind) {
-                case "agent_event": {
-                    const parsedSeq = seq !== undefined ? parseSyncSeq<"session">(seq) : null;
-                    const nextLiveEvents =
-                        isStructuralEvent(delta.event) && parsedSeq !== null
-                            ? appendLiveEvent(prev.liveEvents, { seq: parsedSeq, event: delta.event })
-                            : prev.liveEvents;
+                case "agent_event":
                     return {
                         ...prev,
                         status: "open",
                         state: applySessionEvent(prev.state, delta.event),
-                        liveEvents: nextLiveEvents,
                         liveMessage: applyAssistantEvent(prev.liveMessage, delta.event),
                         lastError: null,
                     };
-                }
                 case "entries_appended": {
                     if (delta.entries.mode === "http") {
                         return delta.entriesVersion === prev.entriesVersion

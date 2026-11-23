@@ -2,12 +2,11 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { SessionManager } from "@earendil-works/pi-coding-agent";
+import type { RpcExtensionUIResponse, SessionManager } from "@earendil-works/pi-coding-agent";
 
 import {
     parseSessionId,
     parseSyncSeq,
-    type RpcExtensionUIResponse,
     type SessionId,
     type SessionRpcCommand,
     type SessionRpcServerMessage,
@@ -784,7 +783,7 @@ describe("SessionRegistry", () => {
         const session = fakeSession(fixture, handle);
         const realProjectDir = realpathSync(fixture.projectDir);
 
-        session.setState({ isStreaming: true, messageCount: 2, pendingMessageCount: 1 });
+        session.setState({ isStreaming: true, messageCount: 2 });
         const collector = createCollector();
         const attachment = fixture.registry.attach(handle.sessionId, collector.client);
 
@@ -922,7 +921,6 @@ describe("SessionRegistry", () => {
         session.setState({
             steeringMessages: ["steer-a"],
             followUpMessages: ["follow-b"],
-            pendingMessageCount: 2,
             messageCount: 4,
         });
 
@@ -934,7 +932,6 @@ describe("SessionRegistry", () => {
             isStreaming: false,
             steeringMessages: ["steer-a"],
             followUpMessages: ["follow-b"],
-            pendingMessageCount: 2,
             messageCount: 4,
         });
 
@@ -1658,13 +1655,13 @@ describe("SessionRegistry", () => {
                 patch: { runtimeState: "idle", attachedClients: 0 },
             });
 
-            // All catalog events share one catalogEpoch and strictly increasing seq matching list().
+            // All catalog events share one epoch and strictly increasing seq matching list().
             const listAfterEvents = await fixture.registry.list();
             const allDeltas = events();
             expect(allDeltas.length).toBeGreaterThan(0);
             for (let index = 0; index < allDeltas.length; index += 1) {
                 const frame = allDeltas[index];
-                expect(frame?.cursor.epoch).toBe(listAfterEvents.catalogEpoch);
+                expect(frame?.cursor.epoch).toBe(listAfterEvents.cursor.epoch);
                 if (index > 0) {
                     const prev = allDeltas[index - 1];
                     if (prev !== undefined && frame !== undefined) {
@@ -1672,13 +1669,13 @@ describe("SessionRegistry", () => {
                     }
                 }
             }
-            expect(allDeltas.at(-1)?.cursor.seq).toBe(listAfterEvents.catalogSeq);
+            expect(allDeltas.at(-1)?.cursor.seq).toBe(listAfterEvents.cursor.seq);
 
             primary.detach();
             const countAfterDetach = allDeltas.length;
             await fixture.registry.createSession(fixture.projectDir);
             expect(events()).toHaveLength(countAfterDetach);
-            expect((await fixture.registry.list()).catalogSeq).toBeGreaterThan(listAfterEvents.catalogSeq);
+            expect((await fixture.registry.list()).cursor.seq).toBeGreaterThan(listAfterEvents.cursor.seq);
         } finally {
             releaseBind?.();
         }

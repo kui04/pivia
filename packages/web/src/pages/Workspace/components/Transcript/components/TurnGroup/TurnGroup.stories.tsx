@@ -39,7 +39,6 @@ const completedTurn: TranscriptTurnItem = {
         {
             kind: "toolCall",
             id: "step-tool-1",
-            name: "bash",
             toolKind: "bash",
             label: "Bash",
             summary: "git log --oneline -20",
@@ -89,7 +88,6 @@ const intermediateReplyTurn: TranscriptTurnItem = {
         {
             kind: "toolCall",
             id: "step-mid-tool",
-            name: "bash",
             toolKind: "bash",
             label: "Bash",
             summary: "pnpm test:unit",
@@ -121,7 +119,6 @@ const streamingTurn: TranscriptTurnItem = {
         {
             kind: "toolCall",
             id: "step-stream-tool",
-            name: "bash",
             toolKind: "bash",
             label: "Bash",
             summary: "pnpm test:storybook",
@@ -174,7 +171,6 @@ const errorTurn: TranscriptTurnItem = {
         {
             kind: "toolCall",
             id: "step-err-tool",
-            name: "read",
             toolKind: "read",
             label: "Read",
             summary: "src/pages/Workspace/WorkspacePage.tsx",

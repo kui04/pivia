@@ -338,7 +338,7 @@ export class SyncStreamClient<D extends string, TState, TSnapshot, TDelta, THydr
             if (item.cursor.epoch !== nextCursor.epoch || item.cursor.seq <= nextCursor.seq) {
                 continue;
             }
-            nextState = this.reducer.applyDelta(nextState, item.payload, item.cursor.seq);
+            nextState = this.reducer.applyDelta(nextState, item.payload);
             nextCursor = item.cursor;
         }
         if (!canApplySyncSnapshot(currentApplied, nextCursor)) {
@@ -464,7 +464,7 @@ export class SyncStreamClient<D extends string, TState, TSnapshot, TDelta, THydr
                 this.startHydration(hydration, itemCursor);
                 return;
             }
-            nextState = this.reducer.applyDelta(nextState, item.payload, item.seq);
+            nextState = this.reducer.applyDelta(nextState, item.payload);
             committed = itemCursor;
         }
 
@@ -547,7 +547,7 @@ export class SyncStreamClient<D extends string, TState, TSnapshot, TDelta, THydr
                     this.startHydration(hydration, frame.cursor);
                     return;
                 }
-                this.state = this.reducer.applyDelta(this.state, frame.delta, frame.cursor.seq);
+                this.state = this.reducer.applyDelta(this.state, frame.delta);
                 this.phase = { kind: "live", cursor: frame.cursor };
                 this.emit("delta");
                 return;
@@ -720,7 +720,7 @@ export class SyncStreamClient<D extends string, TState, TSnapshot, TDelta, THydr
                 this.startHydration(nextHydration, nextTarget);
                 return false;
             }
-            nextState = this.reducer.applyDelta(nextState, item.payload, item.seq);
+            nextState = this.reducer.applyDelta(nextState, item.payload);
             cursor = { epoch: cursor.epoch, seq: item.seq };
         }
 

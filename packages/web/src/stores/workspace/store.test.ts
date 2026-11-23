@@ -1,13 +1,4 @@
-import {
-    parseCatalogEpoch,
-    parseCatalogSeq,
-    parseSessionId,
-    type CatalogCursor,
-    type CatalogEpoch,
-    type CatalogSeq,
-    type SessionId,
-    type SessionSummary,
-} from "@pivia/protocol";
+import { parseSessionId, type SessionId, type SessionSummary } from "@pivia/protocol";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 function sid(raw: string): SessionId {
@@ -16,26 +7,6 @@ function sid(raw: string): SessionId {
         throw new Error(`Invalid test session id: ${raw}`);
     }
     return parsed;
-}
-
-function epoch(raw: string): CatalogEpoch {
-    const parsed = parseCatalogEpoch(raw);
-    if (parsed === null) {
-        throw new Error(`Invalid test catalog epoch: ${raw}`);
-    }
-    return parsed;
-}
-
-function seq(raw: number): CatalogSeq {
-    const parsed = parseCatalogSeq(raw);
-    if (parsed === null) {
-        throw new Error(`Invalid test catalog seq: ${raw}`);
-    }
-    return parsed;
-}
-
-function cursor(epochId: string, value: number): CatalogCursor {
-    return { epoch: epoch(epochId), seq: seq(value) };
 }
 
 const A = sid("a");
@@ -116,7 +87,6 @@ describe("createWorkspaceStore", () => {
         store.commitSyncedCatalog({
             sessions: [summary(A)],
             updatedAtMs: 10_000,
-            cursor: cursor("e1", 0),
             sync: { kind: "live" },
         });
         expect(workspace.getState().sync).toEqual({ kind: "live" });
@@ -147,7 +117,6 @@ describe("createWorkspaceStore", () => {
         store.commitSyncedCatalog({
             sessions: liveSessions,
             updatedAtMs: 42_000,
-            cursor: cursor("e1", 3),
             sync: { kind: "live" },
             persistCache: true,
         });
@@ -155,7 +124,6 @@ describe("createWorkspaceStore", () => {
         const state = workspace.getState();
         expect(state.sessions.map((session) => session.id)).toEqual([LIVE]);
         expect(state.updatedAtMs).toBe(42_000);
-        expect(state.catalogCursor).toEqual(cursor("e1", 3));
         expect(state.sync).toEqual({ kind: "live" });
         expect(state.pins).toEqual([LIVE]);
         expect(state.selectedId).toBeNull();
@@ -168,7 +136,6 @@ describe("createWorkspaceStore", () => {
         store.commitSyncedCatalog({
             sessions: [summary(A)],
             updatedAtMs: 7_000,
-            cursor: cursor("e1", 0),
             sync: { kind: "live" },
         });
         store.select(A);
@@ -214,7 +181,6 @@ describe("createWorkspaceStore", () => {
         store.commitSyncedCatalog({
             sessions: [summary(A, { name: "A" })],
             updatedAtMs: 10_000,
-            cursor: cursor("e1", 0),
             sync: { kind: "live" },
         });
         store.togglePinned(A);
@@ -260,7 +226,6 @@ describe("createWorkspaceStore", () => {
         store.commitSyncedCatalog({
             sessions: [summary(A)],
             updatedAtMs: 10_000,
-            cursor: cursor("e1", 0),
             sync: { kind: "live" },
         });
         store.togglePinned(A);
@@ -331,7 +296,7 @@ describe("createWorkspaceStore", () => {
     it("hydrates stale-while-revalidate catalog rows from cache only before the first live sync", async () => {
         const fakeCache: WorkspaceCatalogCache = {
             getWorkspaceCatalog: vi.fn(() =>
-                Promise.resolve({ key: "default" as const, sessions: [summary(CACHED)], scannedAtMs: 5_000 }),
+                Promise.resolve({ key: "default" as const, sessions: [summary(CACHED)], updatedAtMs: 5_000 }),
             ),
             putWorkspaceCatalog: vi.fn(() => Promise.resolve()),
         };
@@ -343,7 +308,6 @@ describe("createWorkspaceStore", () => {
         workspace.getState().commitSyncedCatalog({
             sessions: [summary(LIVE)],
             updatedAtMs: 9_000,
-            cursor: cursor("e1", 0),
             sync: { kind: "live" },
             persistCache: true,
         });
@@ -360,7 +324,6 @@ describe("createWorkspaceStore", () => {
         workspace.getState().commitSyncedCatalog({
             sessions: [summary(A)],
             updatedAtMs: 10_000,
-            cursor: cursor("e1", 0),
             sync: { kind: "live" },
             persistCache: true,
         });

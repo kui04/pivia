@@ -122,9 +122,9 @@ describe("session routes", () => {
         expect(list.statusCode).toBe(200);
         const listBody = list.json<SessionListResponse>();
         expect(listBody.sessions.map((session) => session.id).sort()).toEqual(["session-alpha", "session-beta"]);
-        expect(Number.isFinite(listBody.scannedAtMs)).toBe(true);
-        expect(listBody.catalogEpoch.length).toBeGreaterThan(0);
-        expect(listBody.catalogSeq).toBe(0);
+        expect(Number.isFinite(listBody.updatedAtMs)).toBe(true);
+        expect(listBody.cursor.epoch.length).toBeGreaterThan(0);
+        expect(listBody.cursor.seq).toBe(0);
         expect(list.body).not.toContain("allMessagesText");
         expect(list.body).not.toContain(sessionDir);
 

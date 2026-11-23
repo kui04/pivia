@@ -1,6 +1,10 @@
-import type { SessionRuntimeState, SessionSummary } from "./http.ts";
+import type { SessionSummary } from "./http.ts";
+import type { PatchOf } from "./parse/primitives.ts";
 import type { SessionId } from "./parse/session.ts";
-import type { CollectionDelta, SyncFrame } from "./sync/index.ts";
+import type { CollectionDelta, SyncCursor, SyncFrame } from "./sync/index.ts";
+
+/** Logical clock cursor for the workspace session catalog stream. */
+export type CatalogCursor = SyncCursor<"catalog">;
 
 /**
  * Mutable fields of {@link SessionSummary} carried in incremental `patch` deltas.
@@ -8,14 +12,10 @@ import type { CollectionDelta, SyncFrame } from "./sync/index.ts";
  * Immutable fields (`id`, `cwd`, `createdAtMs`, `hasParent`) are sent once on `sync:snapshot`
  * or `upsert` and omitted from subsequent updates.
  */
-export interface SessionSummaryPatch {
-    readonly name?: string | null | undefined;
-    readonly firstMessage?: string | undefined;
-    readonly messageCount?: number | undefined;
-    readonly modifiedAtMs?: number | undefined;
-    readonly runtimeState?: SessionRuntimeState | undefined;
-    readonly attachedClients?: number | undefined;
-}
+export type SessionSummaryPatch = PatchOf<
+    SessionSummary,
+    "name" | "firstMessage" | "messageCount" | "modifiedAtMs" | "runtimeState" | "attachedClients"
+>;
 
 /** Full workspace catalog snapshot replicated on initial sync or resync. */
 export interface CatalogSnapshot {

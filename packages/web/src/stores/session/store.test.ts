@@ -1,3 +1,4 @@
+import type { FileEntry } from "@earendil-works/pi-coding-agent";
 import {
     parseEntriesVersion,
     parseSessionId,
@@ -5,13 +6,12 @@ import {
     parseSyncSeq,
     SESSION_CLOSE_CODE,
     type EntriesVersion,
-    type FileEntry,
     type SessionDetailResponse,
     type SessionId,
-    type SessionRuntimeId,
-    type SessionSeq,
     type SessionStateSnapshot,
     type SessionWsServerMessage,
+    type SyncEpoch,
+    type SyncSeq,
 } from "@pivia/protocol";
 
 function sid(raw: string): SessionId {
@@ -30,7 +30,7 @@ function ev(raw: string): EntriesVersion {
     return parsed;
 }
 
-function rt(raw: string): SessionRuntimeId {
+function rt(raw: string): SyncEpoch<"session"> {
     const parsed = parseSyncEpoch<"session">(raw);
     if (parsed === null) {
         throw new Error(`Invalid test runtime id: ${raw}`);
@@ -38,7 +38,7 @@ function rt(raw: string): SessionRuntimeId {
     return parsed;
 }
 
-function seq(raw: number): SessionSeq {
+function seq(raw: number): SyncSeq<"session"> {
     const parsed = parseSyncSeq<"session">(raw);
     if (parsed === null) {
         throw new Error(`Invalid test session seq: ${raw}`);
@@ -117,7 +117,6 @@ function summary(overrides: Partial<SessionStateSnapshot> = {}): SessionStateSna
         followUpMode: "one-at-a-time",
         autoCompactionEnabled: true,
         messageCount: 0,
-        pendingMessageCount: 0,
         steeringMessages: [],
         followUpMessages: [],
         ...overrides,
@@ -209,14 +208,13 @@ describe("createSessionStore", () => {
         const socket = lastSocket();
         expect(socket.url).toBe("ws://localhost:3141/ws/sessions/session-1");
         socket.open();
-        expect(store.getState().status).toBe("open");
+        expect(store.getState().status).toBe("connecting");
 
         socket.receive(snapshot(4));
 
         expect(store.getState()).toMatchObject({
             status: "open",
             sessionId: SESSION_1,
-            cursor: { epoch: RUNTIME_1, seq: seq(4) },
             entries: [],
             pendingUiRequests: [],
         });
@@ -321,10 +319,8 @@ describe("createSessionStore", () => {
 
         expect(store.getState()).toMatchObject({
             status: "open",
-            cursor: { epoch: RUNTIME_1, seq: seq(5) },
         });
         expect(store.getState().state?.isStreaming).toBe(true);
-        expect(store.getState().liveEvents.map((entry) => entry.seq)).toEqual([5]);
     });
 
     it("stops reconnecting after the attempt budget", async () => {
@@ -362,7 +358,6 @@ describe("createSessionStore", () => {
         expect(store.getState()).toMatchObject({
             status: "idle",
             sessionId: null,
-            cursor: null,
             state: null,
             pendingUiRequests: [],
         });
@@ -754,11 +749,10 @@ describe("createSessionStore", () => {
         });
 
         await vi.waitFor(() => {
-            expect(store.getState().cursor).toEqual({ epoch: RUNTIME_1, seq: seq(3) });
+            expect(store.getState().state?.messageCount).toBe(3);
         });
         expect(getSession).toHaveBeenCalledTimes(1);
         expect(store.getState().entries.map((entry) => entry.id)).toEqual(["session-1", "e1", "e2", "e3"]);
-        expect(store.getState().state?.messageCount).toBe(3);
 
         // Re-receiving an HTTP offload pointing at an entryCount already met skips HTTP.
         sock.receive({
@@ -772,7 +766,6 @@ describe("createSessionStore", () => {
             },
         });
         expect(getSession).toHaveBeenCalledTimes(1);
-        expect(store.getState().cursor).toEqual({ epoch: RUNTIME_1, seq: seq(4) });
         store.getState().disconnect();
     });
 

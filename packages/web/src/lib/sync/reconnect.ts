@@ -1,16 +1,10 @@
-import type { SyncResyncReason } from "@pivia/protocol";
+import type { AuthStatusResponse, SyncResyncReason } from "@pivia/protocol";
 
 /** Default exponential backoff intervals (ms) between reconnect or repeated resync attempts. */
 export const DEFAULT_RECONNECT_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 15_000] as const;
 
 /** Default consecutive transport closes before probing `/api/auth/status`. */
 export const DEFAULT_AUTH_PROBE_THRESHOLD = 2;
-
-/** Auth status result consumed by {@link createReconnectController}. */
-export interface ReconnectAuthStatus {
-    readonly authRequired: boolean;
-    readonly authenticated: boolean;
-}
 
 /** Options for {@link createReconnectController}. */
 export interface ReconnectControllerOptions {
@@ -20,7 +14,7 @@ export interface ReconnectControllerOptions {
     /** Consecutive closes before calling `authProbe`. Defaults to `2`. */
     readonly authProbeFailureThreshold?: number | undefined;
     /** Optional auth status probe called after repeated close failures. */
-    readonly authProbe?: (() => Promise<ReconnectAuthStatus>) | undefined;
+    readonly authProbe?: (() => Promise<AuthStatusResponse>) | undefined;
     readonly onUnauthorized?: (() => void) | undefined;
     /** Invoked when a reconnect or resync timer fires to open/re-open the transport. */
     readonly onReconnect: (attempt: number) => void;

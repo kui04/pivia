@@ -18,6 +18,7 @@ import type {
     AuthLogoutResponse,
     AuthStatusResponse,
     CloseSessionResponse,
+    CreateSessionOptions,
     CreateSessionResponse,
     DirectoryListResponse,
     HealthResponse,
@@ -84,10 +85,7 @@ export interface GetSessionOptions {
     readonly signal?: AbortSignal | undefined;
 }
 
-/** Optional flags for {@link ApiClient.createSession}. */
-export interface CreateSessionOptions {
-    readonly createDirectory?: boolean | undefined;
-}
+export type { CreateSessionOptions };
 
 /** HTTP operations used by the auth and workspace stores. */
 export interface ApiClient {

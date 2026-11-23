@@ -1,8 +1,8 @@
+import type { FileEntry } from "@earendil-works/pi-coding-agent";
 import {
     parseEntriesVersion,
     parseSessionId,
     type EntriesVersion,
-    type FileEntry,
     type SessionId,
     type SessionSummary,
 } from "@pivia/protocol";
@@ -153,7 +153,7 @@ describe("IndexedDbSessionCache", () => {
         expect(await cache.getWorkspaceCatalog()).toEqual({
             key: "default",
             sessions: [summary(S3)],
-            scannedAtMs: 9_000,
+            updatedAtMs: 9_000,
         });
 
         await cache.clearAll();
@@ -206,7 +206,7 @@ describe("IndexedDbSessionCache", () => {
             const tx = db.transaction(["session_meta", "workspace_catalog"], "readwrite");
             tx.objectStore("session_meta").put({ sessionId: S1, entriesVersion: "corrupt" });
             tx.objectStore("session_meta").put({ sessionId: "s-corrupt", entriesVersion: "bad" });
-            tx.objectStore("workspace_catalog").put({ key: "default", sessions: [{ id: "../bad" }], scannedAtMs: 1 });
+            tx.objectStore("workspace_catalog").put({ key: "default", sessions: [{ id: "../bad" }], updatedAtMs: 1 });
             tx.oncomplete = () => resolve();
             tx.onerror = () => reject(tx.error ?? new Error("Failed to write corrupted IndexedDB rows."));
         });

@@ -19,7 +19,6 @@ const succeededItem: TranscriptBashItem = {
     excludeFromContext: false,
     status: { kind: "succeeded" },
     truncation: { kind: "none" },
-    timestamp: Date.parse("2026-11-17T08:00:00.000Z"),
 };
 
 const longOutputItem: TranscriptBashItem = {

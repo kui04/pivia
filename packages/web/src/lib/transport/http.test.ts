@@ -95,7 +95,7 @@ describe("createApiClient", () => {
         const fetchImpl: FetchLike = (url) => {
             urls.push(urlString(url));
             return Promise.resolve(
-                jsonResponse({ sessions: [], scannedAtMs: 0, catalogEpoch: "epoch-1", catalogSeq: 0 }),
+                jsonResponse({ sessions: [], updatedAtMs: 0, cursor: { epoch: "epoch-1", seq: 0 } }),
             );
         };
         const client = createApiClient({ baseUrl: "https://example.test/", fetch: fetchImpl });

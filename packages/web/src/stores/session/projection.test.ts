@@ -1,7 +1,7 @@
 import type { SessionEntry, SessionHeader } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 
-import { projectSessionTranscript } from "./projection.ts";
+import { projectSessionTranscript } from "./projection";
 
 const HEADER: SessionHeader = {
     type: "session",
@@ -49,16 +49,8 @@ function assistantEntry(id: string, parentId: string | null, text: string): Sess
 
 describe("projectSessionTranscript", () => {
     it("handles header-only sessions and explicit null leafId", () => {
-        const empty = projectSessionTranscript([HEADER]);
-        expect(empty.items).toEqual([]);
-        expect(empty.compactedBefore).toEqual([]);
-        expect(empty.compaction).toBeNull();
-        expect(empty.leafId).toBeNull();
-        expect(empty.sessionName).toBeNull();
-
-        const explicitNull = projectSessionTranscript([HEADER, userEntry("u1", null, "hi")], { leafId: null });
-        expect(explicitNull.items).toEqual([]);
-        expect(explicitNull.leafId).toBeNull();
+        expect(projectSessionTranscript([HEADER])).toEqual([]);
+        expect(projectSessionTranscript([HEADER, userEntry("u1", null, "hi")], { leafId: null })).toEqual([]);
     });
 
     it("walks the active branch from leafId and breaks cyclic parentId chains", () => {
@@ -74,18 +66,17 @@ describe("projectSessionTranscript", () => {
             timestamp: "2026-04-01T00:00:03.000Z",
         };
 
-        const projection = projectSessionTranscript([HEADER, u1, a1, a2, branchSummary]);
-        expect(projection.leafId).toBe("bs1");
-        expect(projection.activeEntries.map((entry) => entry.id)).toEqual(["u1", "a2", "bs1"]);
+        const items = projectSessionTranscript([HEADER, u1, a1, a2, branchSummary]);
+        expect(items.map((item) => item.entry.id)).toEqual(["u1", "a2", "bs1"]);
 
         const branchA = projectSessionTranscript([HEADER, u1, a1, a2, branchSummary], { leafId: "a1" });
-        expect(branchA.activeEntries.map((entry) => entry.id)).toEqual(["u1", "a1"]);
+        expect(branchA.map((item) => item.entry.id)).toEqual(["u1", "a1"]);
 
         // Cyclic entries must terminate instead of looping infinitely.
         const cyc1 = userEntry("c1", "c2", "one");
         const cyc2 = assistantEntry("c2", "c1", "two");
         const cyclic = projectSessionTranscript([HEADER, cyc1, cyc2]);
-        expect(cyclic.activeEntries.map((entry) => entry.id)).toEqual(["c1", "c2"]);
+        expect(cyclic.map((item) => item.entry.id)).toEqual(["c1", "c2"]);
     });
 
     it("folds compaction boundaries, omits pre-compaction system messages, and handles self-kept compactions", () => {
@@ -110,16 +101,11 @@ describe("projectSessionTranscript", () => {
         };
         const u3 = userEntry("u3", "comp-1", "after compaction");
 
-        const projection = projectSessionTranscript([HEADER, sys, u1, u2, a2, compaction, u3]);
-        expect(projection.compaction?.id).toBe("comp-1");
-        expect(projection.compactedBefore.map((entry) => entry.id)).toEqual(["sys", "u1"]);
-        expect(projection.activeEntries.map((entry) => entry.id)).toEqual(["comp-1", "u2", "a2", "u3"]);
-        expect(projection.items[0]).toMatchObject({ kind: "compaction", entry: compaction });
-        if (projection.items[0]?.kind === "compaction") {
-            expect(projection.items[0].compactedBefore.map((entry) => entry.id)).toEqual(["sys", "u1"]);
-        }
+        const items = projectSessionTranscript([HEADER, sys, u1, u2, a2, compaction, u3]);
+        expect(items.map((item) => item.entry.id)).toEqual(["comp-1", "u2", "a2", "u3"]);
+        expect(items[0]).toEqual({ kind: "compaction", entry: compaction });
 
-        // System message at or after firstKeptEntryId before compaction is excluded from activeEntries.
+        // System message at or after firstKeptEntryId before compaction is excluded from active items.
         const sysKept: SessionEntry = {
             type: "message",
             id: "sys-kept",
@@ -130,7 +116,7 @@ describe("projectSessionTranscript", () => {
         const a2AfterSys = assistantEntry("a2s", "sys-kept", "kept answer");
         const compWithSys: SessionEntry = { ...compaction, parentId: "a2s" };
         const projSys = projectSessionTranscript([HEADER, u1, u2, sysKept, a2AfterSys, compWithSys]);
-        expect(projSys.activeEntries.map((entry) => entry.id)).toEqual(["comp-1", "u2", "a2s"]);
+        expect(projSys.map((item) => item.entry.id)).toEqual(["comp-1", "u2", "a2s"]);
 
         // firstKeptEntryId === compaction.id keeps zero pre-compaction entries.
         const selfKept: SessionEntry = {
@@ -143,11 +129,10 @@ describe("projectSessionTranscript", () => {
             timestamp: "2026-04-01T00:00:04.000Z",
         };
         const selfProj = projectSessionTranscript([HEADER, u1, selfKept]);
-        expect(selfProj.compactedBefore.map((entry) => entry.id)).toEqual(["u1"]);
-        expect(selfProj.activeEntries.map((entry) => entry.id)).toEqual(["comp-self"]);
+        expect(selfProj).toEqual([{ kind: "compaction", entry: selfKept }]);
     });
 
-    it("applies context_edit omissions and replacements, labels, and session_info", () => {
+    it("applies context_edit omissions and replacements", () => {
         const u1 = userEntry("u1", null, "first");
         const a1 = assistantEntry("a1", "u1", "bad response");
         const a2 = assistantEntry("a2", "a1", "editable response");
@@ -167,61 +152,12 @@ describe("projectSessionTranscript", () => {
             replacement: { content: "edited text" },
             timestamp: "2026-04-01T00:00:04.000Z",
         };
-        const labelSet: SessionEntry = {
-            type: "label",
-            id: "l1",
-            parentId: "ce2",
-            targetId: "u1",
-            label: "important",
-            timestamp: "2026-04-01T00:00:05.000Z",
-        };
-        const labelSetTemp: SessionEntry = {
-            type: "label",
-            id: "l2",
-            parentId: "l1",
-            targetId: "a2",
-            label: "temp",
-            timestamp: "2026-04-01T00:00:06.000Z",
-        };
-        const labelClearTemp: SessionEntry = {
-            type: "label",
-            id: "l3",
-            parentId: "l2",
-            targetId: "a2",
-            label: undefined,
-            timestamp: "2026-04-01T00:00:07.000Z",
-        };
-        const info1: SessionEntry = {
-            type: "session_info",
-            id: "si1",
-            parentId: "l3",
-            name: "Renamed Session",
-            timestamp: "2026-04-01T00:00:08.000Z",
-        };
 
-        const projection = projectSessionTranscript([
-            HEADER,
-            u1,
-            a1,
-            a2,
-            omitA1,
-            replaceA2,
-            labelSet,
-            labelSetTemp,
-            labelClearTemp,
-            info1,
-        ]);
-        expect(projection.sessionName).toBe("Renamed Session");
-        expect(projection.labelsById.get("u1")).toBe("important");
-        expect(projection.labelsById.has("a2")).toBe(false);
-
-        const renderedIds = projection.items.filter((item) => item.kind === "entry").map((item) => item.entry.id);
+        const items = projectSessionTranscript([HEADER, u1, a1, a2, omitA1, replaceA2]);
+        const renderedIds = items.map((item) => item.entry.id);
         expect(renderedIds).not.toContain("a1");
 
-        const itemU1 = projection.items.find((item) => item.kind === "entry" && item.entry.id === "u1");
-        expect(itemU1).toMatchObject({ kind: "entry", label: "important" });
-
-        const itemA2 = projection.items.find((item) => item.kind === "entry" && item.entry.id === "a2");
+        const itemA2 = items.find((item) => item.entry.id === "a2");
         expect(itemA2).toMatchObject({
             kind: "entry",
             editedContent: [{ type: "text", text: "edited text" }],
@@ -260,10 +196,10 @@ describe("projectSessionTranscript", () => {
             timestamp: "2026-04-01T00:00:04.000Z",
         };
 
-        const projection = projectSessionTranscript([HEADER, system, editSystem, thinking, editThinking]);
+        const items = projectSessionTranscript([HEADER, system, editSystem, thinking, editThinking]);
 
         // `projectContextEntry` keeps both entries unchanged, so the UI must not claim an edit.
-        for (const item of projection.items) {
+        for (const item of items) {
             expect(item).not.toHaveProperty("editedContent");
         }
     });

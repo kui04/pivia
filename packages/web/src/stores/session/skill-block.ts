@@ -1,4 +1,4 @@
-import type { ParsedSkillBlock } from "@pivia/protocol";
+import type { ParsedSkillBlock } from "@earendil-works/pi-coding-agent";
 
 /**
  * Skill invocation as the Pi terminal client writes it into a user message.

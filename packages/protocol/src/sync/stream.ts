@@ -1,7 +1,7 @@
 import type { SyncCursor, SyncSeq } from "./clock.ts";
 
 /** Generic payload container switching transparently between inline WS frames and HTTP fetches. */
-export type Delivery<T, THttpMeta = { readonly count: number }> =
+export type Delivery<T, THttpMeta> =
     { readonly mode: "inline"; readonly data: T } | { readonly mode: "http"; readonly meta: THttpMeta };
 
 /** One delta paired with its monotonic domain sequence number (`seq >= 1`). */
@@ -54,7 +54,7 @@ export type CollectionDelta<TId extends string, TItem, TPatch> =
 /** Pure state reduction contract consumed by `SyncStreamClient`. */
 export interface SyncReducer<TState, TSnapshot, TDelta> {
     applySnapshot(prev: TState, snapshot: TSnapshot): TState;
-    applyDelta(prev: TState, delta: TDelta, seq?: number): TState;
+    applyDelta(prev: TState, delta: TDelta): TState;
 }
 
 /**

@@ -21,8 +21,6 @@ export interface WorkspaceViewInput {
     readonly entriesSync: EntriesSyncState;
     /** True when the projected transcript has at least one row. */
     readonly hasTranscript: boolean;
-    /** True once the first snapshot assigned a cursor. */
-    readonly hasSnapshot: boolean;
 }
 
 /**
@@ -43,12 +41,9 @@ export function selectWorkspaceView(input: WorkspaceViewInput): WorkspaceView {
 
     const terminal = input.status === "error" || input.status === "closed";
     const awaitingConnection = input.status === "idle" || input.status === "connecting";
-    // An open socket without a cursor has not received its first snapshot yet, so it has nothing
-    // to show and must not claim the session is empty.
-    const loading =
-        !terminal &&
-        !input.hasTranscript &&
-        (awaitingConnection || !input.hasSnapshot || input.entriesSync.kind === "loading");
+    // The store stays `connecting` until the first snapshot or replay arrives, so a session without
+    // rows reports `loading` instead of claiming the session is empty before the initial frame.
+    const loading = !terminal && !input.hasTranscript && (awaitingConnection || input.entriesSync.kind === "loading");
     if (loading) {
         return { kind: "loading" };
     }

@@ -1,8 +1,17 @@
-import type { AssistantMessage, ImageContent, ParsedSkillBlock, ProjectedTranscriptItem } from "@pivia/protocol";
+import type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
+import type { ParsedSkillBlock } from "@earendil-works/pi-coding-agent";
+import { isImageContent, isRecord, type StrictOmit } from "@pivia/protocol";
 
 import { stripAnsi } from "@/lib/ansi";
 
+import type { ProjectedTranscriptItem } from "./projection";
 import { parseSkillBlock } from "./skill-block";
+
+function ignoreUnknownVariant(value: never): void {
+    // Compile-time exhaustiveness check over the Pi SDK union; unknown variants from a newer
+    // session file are ignored at runtime so the rest of the transcript still renders.
+    void value;
+}
 
 /**
  * The Pi built-in tools that receive dedicated icons and argument summaries in the transcript.
@@ -35,11 +44,11 @@ export type TranscriptToolArguments = Readonly<Record<string, unknown>>;
 /** Display metadata extracted for one tool call header row. */
 export type TranscriptToolMeta = {
     /** Built-in tool category, or `generic` for extension and MCP tools. */
-    kind: TranscriptToolKind;
+    readonly toolKind: TranscriptToolKind;
     /** Display label rendered on the tool header row. */
-    label: string;
+    readonly label: string;
     /** Single-line primary argument summary rendered beside the label. */
-    summary: string;
+    readonly summary: string;
 };
 
 /**
@@ -63,13 +72,9 @@ export type TranscriptThinkingStep = {
 };
 
 /** One collapsible tool call and its paired result inside a turn timeline. */
-export type TranscriptToolCallStep = {
+export type TranscriptToolCallStep = TranscriptToolMeta & {
     readonly kind: "toolCall";
     readonly id: string;
-    readonly name: string;
-    readonly toolKind: TranscriptToolKind;
-    readonly label: string;
-    readonly summary: string;
     readonly arguments: TranscriptToolArguments;
     readonly argumentsError: string | null;
     readonly status: "running" | "done" | "error";
@@ -95,17 +100,12 @@ export type TranscriptUserItem = {
     readonly id: string;
     readonly text: string;
     readonly images: readonly ImageContent[];
-    readonly timestamp: number;
 };
 
 export type TranscriptSkillItem = {
     readonly kind: "skill";
     readonly id: string;
-    readonly name: ParsedSkillBlock["name"];
-    readonly location: ParsedSkillBlock["location"];
-    readonly content: ParsedSkillBlock["content"];
-    readonly timestamp: number;
-};
+} & Readonly<StrictOmit<ParsedSkillBlock, "userMessage">>;
 
 /**
  * Terminal state of one persisted `!` command.
@@ -137,7 +137,6 @@ export type TranscriptBashItem = {
     readonly excludeFromContext: Exclude<BashExecutionRecord["excludeFromContext"], undefined>;
     readonly status: TranscriptBashStatus;
     readonly truncation: TranscriptBashTruncation;
-    readonly timestamp: BashExecutionRecord["timestamp"];
 };
 
 /**
@@ -154,7 +153,6 @@ export type TranscriptCustomItem = {
     /** Message text as Markdown; empty when the message carried only attachments. */
     readonly text: string;
     readonly images: readonly ImageContent[];
-    readonly timestamp: number;
 };
 
 /** One system note between prompts, such as a compaction checkpoint or a branch summary. */
@@ -276,16 +274,6 @@ type AssistantTurnMessage = {
     readonly live: boolean;
 };
 
-/**
- * Compile-time exhaustiveness check for a switch over an SDK union.
- *
- * A session written by a newer Pi can hold an entry or role this build does not know, so the
- * runtime ignores it; a value added to the SDK type fails to satisfy the `never` parameter here.
- */
-function expectExhaustive(value: never): void {
-    void value;
-}
-
 /** A timestamp is only useful when it is finite; a broken one must not poison ids or durations. */
 function toTimestamp(value: unknown): number {
     return typeof value === "number" && Number.isFinite(value) ? value : 0;
@@ -294,10 +282,6 @@ function toTimestamp(value: unknown): number {
 /** A duration is only useful when it is a finite, non-negative number. */
 function toDuration(value: unknown): number | null {
     return typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : null;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function collapseWhitespace(value: string): string {
@@ -359,7 +343,7 @@ function isBuiltinTool(name: string): name is Exclude<TranscriptToolKind, "gener
  */
 export function describeToolCall(name: string, args: TranscriptToolArguments): TranscriptToolMeta {
     if (!isBuiltinTool(name)) {
-        return { kind: "generic", label: name, summary: firstScalarValue(args) };
+        return { toolKind: "generic", label: name, summary: firstScalarValue(args) };
     }
 
     const label = BUILTIN_TOOL_LABELS[name];
@@ -399,7 +383,7 @@ export function describeToolCall(name: string, args: TranscriptToolArguments): T
             break;
     }
 
-    return { kind: name, label, summary };
+    return { toolKind: name, label, summary };
 }
 
 function parseIsoTimestamp(iso: string): number {
@@ -415,16 +399,6 @@ function parseIsoTimestamp(iso: string): number {
  */
 function toArguments(raw: unknown): TranscriptToolArguments {
     return isRecord(raw) ? { ...raw } : {};
-}
-
-/** Read one image block, or return null when its required fields are missing. */
-function toImageBlock(raw: unknown): ImageContent | null {
-    if (!isRecord(raw) || raw.type !== "image") {
-        return null;
-    }
-    return typeof raw.data === "string" && typeof raw.mimeType === "string"
-        ? { type: "image", data: raw.data, mimeType: raw.mimeType }
-        : null;
 }
 
 /** Read one assistant block, or return null for an unknown or incomplete block. */
@@ -492,11 +466,8 @@ function toToolResultBlocks(content: unknown): ToolResultBlock[] {
         }
         if (raw.type === "text" && typeof raw.text === "string") {
             blocks.push({ type: "text", text: raw.text });
-        } else {
-            const image = toImageBlock(raw);
-            if (image !== null) {
-                blocks.push(image);
-            }
+        } else if (isImageContent(raw)) {
+            blocks.push({ type: "image", data: raw.data, mimeType: raw.mimeType });
         }
     }
     return blocks;
@@ -520,11 +491,8 @@ function readUserContent(content: unknown): { text: string; images: ImageContent
             if (raw.text.trim() !== "") {
                 texts.push(raw.text.trim());
             }
-        } else {
-            const image = toImageBlock(raw);
-            if (image !== null) {
-                images.push(image);
-            }
+        } else if (isImageContent(raw)) {
+            images.push({ type: "image", data: raw.data, mimeType: raw.mimeType });
         }
     }
     return { text: texts.join("\n\n"), images };
@@ -583,7 +551,6 @@ function readBashItem(entryId: string, message: BashExecutionRecord): Transcript
         excludeFromContext: message.excludeFromContext === true,
         status: readBashStatus(message.cancelled === true, exitCode),
         truncation: message.truncated === true ? { kind: "truncated", fullOutputPath } : { kind: "none" },
-        timestamp: toTimestamp(message.timestamp),
     };
 }
 
@@ -602,7 +569,6 @@ function readCustomItem(entry: CustomMessageEntry, editedContent: EditableConten
         customType: customType === "" ? "extension" : customType,
         text,
         images,
-        timestamp: parseIsoTimestamp(entry.timestamp),
     };
 }
 
@@ -798,10 +764,7 @@ function buildTurnItem(
                 steps.push({
                     kind: "toolCall",
                     id: stepId,
-                    name: block.name,
-                    toolKind: meta.kind,
-                    label: meta.label,
-                    summary: meta.summary,
+                    ...meta,
                     arguments: block.arguments,
                     argumentsError: block.argumentsError,
                     status,
@@ -925,7 +888,6 @@ export function buildTranscript(
                                 id: `user-${entry.id}`,
                                 text,
                                 images,
-                                timestamp,
                             });
                         } else {
                             // The terminal client shows the expanded skill block first and the typed
@@ -936,7 +898,6 @@ export function buildTranscript(
                                 name: skillBlock.name,
                                 location: skillBlock.location,
                                 content: skillBlock.content,
-                                timestamp,
                             });
                             const userText = skillBlock.userMessage ?? "";
                             if (userText !== "" || images.length > 0) {
@@ -945,7 +906,6 @@ export function buildTranscript(
                                     id: `user-${entry.id}`,
                                     text: userText,
                                     images,
-                                    timestamp,
                                 });
                             }
                         }
@@ -979,7 +939,7 @@ export function buildTranscript(
                         // Prompt scaffolding and LLM-context-only messages never render as conversation.
                         break;
                     default:
-                        expectExhaustive(message);
+                        ignoreUnknownVariant(message);
                         break;
                 }
                 break;
@@ -989,12 +949,12 @@ export function buildTranscript(
                     break;
                 }
                 flushTurn(false);
-                const customItem = readCustomItem(entry, item.editedContent);
-                transcript.push(customItem);
+                const timestamp = parseIsoTimestamp(entry.timestamp);
+                transcript.push(readCustomItem(entry, item.editedContent));
                 // A displayed extension message can start the next turn, so its time seeds that
                 // turn's duration the way a prompt does. An unreadable timestamp parses to 0 and
                 // must not become a start, or the next turn would count from the epoch.
-                lastUserTimestamp = customItem.timestamp > 0 ? customItem.timestamp : null;
+                lastUserTimestamp = timestamp > 0 ? timestamp : null;
                 break;
             }
             case "branch_summary":
@@ -1020,7 +980,7 @@ export function buildTranscript(
                 // Model, thinking-level and bookmark metadata never render as conversation.
                 break;
             default:
-                expectExhaustive(entry);
+                ignoreUnknownVariant(entry);
                 break;
         }
     }

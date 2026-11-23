@@ -1,13 +1,4 @@
-export { assertNever, isRecord } from "./primitives.ts";
-export {
-    INITIAL_CATALOG_SEQ,
-    nextCatalogSeq,
-    parseCatalogEpoch,
-    parseCatalogSeq,
-    type CatalogCursor,
-    type CatalogEpoch,
-    type CatalogSeq,
-} from "./catalog.ts";
+export { assertNever, isRecord, type PatchOf, type StrictOmit } from "./primitives.ts";
 export {
     isFileEntryRecord,
     parseAuthLoginResponse,
@@ -42,6 +33,7 @@ export {
 } from "./session.ts";
 export {
     commandIdOf,
+    isImageContent,
     isThinkingLevel,
     parseExtensionUiResponse,
     parseSessionRpcCommand,

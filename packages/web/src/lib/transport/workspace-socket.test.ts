@@ -1,10 +1,10 @@
 import {
-    parseCatalogEpoch,
-    parseCatalogSeq,
     parseSessionId,
-    type CatalogEpoch,
-    type CatalogSeq,
+    parseSyncEpoch,
+    parseSyncSeq,
     type SessionId,
+    type SyncEpoch,
+    type SyncSeq,
     type WorkspaceWsServerMessage,
 } from "@pivia/protocol";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -20,16 +20,16 @@ function sid(raw: string): SessionId {
     return parsed;
 }
 
-function epoch(raw: string): CatalogEpoch {
-    const parsed = parseCatalogEpoch(raw);
+function epoch(raw: string): SyncEpoch<"catalog"> {
+    const parsed = parseSyncEpoch<"catalog">(raw);
     if (parsed === null) {
         throw new Error(`Invalid test catalog epoch: ${raw}`);
     }
     return parsed;
 }
 
-function seq(raw: number): CatalogSeq {
-    const parsed = parseCatalogSeq(raw);
+function seq(raw: number): SyncSeq<"catalog"> {
+    const parsed = parseSyncSeq<"catalog">(raw);
     if (parsed === null) {
         throw new Error(`Invalid test catalog seq: ${raw}`);
     }

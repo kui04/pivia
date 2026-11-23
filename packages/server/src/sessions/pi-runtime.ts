@@ -1,5 +1,8 @@
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { ImageContent } from "@earendil-works/pi-ai";
 import {
     type AgentSession,
+    type CompactionResult,
     type CreateAgentSessionRuntimeFactory,
     type CreateAgentSessionServicesOptions,
     createAgentSessionFromServices,
@@ -13,13 +16,7 @@ import {
     type SessionManager,
 } from "@earendil-works/pi-coding-agent";
 
-import {
-    parseSessionId,
-    type ImageContent,
-    type SessionId,
-    type SessionModelInfo,
-    type ThinkingLevel,
-} from "@pivia/protocol";
+import { parseSessionId, type SessionId, type SessionModelInfo } from "@pivia/protocol";
 
 import type {
     ManagedExtensionBindings,
@@ -147,7 +144,6 @@ class AgentSessionAdapter implements ManagedSession {
             followUpMode: this.session.followUpMode,
             autoCompactionEnabled: this.session.autoCompactionEnabled,
             messageCount: this.session.messages.length,
-            pendingMessageCount: this.session.pendingMessageCount,
             steeringMessages: this.session.getSteeringMessages(),
             followUpMessages: this.session.getFollowUpMessages(),
         };
@@ -183,7 +179,7 @@ class AgentSessionAdapter implements ManagedSession {
         await this.session.abort();
     }
 
-    clearQueue(): { readonly steering: readonly string[]; readonly followUp: readonly string[] } {
+    clearQueue() {
         return this.session.clearQueue();
     }
 
@@ -222,7 +218,7 @@ class AgentSessionAdapter implements ManagedSession {
         this.session.setSessionName(name);
     }
 
-    async compact(customInstructions?: string): Promise<unknown> {
+    async compact(customInstructions?: string): Promise<CompactionResult> {
         return customInstructions === undefined
             ? await this.session.compact()
             : await this.session.compact(customInstructions);

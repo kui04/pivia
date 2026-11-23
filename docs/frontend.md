@@ -147,10 +147,11 @@ in step with the file: a new nested rule updates the sketch in the same change.
   `parseSessionId`, calls `connect(parsedId)` in an effect and `disconnect()` on route change and unmount, and
   disconnects instead of connecting for a missing or invalid segment. The page takes an optional `sessionStore` prop
   so stories and tests drive an isolated store.
-- The transcript never walks the entry tree. `projectSessionTranscript` from `@pivia/protocol` resolves the active
-  branch, the compaction boundary and `context_edit` replacements; `buildTranscript` in
-  `packages/web/src/stores/session/transcript.ts` folds those items into user bubbles, skill invocation rows, bash
-  execution blocks, labeled extension message blocks, system notes and `Worked for Xs` turn groups. One `/skill:`
+- The transcript never walks the entry tree. `projectSessionTranscript` in
+  `packages/web/src/stores/session/projection.ts` resolves the active branch, the compaction boundary and
+  `context_edit` replacements; `buildTranscript` in `packages/web/src/stores/session/transcript.ts` folds those items
+  into user bubbles, skill invocation rows, bash execution blocks, labeled extension message blocks, system notes and
+  `Worked for Xs` turn groups. One `/skill:`
   user entry becomes a collapsed `[skill] name` row followed by the prompt bubble when the reader typed one. A `!`
   command record becomes its own block between turns, with its output, exit state, the truncation path and, for a `!!`
   command, a visible `not in context` suffix next to its accent border. A displayed `custom_message` becomes a

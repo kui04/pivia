@@ -3,7 +3,6 @@ export {
     createReconnectController,
     DEFAULT_AUTH_PROBE_THRESHOLD,
     DEFAULT_RECONNECT_DELAYS_MS,
-    type ReconnectAuthStatus,
     type ReconnectController,
     type ReconnectControllerOptions,
 } from "./reconnect.ts";

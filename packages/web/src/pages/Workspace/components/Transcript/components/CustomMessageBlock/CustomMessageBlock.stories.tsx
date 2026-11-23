@@ -41,7 +41,6 @@ const taskMessageItem: TranscriptCustomItem = {
         "See [the report](https://example.com/report) for the full log.",
     ].join("\n"),
     images: [],
-    timestamp: Date.parse("2026-11-17T07:00:00.000Z"),
 };
 
 const withImagesItem: TranscriptCustomItem = {
@@ -61,7 +60,6 @@ const imageOnlyItem: TranscriptCustomItem = {
     customType: "screenshot",
     text: "",
     images: [{ type: "image", mimeType: "image/svg+xml", data: SAMPLE_IMAGE_BASE64 }],
-    timestamp: Date.parse("2026-11-17T07:02:00.000Z"),
 };
 
 const meta = {

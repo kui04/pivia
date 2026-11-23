@@ -1,11 +1,4 @@
-import {
-    isRecord,
-    parseSessionId,
-    type CatalogCursor,
-    type CatalogDelta,
-    type SessionId,
-    type SessionSummary,
-} from "@pivia/protocol";
+import { isRecord, parseSessionId, type CatalogDelta, type SessionId, type SessionSummary } from "@pivia/protocol";
 import { create } from "zustand";
 import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
 
@@ -80,8 +73,6 @@ export interface WorkspaceState {
     readonly sessions: readonly SessionSummary[];
     /** Time the server produced the last catalog snapshot, in Unix epoch milliseconds. */
     readonly updatedAtMs: number | null;
-    /** Server epoch and sequence cursor of the latest applied snapshot or catalog event. */
-    readonly catalogCursor: CatalogCursor | null;
     readonly sync: CatalogSyncPhase;
     readonly query: string;
     readonly selectedId: SessionId | null;
@@ -103,7 +94,6 @@ export interface WorkspaceStoreOptions {
 export interface CommitSyncedCatalogInput {
     readonly sessions: readonly SessionSummary[];
     readonly updatedAtMs: number | null;
-    readonly cursor: CatalogCursor | null;
     readonly sync?: CatalogSyncPhase | undefined;
     readonly persistCache?: boolean | undefined;
 }
@@ -130,7 +120,6 @@ export type WorkspaceStore = WorkspaceState & WorkspaceActions;
 export const initialWorkspaceState: WorkspaceState = {
     sessions: [],
     updatedAtMs: null,
-    catalogCursor: null,
     sync: { kind: "idle" },
     query: "",
     selectedId: null,
@@ -199,10 +188,10 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}) {
                     }
                     set({
                         sessions: cached.sessions,
-                        updatedAtMs: cached.scannedAtMs,
+                        updatedAtMs: cached.updatedAtMs,
                     });
                 },
-                commitSyncedCatalog: ({ sessions, updatedAtMs, cursor, sync, persistCache }) => {
+                commitSyncedCatalog: ({ sessions, updatedAtMs, sync, persistCache }) => {
                     const cache = persistCache ? resolveCache() : undefined;
                     set((state) => {
                         if (cache !== undefined && updatedAtMs !== null) {
@@ -212,7 +201,6 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}) {
                         return {
                             sessions,
                             updatedAtMs,
-                            catalogCursor: cursor,
                             ...(sync === undefined ? {} : { sync }),
                             // A pin for a session the complete catalog did not see belongs to a deleted session.
                             pins: state.pins.filter((id) => ids.has(id)),

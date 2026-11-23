@@ -1,17 +1,15 @@
 import {
-    INITIAL_CATALOG_SEQ,
-    parseCatalogEpoch,
     parseEntriesVersion,
     parseSessionId,
     parseSyncEpoch,
     parseSyncSeq,
     type EntriesVersion,
     type SessionId,
-    type SessionRuntimeId,
-    type SessionSeq,
     type SessionStateSnapshot,
     type SessionSummary,
     type SessionWsServerMessage,
+    type SyncEpoch,
+    type SyncSeq,
 } from "@pivia/protocol";
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -38,7 +36,7 @@ function ev(raw: string): EntriesVersion {
     return parsed;
 }
 
-function rt(raw: string): SessionRuntimeId {
+function rt(raw: string): SyncEpoch<"session"> {
     const parsed = parseSyncEpoch<"session">(raw);
     if (parsed === null) {
         throw new Error(`Invalid test runtime id: ${raw}`);
@@ -46,7 +44,7 @@ function rt(raw: string): SessionRuntimeId {
     return parsed;
 }
 
-function seq(raw: number): SessionSeq {
+function seq(raw: number): SyncSeq<"session"> {
     const parsed = parseSyncSeq<"session">(raw);
     if (parsed === null) {
         throw new Error(`Invalid test session seq: ${raw}`);
@@ -127,7 +125,6 @@ function stateSnapshot(sessionId: SessionId): SessionStateSnapshot {
         followUpMode: "one-at-a-time",
         autoCompactionEnabled: true,
         messageCount: 0,
-        pendingMessageCount: 0,
         steeringMessages: [],
         followUpMessages: [],
     };
@@ -261,17 +258,9 @@ describe("createAppStores", () => {
             WebSocket: FakeSocket,
         });
 
-        const catalogEpoch = parseCatalogEpoch("epoch-1");
-        if (catalogEpoch === null) {
-            throw new Error("Invalid test catalog epoch");
-        }
         useWorkspaceStore.getState().commitSyncedCatalog({
             sessions: [summary(SESSION_1), summary(SESSION_2)],
             updatedAtMs: 5_000,
-            cursor: {
-                epoch: catalogEpoch,
-                seq: INITIAL_CATALOG_SEQ,
-            },
             sync: { kind: "live" },
         });
         useWorkspaceStore.getState().togglePinned(SESSION_1);

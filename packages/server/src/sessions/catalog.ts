@@ -20,6 +20,7 @@ import {
     isRecord,
     parseEntriesVersion,
     parseSessionId,
+    type CatalogSnapshot,
     type EntriesVersion,
     type SessionDetailResponse,
     type SessionId,
@@ -68,7 +69,7 @@ export interface SessionCatalogLogger {
 export interface SessionCatalogOptions extends SessionRootOptions {
     /** Logger for discovery warnings; defaults to a `stderr` server logger. */
     readonly logger?: SessionCatalogLogger | undefined;
-    /** Clock used for `scannedAtMs`; defaults to `Date.now`. */
+    /** Clock used for `updatedAtMs`; defaults to `Date.now`. */
     readonly nowMs?: (() => number) | undefined;
     /** Largest session file allowed for detail reads or opening; defaults to 64 MiB. */
     readonly maxSessionFileBytes?: number | undefined;
@@ -435,12 +436,6 @@ function countNonEmptyLines(content: string): number {
     return count;
 }
 
-/** Result of scanning session `.jsonl` files on disk without live runtime state or catalog cursors. */
-export interface DiskSessionList {
-    readonly sessions: readonly SessionSummary[];
-    readonly scannedAtMs: number;
-}
-
 /**
  * Read-only view of the sessions stored for one host.
  *
@@ -471,11 +466,11 @@ export class SessionCatalog {
     }
 
     /** List every readable session under the session root, newest activity first. */
-    async list(): Promise<DiskSessionList> {
+    async list(): Promise<CatalogSnapshot> {
         const { sessions } = await this.discover();
         return {
             sessions: sessions.map((session) => session.summary),
-            scannedAtMs: this.nowMs(),
+            updatedAtMs: this.nowMs(),
         };
     }
 

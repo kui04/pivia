@@ -19,6 +19,7 @@ import type {
 import type {
     SessionDelta,
     SessionEntriesHttpMeta,
+    SessionEntrySlice,
     SessionRpcServerMessage,
     SessionSnapshot,
     SessionStatePatch,
@@ -27,9 +28,8 @@ import type {
     SessionWsCommandName,
     SessionWsServerMessage,
 } from "../session-ws.ts";
-import { createSyncFrameParser, parseDelivery, type JsonDecoder } from "../sync/index.ts";
+import { createSyncFrameParser, parseDelivery, parseSyncCursor, type JsonDecoder } from "../sync/index.ts";
 import type { CatalogDelta, CatalogSnapshot, SessionSummaryPatch, WorkspaceWsServerMessage } from "../workspace-ws.ts";
-import { parseCatalogEpoch, parseCatalogSeq } from "./catalog.ts";
 import { isRecord } from "./primitives.ts";
 import { parseEntriesVersion, parseSessionId } from "./session.ts";
 import { isThinkingLevel } from "./ws.ts";
@@ -285,7 +285,6 @@ export function parseSessionStateSnapshot(raw: unknown): SessionStateSnapshot | 
         !isQueueMode(raw.followUpMode) ||
         typeof raw.autoCompactionEnabled !== "boolean" ||
         !isNonNegativeSafeInteger(raw.messageCount) ||
-        !isNonNegativeSafeInteger(raw.pendingMessageCount) ||
         !isStringArray(raw.steeringMessages) ||
         !isStringArray(raw.followUpMessages)
     ) {
@@ -303,7 +302,6 @@ export function parseSessionStateSnapshot(raw: unknown): SessionStateSnapshot | 
         followUpMode: raw.followUpMode,
         autoCompactionEnabled: raw.autoCompactionEnabled,
         messageCount: raw.messageCount,
-        pendingMessageCount: raw.pendingMessageCount,
         steeringMessages: raw.steeringMessages,
         followUpMessages: raw.followUpMessages,
     };
@@ -337,23 +335,15 @@ export function parseAuthLogoutResponse(raw: unknown): AuthLogoutResponse | null
 
 /** Parse a `GET /api/sessions` payload. */
 export function parseSessionListResponse(raw: unknown): SessionListResponse | null {
-    if (!isRecord(raw) || !Array.isArray(raw.sessions) || !isFiniteNumber(raw.scannedAtMs)) {
+    if (!isRecord(raw)) {
         return null;
     }
-    const catalogEpoch = parseCatalogEpoch(raw.catalogEpoch);
-    const catalogSeq = parseCatalogSeq(raw.catalogSeq);
-    if (catalogEpoch === null || catalogSeq === null) {
+    const snapshot = parseCatalogSnapshot(raw);
+    const cursor = parseSyncCursor<"catalog">(raw.cursor);
+    if (snapshot === null || cursor === null) {
         return null;
     }
-    const sessions: SessionSummary[] = [];
-    for (const item of raw.sessions) {
-        const parsed = parseSessionSummary(item);
-        if (parsed === null) {
-            return null;
-        }
-        sessions.push(parsed);
-    }
-    return { sessions, scannedAtMs: raw.scannedAtMs, catalogEpoch, catalogSeq };
+    return { ...snapshot, cursor };
 }
 
 /** Parse a `GET /api/sessions/:id` payload. */
@@ -432,30 +422,33 @@ function parseSessionEntriesHttpMeta(raw: unknown): SessionEntriesHttpMeta | nul
     return { entryCount: raw.entryCount };
 }
 
-/** Parse one {@link SessionSnapshot} payload, or return `null` when malformed. */
-export function parseSessionSnapshot(raw: unknown): SessionSnapshot | null {
-    if (!isRecord(raw)) {
-        return null;
-    }
+function parseSessionEntrySlice(raw: Record<string, unknown>): SessionEntrySlice | null {
     const entriesVersion = parseEntriesVersion(raw.entriesVersion);
     const entries = parseDelivery(raw.entries, parseFileEntryArray, parseSessionEntriesHttpMeta);
-    const state = parseSessionStateSnapshot(raw.state);
-    const liveMessage = parseLiveMessage(raw.liveMessage);
-    const pendingUiRequests = parsePendingUiRequests(raw.pendingUiRequests);
-    if (
-        entriesVersion === null ||
-        !isNonNegativeSafeInteger(raw.baseEntryCount) ||
-        entries === null ||
-        state === null ||
-        liveMessage === undefined ||
-        pendingUiRequests === null
-    ) {
+    if (entriesVersion === null || !isNonNegativeSafeInteger(raw.baseEntryCount) || entries === null) {
         return null;
     }
     return {
         entriesVersion,
         baseEntryCount: raw.baseEntryCount,
         entries,
+    };
+}
+
+/** Parse one {@link SessionSnapshot} payload, or return `null` when malformed. */
+export function parseSessionSnapshot(raw: unknown): SessionSnapshot | null {
+    if (!isRecord(raw)) {
+        return null;
+    }
+    const slice = parseSessionEntrySlice(raw);
+    const state = parseSessionStateSnapshot(raw.state);
+    const liveMessage = parseLiveMessage(raw.liveMessage);
+    const pendingUiRequests = parsePendingUiRequests(raw.pendingUiRequests);
+    if (slice === null || state === null || liveMessage === undefined || pendingUiRequests === null) {
+        return null;
+    }
+    return {
+        ...slice,
         state,
         liveMessage,
         pendingUiRequests,
@@ -534,17 +527,8 @@ export function parseSessionDelta(raw: unknown): SessionDelta | null {
         case "agent_event":
             return isJsonAgentSessionEvent(raw.event) ? { kind: "agent_event", event: raw.event } : null;
         case "entries_appended": {
-            const entriesVersion = parseEntriesVersion(raw.entriesVersion);
-            const entries = parseDelivery(raw.entries, parseFileEntryArray, parseSessionEntriesHttpMeta);
-            if (entriesVersion === null || !isNonNegativeSafeInteger(raw.baseEntryCount) || entries === null) {
-                return null;
-            }
-            return {
-                kind: "entries_appended",
-                entriesVersion,
-                baseEntryCount: raw.baseEntryCount,
-                entries,
-            };
+            const slice = parseSessionEntrySlice(raw);
+            return slice === null ? null : { kind: "entries_appended", ...slice };
         }
         case "state_patched": {
             const patch = parseSessionStatePatch(raw.patch);

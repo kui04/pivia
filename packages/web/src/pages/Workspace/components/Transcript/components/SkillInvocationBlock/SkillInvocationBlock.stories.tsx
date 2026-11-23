@@ -21,7 +21,6 @@ const skillItem: TranscriptSkillItem = {
         "- Model illegal states with closed unions.",
         "- Parse untrusted data once at the boundary.",
     ].join("\n"),
-    timestamp: Date.parse("2026-11-17T08:00:00.000Z"),
 };
 
 const meta = {

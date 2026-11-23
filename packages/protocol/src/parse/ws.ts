@@ -3,12 +3,13 @@ import type { ImageContent } from "@earendil-works/pi-ai";
 import type { RpcExtensionUIResponse } from "@earendil-works/pi-coding-agent";
 
 import type { SessionPrefixAnchor } from "../http.ts";
-import type { SessionRpcCommand, SessionWsClientMessage } from "../session-ws.ts";
-import { parseSyncHandshakeQuery, type SyncHandshake } from "../sync/index.ts";
+import type { SessionHandshake, SessionRpcCommand, SessionWsClientMessage } from "../session-ws.ts";
+import { parseSyncHandshakeQuery } from "../sync/index.ts";
 import { isRecord } from "./primitives.ts";
 import { parseSessionPrefixAnchor } from "./session.ts";
 
-function isImageContent(value: unknown): value is ImageContent {
+/** Returns true when `value` is a base64 image block matching the SDK {@link ImageContent} shape. */
+export function isImageContent(value: unknown): value is ImageContent {
     return (
         isRecord(value) &&
         value.type === "image" &&
@@ -185,6 +186,6 @@ export function parseSessionWsClientMessage(value: unknown): SessionWsClientMess
  * `SessionPrefixAnchor`). Missing or malformed fields degrade cleanly so the server falls back to
  * a full snapshot.
  */
-export function parseSessionWsHandshakeQuery(query: unknown): SyncHandshake<"session", SessionPrefixAnchor> {
+export function parseSessionWsHandshakeQuery(query: unknown): SessionHandshake {
     return parseSyncHandshakeQuery<"session", SessionPrefixAnchor>(query, parseSessionPrefixAnchor);
 }

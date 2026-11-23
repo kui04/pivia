@@ -3,7 +3,6 @@ import {
     type CatalogDelta,
     type CatalogSnapshot,
     type SessionId,
-    type SessionRuntimeState,
     type SessionSummary,
     type SessionSummaryPatch,
     type SyncReducer,
@@ -19,15 +18,14 @@ export type CatalogSyncPhase =
     | { readonly kind: "reconnecting"; readonly attempt: number }
     | { readonly kind: "failed"; readonly message: string };
 
-/** Topbar view of the currently selected session without exposing host file paths. */
-export interface SelectedSession {
-    readonly id: SessionId;
+/** What a row title is, and whether it shows a name or a first message. */
+export interface SessionTitle {
     readonly title: string;
     readonly named: boolean;
-    readonly cwd: string;
-    readonly runtimeState: SessionRuntimeState;
-    readonly attachedClients: number;
 }
+
+/** Topbar view of the currently selected session without exposing host file paths. */
+export type SelectedSession = Pick<SessionSummary, "id" | "cwd" | "runtimeState" | "attachedClients"> & SessionTitle;
 
 /** Display badge state for an active session runtime. */
 export type ActiveSessionBadge = "starting" | "attached" | "streaming" | "compacting" | "closing";
@@ -38,18 +36,7 @@ export type SessionRowStatus =
     | { readonly kind: "active"; readonly state: ActiveSessionBadge; readonly label: string };
 
 /** One session as the workspace list shows it. */
-export interface SessionRow {
-    /** Opaque server id; the only identity the browser ever uses for a session. */
-    readonly id: SessionId;
-    /** The name, else the first message, else a placeholder. */
-    readonly title: string;
-    /** True when `title` came from a session name rather than the first message. */
-    readonly named: boolean;
-    /** Working directory recorded in the session header. */
-    readonly cwd: string;
-    readonly modifiedAtMs: number;
-    readonly runtimeState: SessionRuntimeState;
-    readonly attachedClients: number;
+export interface SessionRow extends SelectedSession, Pick<SessionSummary, "modifiedAtMs"> {
     readonly pinned: boolean;
     readonly selected: boolean;
 }
@@ -85,12 +72,6 @@ export interface WorkspaceModelInput {
 }
 
 const UNTITLED = "Untitled session";
-
-/** What a row title is, and whether it shows a name or a first message. */
-export interface SessionTitle {
-    readonly title: string;
-    readonly named: boolean;
-}
 
 /** Shows the session name, else the first message, else a placeholder. */
 export function sessionTitle(summary: SessionSummary): SessionTitle {

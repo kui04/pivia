@@ -1,12 +1,13 @@
+import type { FileEntry, RpcExtensionUIResponse } from "@earendil-works/pi-coding-agent";
 import {
     SESSION_CLOSE_CODE,
     type EntriesVersion,
-    type FileEntry,
-    type RpcExtensionUIResponse,
     type SessionDelta,
     type SessionDetailResponse,
+    type SessionHandshake,
     type SessionId,
     type SessionPrefixAnchor,
+    type SessionRpcCommand,
     type SessionSnapshot,
     type SessionStateSnapshot,
 } from "@pivia/protocol";
@@ -19,11 +20,9 @@ import { ApiClientError, type ApiClient } from "@/lib/transport/http";
 import {
     SessionSocket,
     SessionSocketClosedError,
-    type SessionCommand,
     type SessionRpcResponseMessage,
     type SessionSocketClose,
     type SessionSocketConstructor,
-    type SessionSocketHandshakeParams,
 } from "@/lib/transport/session-socket";
 
 import {
@@ -33,26 +32,18 @@ import {
     buildSessionPrefixAnchor,
     createSessionSyncReducer,
     initialSessionState,
-    type SequencedSessionEvent,
     type SessionHttpHydrationDescriptor,
     type SessionState,
 } from "./reducer";
 
 export { initialSessionState, liveAssistantMessage } from "./reducer";
-export type {
-    EntriesSyncState,
-    LiveMessageState,
-    SequencedSessionEvent,
-    SessionConnectionStatus,
-    SessionState,
-} from "./reducer";
+export type { EntriesSyncState, LiveMessageState, SessionConnectionStatus, SessionState } from "./reducer";
 
 /** Lightweight in-memory snapshot kept for instant UI display and Tier 2 anchors on switch-back. */
 export interface SessionMemoryCacheEntry {
     readonly entriesVersion: EntriesVersion | null;
     readonly entries: readonly FileEntry[];
     readonly state: SessionStateSnapshot | null;
-    readonly liveEvents: readonly SequencedSessionEvent[];
 }
 
 /** Options for {@link createSessionStore}. */
@@ -83,7 +74,7 @@ export interface SessionStoreActions {
     clearCache: () => void;
     /** Manually retries a failed HTTP entry synchronization (`entriesSync.kind === "error"`). */
     retryEntriesSync: () => void;
-    sendCommand: (command: SessionCommand) => Promise<SessionRpcResponseMessage>;
+    sendCommand: (command: SessionRpcCommand) => Promise<SessionRpcResponseMessage>;
     sendUiResponse: (response: RpcExtensionUIResponse) => Promise<void>;
 }
 
@@ -177,7 +168,6 @@ export function createSessionStore(options: SessionStoreOptions) {
                 entriesVersion: state.entriesVersion,
                 entries: state.entries,
                 state: state.state,
-                liveEvents: state.liveEvents,
             });
             while (memoryLru.size > maxMemoryCacheEntries) {
                 const oldestKey = memoryLru.keys().next().value;
@@ -281,13 +271,9 @@ export function createSessionStore(options: SessionStoreOptions) {
         };
 
         const triggerHydrationRetry = (): void => {
-            syncClient.retryHydration((prev, descriptor) => ({
+            syncClient.retryHydration((prev) => ({
                 ...prev,
-                entriesSync: {
-                    kind: "loading",
-                    baseEntryCount: descriptor.baseEntryCount,
-                    targetEntryCount: descriptor.targetEntryCount,
-                },
+                entriesSync: { kind: "loading" },
             }));
         };
 
@@ -333,11 +319,7 @@ export function createSessionStore(options: SessionStoreOptions) {
                         }
                         return {
                             ...state,
-                            entriesSync: {
-                                kind: "loading",
-                                baseEntryCount: descriptor.baseEntryCount,
-                                targetEntryCount: descriptor.targetEntryCount,
-                            },
+                            entriesSync: { kind: "loading" },
                         };
                     });
                 }
@@ -376,7 +358,12 @@ export function createSessionStore(options: SessionStoreOptions) {
                 let liveMessage = nextState.liveMessage;
                 let lastError = nextState.lastError;
                 if (nextState.status !== "closed") {
-                    if (meta.phase.kind === "reconnecting") {
+                    if (meta.phase.kind === "live" || meta.phase.kind === "hydrating_http") {
+                        status = "open";
+                        if (meta.source === "snapshot" || meta.source === "replay") {
+                            lastError = null;
+                        }
+                    } else if (meta.phase.kind === "reconnecting") {
                         status = "reconnecting";
                     } else if (meta.phase.kind === "error") {
                         status = "error";
@@ -387,7 +374,6 @@ export function createSessionStore(options: SessionStoreOptions) {
                 const committed: SessionState = {
                     ...nextState,
                     status,
-                    cursor: meta.cursor,
                     liveMessage,
                     lastError,
                 };
@@ -413,11 +399,7 @@ export function createSessionStore(options: SessionStoreOptions) {
             },
         });
 
-        const openSocket = (
-            sessionId: SessionId,
-            handshake: SessionSocketHandshakeParams,
-            capturedGen: number,
-        ): void => {
+        const openSocket = (sessionId: SessionId, handshake: SessionHandshake, capturedGen: number): void => {
             if (capturedGen !== generation || get().status === "closed") {
                 return;
             }
@@ -426,12 +408,6 @@ export function createSessionStore(options: SessionStoreOptions) {
                 sessionId,
                 handshake,
                 WebSocket: options.WebSocket,
-                onOpen: () => {
-                    if (capturedGen !== generation) {
-                        return;
-                    }
-                    set((state) => (state.status === "closed" ? state : { ...state, status: "open", lastError: null }));
-                },
                 onSyncFrame: (frame) => {
                     if (capturedGen !== generation || get().status === "closed") {
                         return;
@@ -448,13 +424,11 @@ export function createSessionStore(options: SessionStoreOptions) {
                     }
                     syncClient.handleFrame(frame);
                 },
-                onMessage: (message) => {
+                onRpcError: (error) => {
                     if (capturedGen !== generation || get().status === "closed") {
                         return;
                     }
-                    if (message.type === "rpc:error") {
-                        set({ lastError: message.message });
-                    }
+                    set({ lastError: error.message });
                 },
                 onClose: (close) => {
                     if (capturedGen !== generation) {
@@ -493,11 +467,11 @@ export function createSessionStore(options: SessionStoreOptions) {
                 if (state.sessionId === null || state.status === "closed") {
                     return;
                 }
-                const prefixAnchor = buildSessionPrefixAnchor(state);
+                const hint = buildSessionPrefixAnchor(state);
                 const cursor = syncClient.handshakeCursor();
-                const handshake: SessionSocketHandshakeParams = {
+                const handshake: SessionHandshake = {
                     ...(cursor === undefined ? {} : { cursor }),
-                    ...(prefixAnchor === undefined ? {} : { prefixAnchor }),
+                    ...(hint === undefined ? {} : { hint }),
                 };
                 openSocket(state.sessionId, handshake, generation);
             },
@@ -534,12 +508,11 @@ export function createSessionStore(options: SessionStoreOptions) {
                     entriesVersion: memEntry.entriesVersion,
                     entries: memEntry.entries,
                     state: memEntry.state,
-                    liveEvents: memEntry.liveEvents,
                 });
                 syncClient.hydrateLocalState(hydrated);
                 set(hydrated);
-                const prefixAnchor = buildSessionPrefixAnchor(hydrated);
-                openSocket(sessionId, prefixAnchor === undefined ? {} : { prefixAnchor }, capturedGen);
+                const hint = buildSessionPrefixAnchor(hydrated);
+                openSocket(sessionId, hint === undefined ? {} : { hint }, capturedGen);
                 return;
             }
 
@@ -567,8 +540,8 @@ export function createSessionStore(options: SessionStoreOptions) {
                         syncClient.hydrateLocalState(hydrated);
                         set(hydrated);
                     }
-                    const prefixAnchor = buildSessionPrefixAnchor(get());
-                    openSocket(sessionId, prefixAnchor === undefined ? {} : { prefixAnchor }, capturedGen);
+                    const hint = buildSessionPrefixAnchor(get());
+                    openSocket(sessionId, hint === undefined ? {} : { hint }, capturedGen);
                 });
         };
 

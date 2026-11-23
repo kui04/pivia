@@ -1,18 +1,17 @@
+import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { FileEntry, RpcExtensionUIRequest } from "@earendil-works/pi-coding-agent";
 import {
     parseEntriesVersion,
     parseSessionId,
     parseSyncEpoch,
     parseSyncSeq,
-    type AssistantMessage,
     type EntriesVersion,
-    type FileEntry,
-    type RpcExtensionUIRequest,
     type SessionDelta,
     type SessionId,
-    type SessionRuntimeId,
-    type SessionSeq,
     type SessionSnapshot,
     type SessionStateSnapshot,
+    type SyncEpoch,
+    type SyncSeq,
 } from "@pivia/protocol";
 
 type SessionEvent = Extract<SessionDelta, { readonly kind: "agent_event" }>["event"];
@@ -46,7 +45,7 @@ function ev(raw: string): EntriesVersion {
     return parsed;
 }
 
-function rt(raw: string): SessionRuntimeId {
+function rt(raw: string): SyncEpoch<"session"> {
     const parsed = parseSyncEpoch<"session">(raw);
     if (parsed === null) {
         throw new Error(`Invalid test runtime id: ${raw}`);
@@ -54,7 +53,7 @@ function rt(raw: string): SessionRuntimeId {
     return parsed;
 }
 
-function seq(raw: number): SessionSeq {
+function seq(raw: number): SyncSeq<"session"> {
     const parsed = parseSyncSeq<"session">(raw);
     if (parsed === null) {
         throw new Error(`Invalid test session seq: ${raw}`);
@@ -80,7 +79,6 @@ function summary(overrides: Partial<SessionStateSnapshot> = {}): SessionStateSna
         followUpMode: "one-at-a-time",
         autoCompactionEnabled: true,
         messageCount: 2,
-        pendingMessageCount: 0,
         steeringMessages: [],
         followUpMessages: [],
         ...overrides,
@@ -156,24 +154,20 @@ describe("session sync reducer", () => {
         expect(initialSessionState).toEqual({
             status: "idle",
             sessionId: null,
-            cursor: null,
             entriesVersion: null,
             state: null,
             entries: [],
             entriesSync: { kind: "idle" },
-            liveEvents: [],
             liveMessage: { kind: "none" },
             pendingUiRequests: [],
             lastError: null,
         });
 
         const reducer = createSessionSyncReducer();
-        const afterDelta = reducer.applyDelta(
-            connectingState(),
-            { kind: "agent_event", event: { type: "agent_start" } },
-            seq(9),
-        );
-        expect(afterDelta.liveEvents).toHaveLength(1);
+        const afterDelta = reducer.applyDelta(connectingState(), {
+            kind: "agent_event",
+            event: { type: "agent_start" },
+        });
 
         const entries: readonly FileEntry[] = [];
         const next = reducer.applySnapshot(
@@ -188,7 +182,6 @@ describe("session sync reducer", () => {
         expect(next.status).toBe("open");
         expect(next.state).toEqual(summary({ messageCount: 5 }));
         expect(next.entries).toBe(entries);
-        expect(next.liveEvents).toEqual([]);
         expect(next.pendingUiRequests).toEqual([dialog("a")]);
     });
 
@@ -249,7 +242,6 @@ describe("session sync reducer", () => {
         expect(state.state?.messageCount).toBe(4);
         expect(state.state?.steeringMode).toBe("all");
         expect(state.state?.model?.id).toBe("claude-sonnet-4");
-        expect(state.liveEvents.map((entry) => entry.seq)).toEqual([3]);
         expect(state.pendingUiRequests).toEqual([]);
     });
 
@@ -257,63 +249,46 @@ describe("session sync reducer", () => {
         const reducer = createSessionSyncReducer();
         let state = reducer.applySnapshot(connectingState(), makeSnapshot());
 
-        state = reducer.applyDelta(state, { kind: "ui_request", request: dialog("confirm") }, seq(1));
-        state = reducer.applyDelta(state, { kind: "ui_request", request: dialog("select", "select") }, seq(2));
-        state = reducer.applyDelta(state, { kind: "ui_request", request: notifyRequest("notify") }, seq(3));
-        state = reducer.applyDelta(state, { kind: "ui_request", request: dialog("confirm") }, seq(4));
+        state = reducer.applyDelta(state, { kind: "ui_request", request: dialog("confirm") });
+        state = reducer.applyDelta(state, { kind: "ui_request", request: dialog("select", "select") });
+        state = reducer.applyDelta(state, { kind: "ui_request", request: notifyRequest("notify") });
+        state = reducer.applyDelta(state, { kind: "ui_request", request: dialog("confirm") });
 
         expect(state.pendingUiRequests.map((request) => request.id)).toEqual(["confirm", "select"]);
 
-        state = reducer.applyDelta(state, { kind: "ui_resolved", requestId: "confirm" }, seq(5));
+        state = reducer.applyDelta(state, { kind: "ui_resolved", requestId: "confirm" });
         expect(state.pendingUiRequests.map((request) => request.id)).toEqual(["select"]);
 
-        const unchanged = reducer.applyDelta(state, { kind: "ui_resolved", requestId: "missing" }, seq(6));
+        const unchanged = reducer.applyDelta(state, { kind: "ui_resolved", requestId: "missing" });
         expect(unchanged).toBe(state);
     });
 
-    it("folds message_update deltas into liveMessage and bounds structural events at 512", () => {
+    it("folds message_update deltas into liveMessage", () => {
         const reducer = createSessionSyncReducer();
         let state = reducer.applySnapshot(connectingState(), makeSnapshot());
 
-        state = reducer.applyDelta(
-            state,
-            {
-                kind: "agent_event",
-                event: { type: "message_start", message: assistant({ content: [{ type: "text", text: "" }] }) },
-            },
-            seq(1),
-        );
+        state = reducer.applyDelta(state, {
+            kind: "agent_event",
+            event: { type: "message_start", message: assistant({ content: [{ type: "text", text: "" }] }) },
+        });
         const update = (delta: AssistantDelta): SessionDelta => ({
             kind: "agent_event",
             event: { type: "message_update", usage: usage(), assistantMessageEvent: delta },
         });
-        state = reducer.applyDelta(state, update({ type: "text_start", contentIndex: 0 }), seq(2));
-        state = reducer.applyDelta(state, update({ type: "text_delta", contentIndex: 0, delta: "Hello" }), seq(3));
-        state = reducer.applyDelta(state, update({ type: "text_delta", contentIndex: 0, delta: " world" }), seq(4));
+        state = reducer.applyDelta(state, update({ type: "text_start", contentIndex: 0 }));
+        state = reducer.applyDelta(state, update({ type: "text_delta", contentIndex: 0, delta: "Hello" }));
+        state = reducer.applyDelta(state, update({ type: "text_delta", contentIndex: 0, delta: " world" }));
 
         expect(liveAssistantMessage(state)?.content[0]).toEqual({ type: "text", text: "Hello world" });
-        expect(state.liveEvents.map((entry) => entry.seq)).toEqual([1]);
 
-        state = reducer.applyDelta(
-            state,
-            {
-                kind: "agent_event",
-                event: {
-                    type: "message_end",
-                    message: assistant({ content: [{ type: "text", text: "Hello world" }] }),
-                },
+        state = reducer.applyDelta(state, {
+            kind: "agent_event",
+            event: {
+                type: "message_end",
+                message: assistant({ content: [{ type: "text", text: "Hello world" }] }),
             },
-            seq(5),
-        );
+        });
         expect(state.liveMessage.kind).toBe("settled");
-        expect(state.liveEvents.map((entry) => entry.seq)).toEqual([1, 5]);
-
-        for (let s = 6; s <= 530; s += 1) {
-            state = reducer.applyDelta(state, { kind: "agent_event", event: { type: "agent_start" } }, seq(s));
-        }
-        expect(state.liveEvents).toHaveLength(512);
-        expect(state.liveEvents[0]?.seq).toBe(19);
-        expect(state.liveEvents.at(-1)?.seq).toBe(530);
     });
 
     it("eliminates message_end flicker by holding settled liveMessage until matching entry arrives", () => {
@@ -331,64 +306,51 @@ describe("session sync reducer", () => {
         );
 
         const msg = assistant({ timestamp: 12345, content: [{ type: "text", text: "Final answer" }] });
-        state = reducer.applyDelta(
-            state,
-            { kind: "agent_event", event: { type: "message_start", message: assistant({ timestamp: 12345 }) } },
-            seq(1),
-        );
-        state = reducer.applyDelta(
-            state,
-            { kind: "agent_event", event: { type: "message_end", message: msg } },
-            seq(2),
-        );
+        state = reducer.applyDelta(state, {
+            kind: "agent_event",
+            event: { type: "message_start", message: assistant({ timestamp: 12345 }) },
+        });
+        state = reducer.applyDelta(state, { kind: "agent_event", event: { type: "message_end", message: msg } });
         expect(state.liveMessage).toEqual({ kind: "settled", message: msg });
 
         // Non-matching entry keeps settled message visible without 1-frame vanish.
-        state = reducer.applyDelta(
-            state,
-            {
-                kind: "entries_appended",
-                entriesVersion: V152,
-                baseEntryCount: 1,
-                entries: {
-                    mode: "inline",
-                    data: [
-                        {
-                            type: "custom",
-                            id: "c1",
-                            parentId: null,
-                            timestamp: "2026-04-01T00:00:01.000Z",
-                            customType: "meta",
-                        },
-                    ],
-                },
+        state = reducer.applyDelta(state, {
+            kind: "entries_appended",
+            entriesVersion: V152,
+            baseEntryCount: 1,
+            entries: {
+                mode: "inline",
+                data: [
+                    {
+                        type: "custom",
+                        id: "c1",
+                        parentId: null,
+                        timestamp: "2026-04-01T00:00:01.000Z",
+                        customType: "meta",
+                    },
+                ],
             },
-            seq(3),
-        );
+        });
         expect(state.liveMessage).toEqual({ kind: "settled", message: msg });
 
         // Matching persisted assistant entry clears settled liveMessage atomically.
-        state = reducer.applyDelta(
-            state,
-            {
-                kind: "entries_appended",
-                entriesVersion: V152,
-                baseEntryCount: 2,
-                entries: {
-                    mode: "inline",
-                    data: [
-                        {
-                            type: "message",
-                            id: "m1",
-                            parentId: "c1",
-                            timestamp: "2026-04-01T00:00:02.000Z",
-                            message: msg,
-                        },
-                    ],
-                },
+        state = reducer.applyDelta(state, {
+            kind: "entries_appended",
+            entriesVersion: V152,
+            baseEntryCount: 2,
+            entries: {
+                mode: "inline",
+                data: [
+                    {
+                        type: "message",
+                        id: "m1",
+                        parentId: "c1",
+                        timestamp: "2026-04-01T00:00:02.000Z",
+                        message: msg,
+                    },
+                ],
             },
-            seq(4),
-        );
+        });
         expect(state.liveMessage).toEqual({ kind: "none" });
         expect(state.entries).toHaveLength(3);
     });
@@ -440,8 +402,6 @@ describe("session sync reducer", () => {
         expect(client.currentPhase.kind).toBe("hydrating_http");
         expect(client.currentState.entriesSync).toEqual({
             kind: "loading",
-            baseEntryCount: 0,
-            targetEntryCount: 2,
         });
 
         client.handleFrame({
@@ -474,11 +434,9 @@ describe("session sync reducer", () => {
         expect(sessionClose.pendingUiRequests).toEqual([]);
         expect(sessionClose.lastError).toBe("Session closed");
 
-        expect(reducer.applyDelta(sessionClose, { kind: "agent_event", event: { type: "agent_start" } }, seq(2))).toBe(
+        expect(reducer.applyDelta(sessionClose, { kind: "agent_event", event: { type: "agent_start" } })).toBe(
             sessionClose,
         );
-        expect(reducer.applyDelta(sessionClose, { kind: "ui_request", request: dialog("late") }, seq(3))).toBe(
-            sessionClose,
-        );
+        expect(reducer.applyDelta(sessionClose, { kind: "ui_request", request: dialog("late") })).toBe(sessionClose);
     });
 });
