@@ -43,11 +43,17 @@
     --color-primary-container: light-dark(rgb(0 95 184 / 0.12), rgb(0 120 212 / 0.12));
     --color-on-primary-container: light-dark(#005fb8, #4daafc);
 
-    /* Secondary roles use the neutral end of the palette; no tertiary accent yet. */
+    /* Secondary roles use the neutral end of the palette. */
     --color-secondary: light-dark(#616161, #9d9d9d);
     --color-on-secondary: light-dark(#ffffff, #181818);
     --color-secondary-container: light-dark(#e8e8e8, #ffffff22);
     --color-on-secondary-container: var(--color-on-surface);
+
+    /*
+     * Tertiary is the one purple accent: skill invocation headers use it so the row reads apart
+     * from thinking and note rows. It keeps at least 4.5:1 against the surface in both themes.
+     */
+    --color-tertiary: light-dark(#6750a4, #d0bcff);
 
     /*
      * Status roles for toasts. VS Code has no success toast role,

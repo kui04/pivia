@@ -14,6 +14,8 @@ Component conventions live in [components.md](components.md). Frontend code live
   missing, ask the user before adding it or using a raw value.
 - `--color-outline-control` is the 3:1 boundary for interactive controls (Input, Select, Checkbox and the secondary
   Button), meeting WCAG 1.4.11 in both themes. `--color-outline` stays the decorative editor separator.
+- `--color-tertiary` is the single purple accent, used by skill invocation headers. Keep it out of status and
+  emphasis roles.
 - `packages/web/src/styles/reset.css` is a trimmed Tailwind CSS Preflight. Load order in `packages/web/src/main.tsx` is
   fonts, token, reset, global; `global.css` holds only document-level rules.
 - Colors use `light-dark()` with `color-scheme`. Set `data-theme="light"` or `data-theme="dark"` on `<html>` to

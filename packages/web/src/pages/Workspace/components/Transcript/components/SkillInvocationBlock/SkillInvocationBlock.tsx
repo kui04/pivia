@@ -31,6 +31,7 @@ export function SkillInvocationBlock({ item, onOpenLink, className }: SkillInvoc
             label={`[skill] ${item.name}`}
             icon={Sparkles}
             scrollLabel={`${item.name} skill details`}
+            tone="accent"
             className={className}
         >
             <Markdown {...(onOpenLink !== undefined ? { onOpenLink } : {})}>{item.content}</Markdown>

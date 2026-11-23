@@ -17,6 +17,8 @@ export type CollapsibleBlockProps = {
     scrollLabel: string;
     /** True while the content still streams; animates the label and follows the bottom edge. */
     streaming?: boolean | undefined;
+    /** Accent that identifies the row; `accent` uses the tertiary purple. */
+    tone?: "neutral" | "accent" | undefined;
     /** Initial expanded state for uncontrolled usage. */
     defaultOpen?: boolean | undefined;
     /** Controlled expanded state. */
@@ -49,6 +51,7 @@ export function CollapsibleBlock({
     onOpenChange,
     children,
     className,
+    tone = "neutral",
 }: CollapsibleBlockProps): ReactElement {
     const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen);
     const panelId = useId();
@@ -65,7 +68,7 @@ export function CollapsibleBlock({
     };
 
     return (
-        <div className={cn(styles.root, className)}>
+        <div className={cn(styles.root, className)} data-tone={tone}>
             <button
                 type="button"
                 className={styles.trigger}
