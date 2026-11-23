@@ -1,4 +1,6 @@
-import type { AssistantMessage, ImageContent, ProjectedTranscriptItem } from "@pivia/protocol";
+import type { AssistantMessage, ImageContent, ParsedSkillBlock, ProjectedTranscriptItem } from "@pivia/protocol";
+
+import { parseSkillBlock } from "./skill-block";
 
 /**
  * The Pi built-in tools that receive dedicated icons and argument summaries in the transcript.
@@ -92,6 +94,15 @@ export type TranscriptUserItem = {
     timestamp: number;
 };
 
+export type TranscriptSkillItem = {
+    readonly kind: "skill";
+    readonly id: string;
+    readonly name: ParsedSkillBlock["name"];
+    readonly location: ParsedSkillBlock["location"];
+    readonly content: ParsedSkillBlock["content"];
+    readonly timestamp: number;
+};
+
 /** One system note between prompts, such as a compaction checkpoint or a branch summary. */
 export type TranscriptNoteItem = {
     kind: "note";
@@ -135,7 +146,7 @@ export type TranscriptTurnItem = {
 };
 
 /** One top-level entry in the transcript list. */
-export type TranscriptItem = TranscriptUserItem | TranscriptTurnItem | TranscriptNoteItem;
+export type TranscriptItem = TranscriptUserItem | TranscriptSkillItem | TranscriptTurnItem | TranscriptNoteItem;
 
 /** Optional inputs for live transcript rendering. */
 export type BuildTranscriptOptions = {
@@ -781,13 +792,37 @@ export function buildTranscript(
                 if (message.role === "user") {
                     flushTurn(false);
                     const { text, images } = readUserContent(item.editedContent ?? message.content);
-                    transcript.push({
-                        kind: "user",
-                        id: `user-${entry.id}`,
-                        text,
-                        images,
-                        timestamp: message.timestamp,
-                    });
+                    const skillBlock = parseSkillBlock(text);
+                    if (skillBlock === null) {
+                        transcript.push({
+                            kind: "user",
+                            id: `user-${entry.id}`,
+                            text,
+                            images,
+                            timestamp: message.timestamp,
+                        });
+                    } else {
+                        // The terminal client shows the expanded skill block first and the typed
+                        // prompt after it, so one persisted entry can become two rows.
+                        transcript.push({
+                            kind: "skill",
+                            id: `skill-${entry.id}`,
+                            name: skillBlock.name,
+                            location: skillBlock.location,
+                            content: skillBlock.content,
+                            timestamp: message.timestamp,
+                        });
+                        const userText = skillBlock.userMessage ?? "";
+                        if (userText !== "" || images.length > 0) {
+                            transcript.push({
+                                kind: "user",
+                                id: `user-${entry.id}`,
+                                text: userText,
+                                images,
+                                timestamp: message.timestamp,
+                            });
+                        }
+                    }
                     lastUserTimestamp = message.timestamp;
                     break;
                 }

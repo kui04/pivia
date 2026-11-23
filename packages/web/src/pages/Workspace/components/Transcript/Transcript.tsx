@@ -6,6 +6,7 @@ import { Button, Icon, ScrollArea } from "@components";
 import { cn } from "@/lib/cn";
 import type { TranscriptItem } from "@/stores/session/transcript";
 
+import { SkillInvocationBlock } from "./components/SkillInvocationBlock/SkillInvocationBlock";
 import { SystemNote } from "./components/SystemNote/SystemNote";
 import { TurnGroup } from "./components/TurnGroup/TurnGroup";
 import { UserMessage } from "./components/UserMessage/UserMessage";
@@ -90,6 +91,14 @@ export function Transcript({
                         switch (item.kind) {
                             case "user":
                                 return <UserMessage key={item.id} item={item} />;
+                            case "skill":
+                                return (
+                                    <SkillInvocationBlock
+                                        key={item.id}
+                                        item={item}
+                                        {...(onOpenLink !== undefined ? { onOpenLink } : {})}
+                                    />
+                                );
                             case "note":
                                 return (
                                     <SystemNote

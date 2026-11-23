@@ -1,0 +1,14 @@
+/*
+ * The source path under an expanded skill body.
+ *
+ *   .location
+ */
+.location {
+    margin: var(--space-8) 0 0;
+    color: var(--color-on-surface-variant);
+    font-family: var(--font-mono);
+    font-size: var(--type-label-medium-size);
+    letter-spacing: var(--type-label-medium-tracking);
+    line-height: var(--type-label-medium-line-height);
+    overflow-wrap: anywhere;
+}

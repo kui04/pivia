@@ -31,6 +31,12 @@ function userEntry(id: string, parentId: string | null, text: string, timestamp:
     };
 }
 
+/** Build a user entry as the terminal client writes an expanded `/skill:` command. */
+function skillEntry(id: string, parentId: string | null, name: string, prompt: string | null): FileEntry {
+    const block = `<skill name="${name}" location="/skills/${name}/SKILL.md">\nReferences are relative to /skills/${name}.\n\n# ${name}\n</skill>`;
+    return userEntry(id, parentId, prompt === null ? block : `${block}\n\n${prompt}`, 1_000);
+}
+
 function assistantEntry(
     id: string,
     parentId: string | null,
@@ -326,6 +332,84 @@ describe("buildTranscript", () => {
             text: "Visible extension message",
             timestamp: Date.parse("2026-04-01T00:00:01.000Z"),
         });
+    });
+
+    it("splits a skill invocation into its own block before the typed prompt", () => {
+        const items = buildTranscript(
+            project([
+                skillEntry("m1", null, "tydd", "Review this diff"),
+                assistantEntry("m2", "m1", [{ type: "text", text: "Reviewed." }], { timestamp: 2_000 }),
+            ]),
+        );
+
+        expect(items).toHaveLength(3);
+        expect(items[0]).toEqual({
+            kind: "skill",
+            id: "skill-m1",
+            name: "tydd",
+            location: "/skills/tydd/SKILL.md",
+            content: "References are relative to /skills/tydd.\n\n# tydd",
+            timestamp: 1_000,
+        });
+        expect(items[1]).toEqual({
+            kind: "user",
+            id: "user-m1",
+            text: "Review this diff",
+            images: [],
+            timestamp: 1_000,
+        });
+        // The turn still starts at the prompt entry, not at the assistant reply.
+        expect(turnOf(items, 2).timing).toEqual({ kind: "static", durationMs: 1_000 });
+    });
+
+    it("keeps a skill invocation without a prompt from creating an empty user bubble", () => {
+        const items = buildTranscript(
+            project([
+                skillEntry("m1", null, "tydd", null),
+                assistantEntry("m2", "m1", [{ type: "text", text: "Reviewed." }], { timestamp: 2_000 }),
+            ]),
+        );
+
+        expect(items.map((item) => item.kind)).toEqual(["skill", "turn"]);
+    });
+
+    it("keeps attachments from a skill invocation on the user bubble", () => {
+        const block = '<skill name="tydd" location="/skills/tydd/SKILL.md">\nBody\n</skill>';
+        const items = buildTranscript(
+            project([
+                {
+                    type: "message",
+                    id: "m1",
+                    parentId: null,
+                    timestamp: "2026-04-01T00:00:01.000Z",
+                    message: {
+                        role: "user",
+                        content: [
+                            { type: "text", text: block },
+                            { type: "image", data: "AAAA", mimeType: "image/png" },
+                        ],
+                        timestamp: 1_000,
+                    },
+                },
+            ]),
+        );
+
+        expect(items.map((item) => item.kind)).toEqual(["skill", "user"]);
+        expect(items[1]).toEqual({
+            kind: "user",
+            id: "user-m1",
+            text: "",
+            images: [{ type: "image", data: "AAAA", mimeType: "image/png" }],
+            timestamp: 1_000,
+        });
+    });
+
+    it("keeps a prompt that only mentions the skill tag as a user bubble", () => {
+        const items = buildTranscript(project([userEntry("m1", null, "Explain the <skill> tag", 1_000)]));
+
+        expect(items).toEqual([
+            { kind: "user", id: "user-m1", text: "Explain the <skill> tag", images: [], timestamp: 1_000 },
+        ]);
     });
 
     it("appends the live assistant message and marks the trailing block as streaming", () => {
