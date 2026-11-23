@@ -47,8 +47,8 @@ function formatStatus(status: TranscriptBashStatus): string {
  * One `!` command the reader ran between turns: command header, bounded output and result state.
  *
  * The record is written after the command ends, so it never shows a running state. Output keeps
- * its line breaks, strips terminal escapes, and can switch between horizontal scrolling and
- * wrapping; a truncated record names the file holding the full output.
+ * its line structure with LF endings, loses terminal escapes, and can switch between horizontal
+ * scrolling and wrapping; a truncated record names the file holding the full output.
  *
  * @param props - Command record and optional wrap and copy controls.
  */
@@ -79,6 +79,7 @@ export function BashExecutionBlock({
     const statusText = formatStatus(item.status);
     const copyStatusText = copy.status === "copied" ? "Copied" : copy.status === "failed" ? "Copy failed" : "";
     const hasOutput = item.output.length > 0;
+    const outputLabel = item.command.trim() !== "" ? `${item.command} output` : "Command output";
 
     const handleCopy = () => {
         if (!hasOutput) {
@@ -109,6 +110,7 @@ export function BashExecutionBlock({
                 <code className={styles.command}>
                     {item.command}
                     {statusText !== "" ? <span className={styles.status}>{` · ${statusText}`}</span> : null}
+                    {item.excludeFromContext ? <span className={styles.context}>{" · not in context"}</span> : null}
                 </code>
                 <div className={styles.meta}>
                     <IconButton label="Wrap lines" aria-pressed={wrapped} onClick={() => setWrapped((prev) => !prev)}>
@@ -127,7 +129,7 @@ export function BashExecutionBlock({
             </div>
 
             <ScrollArea
-                label={`${item.command} output`}
+                label={outputLabel}
                 viewportRef={viewportRef}
                 className={styles.scroll}
                 viewportClassName={cn(styles.viewport, fadeTop && styles.fadeTop, fadeBottom && styles.fadeBottom)}
@@ -152,10 +154,6 @@ export function BashExecutionBlock({
                         </>
                     ) : null}
                 </p>
-            ) : null}
-
-            {item.excludeFromContext ? (
-                <span className={styles.visuallyHidden}>Excluded from model context.</span>
             ) : null}
 
             <span className={styles.visuallyHidden} role="status">

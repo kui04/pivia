@@ -14,7 +14,7 @@
  *   │           ├─ .output[data-wrapped]
  *   │           └─ .empty
  *   ├─ .notice                truncation warning and full-output path
- *   └─ .visuallyHidden        copy announcement and context note
+ *   └─ .visuallyHidden        copy announcement
  *
  * Classes passed to child components stay top-level so CSS Modules keep one class of specificity:
  *
@@ -61,6 +61,11 @@
             .status {
                 color: var(--color-on-surface-variant);
             }
+
+            /* The context note is text, so the meaning does not rely on the border colour. */
+            .context {
+                color: var(--color-on-surface-variant);
+            }
         }
 
         .meta {
@@ -80,9 +85,9 @@
         color: var(--color-error);
     }
 
-    /* A `!!` command stays out of model context; the accent border marks it without a chip.
-     * The hidden note keeps the meaning available when color is not. */
-    &[data-context="excluded"] {
+    /* A `!!` command stays out of model context: the accent border and the header suffix mark it.
+     * A failed command keeps its error border, because failure is the more urgent fact. */
+    &[data-context="excluded"]:not([data-status="failed"]) {
         border-color: var(--color-tertiary);
     }
 

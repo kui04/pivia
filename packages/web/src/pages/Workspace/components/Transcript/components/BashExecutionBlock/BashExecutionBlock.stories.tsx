@@ -62,6 +62,19 @@ const excludedItem: TranscriptBashItem = {
     excludeFromContext: true,
 };
 
+const failedExcludedItem: TranscriptBashItem = {
+    ...failedItem,
+    id: "bash-failed-excluded",
+    excludeFromContext: true,
+};
+
+const unnamedCommandItem: TranscriptBashItem = {
+    ...succeededItem,
+    id: "bash-unnamed",
+    command: "",
+    output: "orphaned output",
+};
+
 const meta = {
     title: "Pages/Workspace/Transcript/BashExecutionBlock",
     component: BashExecutionBlock,
@@ -169,8 +182,30 @@ export const ExcludedFromContext: Story = {
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
         await expect(canvasElement.querySelector("[data-context='excluded']")).not.toBeNull();
-        // The accent border carries the state; the hidden note keeps it available without color.
-        await expect(canvas.getByText("Excluded from model context.")).toBeInTheDocument();
+        // The suffix spells out the state, so the accent border is not the only signal.
+        await expect(canvas.getByText(/not in context/)).toBeVisible();
         await expect(canvas.getByText("git status --short")).toBeVisible();
+    },
+};
+
+export const FailedAndExcluded: Story = {
+    args: {
+        item: failedExcludedItem,
+    },
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+        await expect(canvas.getByText(/exited 2/)).toBeVisible();
+        await expect(canvas.getByText(/not in context/)).toBeVisible();
+    },
+};
+
+export const UnnamedCommand: Story = {
+    args: {
+        item: unnamedCommandItem,
+    },
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+        await expect(canvas.getByRole("group", { name: "Command output" })).toBeVisible();
+        await expect(canvas.getByText("orphaned output")).toBeVisible();
     },
 };
