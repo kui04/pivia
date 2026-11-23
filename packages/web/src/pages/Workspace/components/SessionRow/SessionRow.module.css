@@ -3,6 +3,10 @@
  * edge and the list reads as one column of cards. The 32px height is shared with the folder header
  * and the skeleton rows, so a loaded list replaces the skeleton without a jump.
  *
+ * The hover tint is one animated number on the row, not a colour per layer: the actions cover paints
+ * the row colour at full opacity, so fading its opacity over a separately fading row tint would
+ * count the tint twice and show as a lighter block on the covered end.
+ *
  * The nesting this file styles; a DOM parent that is not a CSS ancestor is noted:
  *
  *   .item (li)                     data-selected and data-open drive the tint
@@ -26,6 +30,12 @@
  * The actions are a sibling of the button, never a child, because a button cannot hold buttons
  * and a keyboard has to reach the name and the actions separately.
  */
+@property --row-hover-tint {
+    syntax: "<number>";
+    inherits: true;
+    initial-value: 0;
+}
+
 .item {
     --row-inset: var(--space-8);
     /* The pin and the menu read as one group, so they sit closer than the rows below. */
@@ -34,15 +44,18 @@
     --actions-fade: var(--space-12);
     /*
      * The surface the row sits on, and the tint the row adds to it. The actions layer paints both,
-     * so it covers the title under it with exactly the colour the row shows there.
+     * so it covers the title under it with exactly the colour the row shows there. Both derive from
+     * one animated number: a still-fading row tint under a fading actions layer would look lighter.
      */
     --row-base: var(--color-surface-container);
-    --row-overlay: transparent;
+    --row-hover-tint: 0;
+    --row-overlay: color-mix(in srgb, var(--state-hover) calc(var(--row-hover-tint) * 100%), transparent);
 
     position: relative;
     display: flex;
     align-items: center;
     min-block-size: var(--space-32);
+    transition: --row-hover-tint var(--motion-duration-effects-fast) var(--motion-easing-standard);
 
     /*
      * The title starts at 36px: the row inset, the 20px flush icon box and its 8px gap, so titles
@@ -65,19 +78,18 @@
         /* A long press opens the menu instead of selecting text. */
         user-select: none;
         touch-action: pan-y;
-        transition: background-color var(--motion-duration-effects-fast) var(--motion-easing-standard);
     }
 
     /* A touch screen has no hover, so the tint only follows a pointer or an open menu. */
     @media (hover: hover) {
         &:hover {
-            --row-overlay: var(--state-hover);
+            --row-hover-tint: 1;
         }
     }
 
     /* An open menu keeps the row marked while the pointer is on the popup. */
     &[data-open="true"] {
-        --row-overlay: var(--state-hover);
+        --row-hover-tint: 1;
     }
 
     /* Kept after the hover rules so a press answers, and before the chosen row so that one wins. */
@@ -207,7 +219,7 @@
     }
 
     @media (prefers-reduced-motion: reduce) {
-        .select,
+        &,
         .age,
         .actions {
             transition: none;
