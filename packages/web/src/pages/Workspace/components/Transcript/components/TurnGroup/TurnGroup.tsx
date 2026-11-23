@@ -53,6 +53,9 @@ function outcomeNotice(outcome: TranscriptTurnOutcome): { readonly text: string;
             return { text: outcome.message, announce: true };
         case "open":
         case "completed":
+            return null;
+        // A deferred response is still being polled by the provider and the turn resumes when it
+        // settles, so a notice here would flash and disappear.
         case "deferred":
             return null;
         default:

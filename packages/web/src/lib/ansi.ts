@@ -20,19 +20,25 @@ const UNFINISHED_ANSI_SUFFIX = new RegExp(
 );
 
 /**
- * Remove terminal control sequences from captured command output.
+ * Remove terminal control sequences and normalize line endings from captured command output.
  *
  * The grammar covers CSI (colors, cursor movement, erases), OSC (window titles and hyperlinks) and
  * the two-byte escapes. A sequence cut off at the end is dropped whole, so no escape bytes reach
  * the view and no printable text after an unterminated introducer is lost.
  *
+ * Terminal programs repaint a line with a carriage return, but the view shows the captured stream
+ * as text. CRLF and a lone CR both become LF, the same normalization the Pi terminal client
+ * applies to live command output.
+ *
  * @param raw - Output exactly as the session recorded it.
- * @returns The printable text.
+ * @returns The printable text with LF line endings.
  */
 export function stripAnsi(raw: string): string {
-    // Escape sequences need an ESC (7-bit) or CSI (8-bit) introducer; plain text returns as is.
-    if (!raw.includes("\u001B") && !raw.includes("\u009B")) {
-        return raw;
-    }
-    return raw.replace(UNFINISHED_ANSI_SUFFIX, "").replace(ANSI_SEQUENCE, "");
+    // Escape sequences need an ESC (7-bit) or CSI (8-bit) introducer; plain text only needs the
+    // line-ending pass below.
+    const text =
+        !raw.includes("\u001B") && !raw.includes("\u009B")
+            ? raw
+            : raw.replace(UNFINISHED_ANSI_SUFFIX, "").replace(ANSI_SEQUENCE, "");
+    return text.includes("\r") ? text.replace(/\r\n?/g, "\n") : text;
 }

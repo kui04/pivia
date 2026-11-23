@@ -30,6 +30,16 @@ describe("stripAnsi", () => {
         expect(stripAnsi("")).toBe("");
     });
 
+    it("turns CRLF and a lone CR into LF", () => {
+        expect(stripAnsi("first\r\nsecond\rthird")).toBe("first\nsecond\nthird");
+        expect(stripAnsi("progress 10%\rprogress 100%\r\n")).toBe("progress 10%\nprogress 100%\n");
+    });
+
+    it("normalizes line endings after removing an escape sequence", () => {
+        expect(stripAnsi("\u001B[31mred\u001B[0m\r\nnext")).toBe("red\nnext");
+        expect(stripAnsi("one\r\u001B]0;title\u0007two")).toBe("one\ntwo");
+    });
+
     it("drops a sequence cut off at the end without eating printable text", () => {
         expect(stripAnsi("partial \u001B[31")).toBe("partial ");
         expect(stripAnsi("partial \u001B]0;title")).toBe("partial ");

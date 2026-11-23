@@ -55,35 +55,35 @@ export type TranscriptTiming =
 
 /** One collapsible thinking block inside a turn timeline. */
 export type TranscriptThinkingStep = {
-    kind: "thinking";
-    id: string;
-    thinking: string;
-    redacted: boolean;
-    streaming: boolean;
+    readonly kind: "thinking";
+    readonly id: string;
+    readonly thinking: string;
+    readonly redacted: boolean;
+    readonly streaming: boolean;
 };
 
 /** One collapsible tool call and its paired result inside a turn timeline. */
 export type TranscriptToolCallStep = {
-    kind: "toolCall";
-    id: string;
-    name: string;
-    toolKind: TranscriptToolKind;
-    label: string;
-    summary: string;
-    arguments: TranscriptToolArguments;
-    argumentsError: string | null;
-    status: "running" | "done" | "error";
-    output: string;
-    images: readonly ImageContent[];
-    timing: TranscriptTiming;
+    readonly kind: "toolCall";
+    readonly id: string;
+    readonly name: string;
+    readonly toolKind: TranscriptToolKind;
+    readonly label: string;
+    readonly summary: string;
+    readonly arguments: TranscriptToolArguments;
+    readonly argumentsError: string | null;
+    readonly status: "running" | "done" | "error";
+    readonly output: string;
+    readonly images: readonly ImageContent[];
+    readonly timing: TranscriptTiming;
 };
 
 /** One intermediate assistant reply rendered directly inside the turn timeline. */
 export type TranscriptReplyStep = {
-    kind: "reply";
-    id: string;
-    text: string;
-    streaming: boolean;
+    readonly kind: "reply";
+    readonly id: string;
+    readonly text: string;
+    readonly streaming: boolean;
 };
 
 /** One chronological item inside a collapsed turn group. */
@@ -91,11 +91,11 @@ export type TranscriptStep = TranscriptThinkingStep | TranscriptToolCallStep | T
 
 /** One user prompt rendered as a bubble. */
 export type TranscriptUserItem = {
-    kind: "user";
-    id: string;
-    text: string;
-    images: readonly ImageContent[];
-    timestamp: number;
+    readonly kind: "user";
+    readonly id: string;
+    readonly text: string;
+    readonly images: readonly ImageContent[];
+    readonly timestamp: number;
 };
 
 export type TranscriptSkillItem = {
@@ -159,12 +159,12 @@ export type TranscriptCustomItem = {
 
 /** One system note between prompts, such as a compaction checkpoint or a branch summary. */
 export type TranscriptNoteItem = {
-    kind: "note";
-    id: string;
+    readonly kind: "note";
+    readonly id: string;
     /** Short heading that names the checkpoint. */
-    title: string;
+    readonly title: string;
     /** Text the entry carries; the transcript renders it as Markdown. */
-    text: string;
+    readonly text: string;
 };
 
 /**
@@ -190,13 +190,13 @@ export type TranscriptTurnOutcome =
  * intermediate replies stay inside `steps`.
  */
 export type TranscriptTurnItem = {
-    kind: "turn";
-    id: string;
-    steps: readonly TranscriptStep[];
-    finalReply: string | null;
-    outcome: TranscriptTurnOutcome;
-    timing: TranscriptTiming;
-    streaming: boolean;
+    readonly kind: "turn";
+    readonly id: string;
+    readonly steps: readonly TranscriptStep[];
+    readonly finalReply: string | null;
+    readonly outcome: TranscriptTurnOutcome;
+    readonly timing: TranscriptTiming;
+    readonly streaming: boolean;
 };
 
 /** One top-level entry in the transcript list. */
@@ -569,7 +569,7 @@ function readBashStatus(cancelled: boolean, exitCode: number | null): Transcript
     return exitCode === 0 ? { kind: "succeeded" } : { kind: "failed", exitCode };
 }
 
-/** Read one persisted `!` command record; output keeps its text but loses terminal escapes. */
+/** Read one persisted `!` command record; output keeps its text, loses terminal escapes and uses LF. */
 function readBashItem(entryId: string, message: BashExecutionRecord): TranscriptBashItem {
     const exitCode =
         typeof message.exitCode === "number" && Number.isFinite(message.exitCode) ? message.exitCode : null;
@@ -631,6 +631,12 @@ function readAbortMessage(errorMessage: string | null): string {
     return text === "Request was aborted" ? "Operation aborted" : text;
 }
 
+/** Name the failure once, even when the provider's message already starts with an error label. */
+function formatErrorOutcomeMessage(errorMessage: string | null): string {
+    const text = messageTextOr(errorMessage, "Assistant request failed");
+    return /^error:/i.test(text) ? text : `Error: ${text}`;
+}
+
 /**
  * One outcome for every stop reason the SDK can record.
  *
@@ -649,7 +655,7 @@ const TURN_OUTCOME_BY_STOP_REASON: {
     aborted: (errorMessage) => ({ kind: "aborted", message: readAbortMessage(errorMessage) }),
     error: (errorMessage) => ({
         kind: "error",
-        message: `Error: ${messageTextOr(errorMessage, "Assistant request failed")}`,
+        message: formatErrorOutcomeMessage(errorMessage),
     }),
 };
 
@@ -910,6 +916,7 @@ export function buildTranscript(
                 switch (message.role) {
                     case "user": {
                         flushTurn(false);
+                        const timestamp = toTimestamp(message.timestamp);
                         const { text, images } = readUserContent(item.editedContent ?? message.content);
                         const skillBlock = parseSkillBlock(text);
                         if (skillBlock === null) {
@@ -918,7 +925,7 @@ export function buildTranscript(
                                 id: `user-${entry.id}`,
                                 text,
                                 images,
-                                timestamp: message.timestamp,
+                                timestamp,
                             });
                         } else {
                             // The terminal client shows the expanded skill block first and the typed
@@ -929,7 +936,7 @@ export function buildTranscript(
                                 name: skillBlock.name,
                                 location: skillBlock.location,
                                 content: skillBlock.content,
-                                timestamp: message.timestamp,
+                                timestamp,
                             });
                             const userText = skillBlock.userMessage ?? "";
                             if (userText !== "" || images.length > 0) {
@@ -938,11 +945,13 @@ export function buildTranscript(
                                     id: `user-${entry.id}`,
                                     text: userText,
                                     images,
-                                    timestamp: message.timestamp,
+                                    timestamp,
                                 });
                             }
                         }
-                        lastUserTimestamp = message.timestamp;
+                        // A prompt starts the next turn's clock. An unreadable timestamp parses to 0
+                        // and must not become a start, or the turn would count from the epoch.
+                        lastUserTimestamp = timestamp > 0 ? timestamp : null;
                         break;
                     }
                     case "assistant": {

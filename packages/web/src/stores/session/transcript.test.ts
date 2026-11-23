@@ -221,6 +221,17 @@ function corruptCustomMessageEntry(customType: unknown, content: unknown): FileE
     } as FileEntry;
 }
 
+/** Build a prompt whose timestamp violates the SDK type, to test the boundary. */
+function corruptUserMessageEntry(timestamp: unknown): FileEntry {
+    return {
+        type: "message",
+        id: "m-bad",
+        parentId: null,
+        timestamp: "2026-04-01T00:00:01.000Z",
+        message: { role: "user", content: "Hello", timestamp },
+    } as FileEntry;
+}
+
 function project(entries: readonly FileEntry[]) {
     return projectSessionTranscript([HEADER, ...entries]).items;
 }
@@ -455,6 +466,18 @@ describe("buildTranscript", () => {
         );
 
         expect(items[0]).toMatchObject({ kind: "custom", timestamp: 0 });
+        expect(turnOf(items, 1).timing).toEqual({ kind: "static", durationMs: 0 });
+    });
+
+    it("does not seed the next turn from an unreadable prompt timestamp", () => {
+        const items = buildTranscript(
+            project([
+                corruptUserMessageEntry(Number.NaN),
+                assistantEntry("m2", "m-bad", [{ type: "text", text: "Answer" }], { timestamp: 2_000 }),
+            ]),
+        );
+
+        expect(items[0]).toMatchObject({ kind: "user", timestamp: 0 });
         expect(turnOf(items, 1).timing).toEqual({ kind: "static", durationMs: 0 });
     });
 
@@ -849,6 +872,8 @@ describe("buildTranscript", () => {
         ["aborted", "Request was aborted", { kind: "aborted", message: "Operation aborted" }],
         ["aborted", "Stopped by the reader", { kind: "aborted", message: "Stopped by the reader" }],
         ["error", " 529 overloaded ", { kind: "error", message: "Error: 529 overloaded" }],
+        ["error", "Error: Rate limit exceeded", { kind: "error", message: "Error: Rate limit exceeded" }],
+        ["error", "error: lowercase provider text", { kind: "error", message: "error: lowercase provider text" }],
     ] as const)("maps stop reason %s to its turn outcome", (stopReason, errorMessage, expected) => {
         const items = buildTranscript(
             project([
