@@ -1,19 +1,14 @@
 import { assertNever } from "@pivia/protocol";
 import { Check, Copy, Terminal, WrapText, X } from "lucide-react";
-import { useEffect, useState, type ReactElement } from "react";
+import { useState, type ReactElement } from "react";
 
 import { Icon, IconButton, ScrollArea } from "@components";
-import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/cn";
 import type { TranscriptBashItem, TranscriptBashStatus } from "@/stores/session/transcript";
 
 import { useAutoScroll } from "../../useAutoScroll";
+import { useCopyFeedback } from "../../useCopyFeedback";
 import styles from "./BashExecutionBlock.module.css";
-
-/** How long the copy button keeps its success or failure icon. */
-const COPY_FEEDBACK_MS = 2000;
-
-type CopyStatus = "idle" | "copied" | "failed";
 
 /** Props of {@link BashExecutionBlock}. */
 export type BashExecutionBlockProps = {
@@ -59,40 +54,17 @@ export function BashExecutionBlock({
     className,
 }: BashExecutionBlockProps): ReactElement {
     const [wrapped, setWrapped] = useState(defaultWrapped);
-    const [copy, setCopy] = useState<{ status: CopyStatus; pulse: number }>({ status: "idle", pulse: 0 });
+    const { status: copyStatus, copy } = useCopyFeedback(onCopy);
     // The record never grows, so the viewport only needs scroll listeners for the edge masks.
     const { viewportRef, fadeTop, fadeBottom } = useAutoScroll({ streaming: false });
 
-    useEffect(() => {
-        if (copy.status === "idle") {
-            return;
-        }
-
-        // The pulse restarts the timeout when the user copies again before the feedback resets.
-        const timer = window.setTimeout(
-            () => setCopy((value) => ({ status: "idle", pulse: value.pulse })),
-            COPY_FEEDBACK_MS,
-        );
-        return () => window.clearTimeout(timer);
-    }, [copy.status, copy.pulse]);
-
     const statusText = formatStatus(item.status);
-    const copyStatusText = copy.status === "copied" ? "Copied" : copy.status === "failed" ? "Copy failed" : "";
+    const copyStatusText = copyStatus === "copied" ? "Copied" : copyStatus === "failed" ? "Copy failed" : "";
     const hasOutput = item.output.length > 0;
     const outputLabel = item.command.trim() !== "" ? `${item.command} output` : "Command output";
 
     const handleCopy = () => {
-        if (!hasOutput) {
-            return;
-        }
-
-        copyText(item.output).then(
-            () => {
-                setCopy((value) => ({ status: "copied", pulse: value.pulse + 1 }));
-                onCopy?.(item.output);
-            },
-            () => setCopy((value) => ({ status: "failed", pulse: value.pulse + 1 })),
-        );
+        copy(item.output);
     };
 
     return (
@@ -117,9 +89,9 @@ export function BashExecutionBlock({
                         <WrapText strokeWidth={1.75} />
                     </IconButton>
                     <IconButton label="Copy output" disabled={!hasOutput} onClick={handleCopy}>
-                        {copy.status === "copied" ? (
+                        {copyStatus === "copied" ? (
                             <Check strokeWidth={1.75} />
-                        ) : copy.status === "failed" ? (
+                        ) : copyStatus === "failed" ? (
                             <X strokeWidth={1.75} />
                         ) : (
                             <Copy strokeWidth={1.75} />

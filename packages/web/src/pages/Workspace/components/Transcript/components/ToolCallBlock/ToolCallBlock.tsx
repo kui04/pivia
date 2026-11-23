@@ -16,21 +16,16 @@ import {
     X,
     type LucideIcon,
 } from "lucide-react";
-import { useEffect, useId, useMemo, useState, type ReactElement } from "react";
+import { useId, useMemo, useState, type ReactElement } from "react";
 
 import { Icon, IconButton, Image, ScrollArea } from "@components";
-import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/cn";
 import { formatToolDuration, type TranscriptToolCallStep, type TranscriptToolKind } from "@/stores/session/transcript";
 
 import { useAutoScroll } from "../../useAutoScroll";
+import { useCopyFeedback } from "../../useCopyFeedback";
 import { useLiveDuration } from "../../useLiveDuration";
 import styles from "./ToolCallBlock.module.css";
-
-/** How long the copy button keeps its success or failure icon. */
-const COPY_FEEDBACK_MS = 2000;
-
-type CopyStatus = "idle" | "copied" | "failed";
 
 /** Maps Pi built-in tools to dedicated icons and groups all custom tools under Wrench. */
 const TOOL_ICONS: Record<TranscriptToolKind, LucideIcon> = {
@@ -85,7 +80,7 @@ export function ToolCallBlock({
 }: ToolCallBlockProps): ReactElement {
     const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen);
     const [wrapped, setWrapped] = useState(defaultWrapped);
-    const [copy, setCopy] = useState<{ status: CopyStatus; pulse: number }>({ status: "idle", pulse: 0 });
+    const { status: copyStatus, copy } = useCopyFeedback(onCopy);
     const panelId = useId();
 
     const open = controlledOpen ?? uncontrolledOpen;
@@ -94,19 +89,6 @@ export function ToolCallBlock({
 
     const { viewportRef, fadeTop, fadeBottom } = useAutoScroll({ enabled: open, streaming: isRunning });
     const liveDurationMs = useLiveDuration(step.timing, 100);
-
-    useEffect(() => {
-        if (copy.status === "idle") {
-            return;
-        }
-
-        // The pulse restarts the timeout when the user copies again before the feedback resets.
-        const timer = window.setTimeout(
-            () => setCopy((value) => ({ status: "idle", pulse: value.pulse })),
-            COPY_FEEDBACK_MS,
-        );
-        return () => window.clearTimeout(timer);
-    }, [copy.status, copy.pulse]);
 
     const handleToggle = () => {
         const next = !open;
@@ -127,7 +109,7 @@ export function ToolCallBlock({
     );
     const hasCopyable = hasOutput || step.argumentsError !== null || hasArguments;
     const formattedDuration = liveDurationMs !== null ? formatToolDuration(liveDurationMs) : null;
-    const statusText = copy.status === "copied" ? "Copied" : copy.status === "failed" ? "Copy failed" : "";
+    const statusText = copyStatus === "copied" ? "Copied" : copyStatus === "failed" ? "Copy failed" : "";
 
     /**
      * Build the copy payload on demand: with output it is the output, and only an argument-only card
@@ -144,18 +126,7 @@ export function ToolCallBlock({
     };
 
     const handleCopy = () => {
-        const text = buildCopyableText();
-        if (text.length === 0) {
-            return;
-        }
-
-        copyText(text).then(
-            () => {
-                setCopy((value) => ({ status: "copied", pulse: value.pulse + 1 }));
-                onCopy?.(text);
-            },
-            () => setCopy((value) => ({ status: "failed", pulse: value.pulse + 1 })),
-        );
+        copy(buildCopyableText());
     };
 
     return (
@@ -202,9 +173,9 @@ export function ToolCallBlock({
                                     <WrapText strokeWidth={1.75} />
                                 </IconButton>
                                 <IconButton label="Copy output" disabled={!hasCopyable} onClick={handleCopy}>
-                                    {copy.status === "copied" ? (
+                                    {copyStatus === "copied" ? (
                                         <Check strokeWidth={1.75} />
-                                    ) : copy.status === "failed" ? (
+                                    ) : copyStatus === "failed" ? (
                                         <X strokeWidth={1.75} />
                                     ) : (
                                         <Copy strokeWidth={1.75} />
