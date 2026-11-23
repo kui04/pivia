@@ -149,15 +149,16 @@ in step with the file: a new nested rule updates the sketch in the same change.
   so stories and tests drive an isolated store.
 - The transcript never walks the entry tree. `projectSessionTranscript` from `@pivia/protocol` resolves the active
   branch, the compaction boundary and `context_edit` replacements; `buildTranscript` in
-  `packages/web/src/stores/session/transcript.ts` folds those items into user bubbles, system notes and
-  `Worked for Xs` turn groups. `liveAssistantMessage` joins the same aggregation, so a streamed answer renders
-  before its entry lands.
+  `packages/web/src/stores/session/transcript.ts` folds those items into user bubbles, skill invocation rows, system
+  notes and `Worked for Xs` turn groups. One `/skill:` user entry becomes a collapsed `[skill] name` row followed by
+  the prompt bubble when the reader typed one. `liveAssistantMessage` joins the same aggregation, so a streamed answer
+  renders before its entry lands.
 - Page states in order: missing or invalid session, first snapshot pending, entry-sync failure with a Retry action,
   terminal connection error, empty session, transcript. A failed entry sync with cached rows keeps the transcript
   and adds a status banner instead of replacing it.
-- `packages/web/src/pages/Workspace/components/Transcript/` holds the read-only view (user bubbles, turn groups,
-  thinking and tool blocks, system notes, auto-scroll) and the live-duration hook. The composer slot below it is
-  still a placeholder.
+- `packages/web/src/pages/Workspace/components/Transcript/` holds the read-only view (user bubbles, skill invocation
+  blocks, turn groups, thinking and tool blocks, system notes, auto-scroll) and the live-duration hook. The composer
+  slot below it is still a placeholder.
 - A transcript item's timing is a discriminated union: a settled turn or tool call carries its final duration, a
   running one carries its start time and the component samples the clock. The two shapes are exclusive so a caller
   cannot add a live elapsed time to a snapshot duration twice. Only the trailing turn of an active runtime may report
