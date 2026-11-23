@@ -1,5 +1,7 @@
 import type { AssistantMessage, ImageContent, ParsedSkillBlock, ProjectedTranscriptItem } from "@pivia/protocol";
 
+import { stripAnsi } from "@/lib/ansi";
+
 import { parseSkillBlock } from "./skill-block";
 
 /**
@@ -18,6 +20,7 @@ type MessageEntry = EntryOf<"message">;
 type MessageOf<TRole extends MessageEntry["message"]["role"]> = Extract<MessageEntry["message"], { role: TRole }>;
 type AssistantEntryMessage = MessageOf<"assistant">;
 type ToolResultEntryMessage = MessageOf<"toolResult">;
+type BashExecutionRecord = MessageOf<"bashExecution">;
 type EditableContent = NonNullable<ProjectedEntryItem["editedContent"]>;
 
 /**
@@ -103,6 +106,39 @@ export type TranscriptSkillItem = {
     readonly timestamp: number;
 };
 
+/**
+ * Terminal state of one persisted `!` command.
+ *
+ * The session appends the record only after the command ends, so a persisted record is never
+ * running; live output needs its own state once the composer can start commands.
+ */
+export type TranscriptBashStatus =
+    | { readonly kind: "succeeded" }
+    | { readonly kind: "failed"; readonly exitCode: number }
+    | { readonly kind: "cancelled" }
+    | { readonly kind: "noExitCode" };
+
+/** Truncation of one `!` record; only these records carry the path of the full output file. */
+export type TranscriptBashTruncation =
+    | { readonly kind: "none" }
+    | {
+          readonly kind: "truncated";
+          readonly fullOutputPath: Exclude<BashExecutionRecord["fullOutputPath"], undefined> | null;
+      };
+
+/** One user `!` command record, rendered between the conversation turns it ran between. */
+export type TranscriptBashItem = {
+    readonly kind: "bash";
+    readonly id: string;
+    readonly command: BashExecutionRecord["command"];
+    readonly output: BashExecutionRecord["output"];
+    /** True for the `!!` prefix, whose output stays out of the model context. */
+    readonly excludeFromContext: Exclude<BashExecutionRecord["excludeFromContext"], undefined>;
+    readonly status: TranscriptBashStatus;
+    readonly truncation: TranscriptBashTruncation;
+    readonly timestamp: BashExecutionRecord["timestamp"];
+};
+
 /** One system note between prompts, such as a compaction checkpoint or a branch summary. */
 export type TranscriptNoteItem = {
     kind: "note";
@@ -146,7 +182,8 @@ export type TranscriptTurnItem = {
 };
 
 /** One top-level entry in the transcript list. */
-export type TranscriptItem = TranscriptUserItem | TranscriptSkillItem | TranscriptTurnItem | TranscriptNoteItem;
+export type TranscriptItem =
+    TranscriptUserItem | TranscriptSkillItem | TranscriptBashItem | TranscriptTurnItem | TranscriptNoteItem;
 
 /** Optional inputs for live transcript rendering. */
 export type BuildTranscriptOptions = {
@@ -215,6 +252,16 @@ type AssistantTurnMessage = {
     readonly message: ViewAssistantMessage;
     readonly live: boolean;
 };
+
+/**
+ * Compile-time exhaustiveness check for a switch over an SDK union.
+ *
+ * A session written by a newer Pi can hold an entry or role this build does not know, so the
+ * runtime ignores it; a value added to the SDK type fails to satisfy the `never` parameter here.
+ */
+function expectExhaustive(value: never): void {
+    void value;
+}
 
 /** A timestamp is only useful when it is finite; a broken one must not poison ids or durations. */
 function toTimestamp(value: unknown): number {
@@ -485,6 +532,35 @@ function readToolResultMessage(
         isError: message.isError === true,
         timestamp: toTimestamp(message.timestamp),
         durationMs: toDuration(message.durationMs),
+    };
+}
+
+/** Map a cancelled flag and an optional exit code to the state the block shows. */
+function readBashStatus(cancelled: boolean, exitCode: number | null): TranscriptBashStatus {
+    if (cancelled) {
+        return { kind: "cancelled" };
+    }
+    if (exitCode === null) {
+        return { kind: "noExitCode" };
+    }
+    return exitCode === 0 ? { kind: "succeeded" } : { kind: "failed", exitCode };
+}
+
+/** Read one persisted `!` command record; output keeps its text but loses terminal escapes. */
+function readBashItem(entryId: string, message: BashExecutionRecord): TranscriptBashItem {
+    const exitCode =
+        typeof message.exitCode === "number" && Number.isFinite(message.exitCode) ? message.exitCode : null;
+    const fullOutputPath =
+        typeof message.fullOutputPath === "string" && message.fullOutputPath !== "" ? message.fullOutputPath : null;
+    return {
+        kind: "bash",
+        id: `bash-${entryId}`,
+        command: typeof message.command === "string" ? message.command : "",
+        output: stripAnsi(typeof message.output === "string" ? message.output : ""),
+        excludeFromContext: message.excludeFromContext === true,
+        status: readBashStatus(message.cancelled === true, exitCode),
+        truncation: message.truncated === true ? { kind: "truncated", fullOutputPath } : { kind: "none" },
+        timestamp: toTimestamp(message.timestamp),
     };
 }
 
@@ -789,54 +865,72 @@ export function buildTranscript(
         switch (entry.type) {
             case "message": {
                 const message = entry.message;
-                if (message.role === "user") {
-                    flushTurn(false);
-                    const { text, images } = readUserContent(item.editedContent ?? message.content);
-                    const skillBlock = parseSkillBlock(text);
-                    if (skillBlock === null) {
-                        transcript.push({
-                            kind: "user",
-                            id: `user-${entry.id}`,
-                            text,
-                            images,
-                            timestamp: message.timestamp,
-                        });
-                    } else {
-                        // The terminal client shows the expanded skill block first and the typed
-                        // prompt after it, so one persisted entry can become two rows.
-                        transcript.push({
-                            kind: "skill",
-                            id: `skill-${entry.id}`,
-                            name: skillBlock.name,
-                            location: skillBlock.location,
-                            content: skillBlock.content,
-                            timestamp: message.timestamp,
-                        });
-                        const userText = skillBlock.userMessage ?? "";
-                        if (userText !== "" || images.length > 0) {
+                switch (message.role) {
+                    case "user": {
+                        flushTurn(false);
+                        const { text, images } = readUserContent(item.editedContent ?? message.content);
+                        const skillBlock = parseSkillBlock(text);
+                        if (skillBlock === null) {
                             transcript.push({
                                 kind: "user",
                                 id: `user-${entry.id}`,
-                                text: userText,
+                                text,
                                 images,
                                 timestamp: message.timestamp,
                             });
+                        } else {
+                            // The terminal client shows the expanded skill block first and the typed
+                            // prompt after it, so one persisted entry can become two rows.
+                            transcript.push({
+                                kind: "skill",
+                                id: `skill-${entry.id}`,
+                                name: skillBlock.name,
+                                location: skillBlock.location,
+                                content: skillBlock.content,
+                                timestamp: message.timestamp,
+                            });
+                            const userText = skillBlock.userMessage ?? "";
+                            if (userText !== "" || images.length > 0) {
+                                transcript.push({
+                                    kind: "user",
+                                    id: `user-${entry.id}`,
+                                    text: userText,
+                                    images,
+                                    timestamp: message.timestamp,
+                                });
+                            }
                         }
+                        lastUserTimestamp = message.timestamp;
+                        break;
                     }
-                    lastUserTimestamp = message.timestamp;
-                    break;
-                }
-                if (message.role === "assistant") {
-                    if (options.liveMessage?.timestamp === message.timestamp) {
-                        liveMessageDuplicated = true;
+                    case "assistant": {
+                        if (options.liveMessage?.timestamp === message.timestamp) {
+                            liveMessageDuplicated = true;
+                        }
+                        pendingTurn.push({ message: readAssistantMessage(message, item.editedContent), live: false });
+                        break;
                     }
-                    pendingTurn.push({ message: readAssistantMessage(message, item.editedContent), live: false });
-                    break;
+                    case "toolResult": {
+                        pendingTurn.push({ message: readToolResultMessage(message, item.editedContent), live: false });
+                        break;
+                    }
+                    case "bashExecution": {
+                        // The command ran between turns, so it ends the pending one and starts no
+                        // new prompt: its timestamp must not seed the next turn's duration.
+                        flushTurn(false);
+                        transcript.push(readBashItem(entry.id, message));
+                        break;
+                    }
+                    case "system":
+                    case "custom":
+                    case "branchSummary":
+                    case "compactionSummary":
+                        // Prompt scaffolding and LLM-context-only messages never render as conversation.
+                        break;
+                    default:
+                        expectExhaustive(message);
+                        break;
                 }
-                if (message.role === "toolResult") {
-                    pendingTurn.push({ message: readToolResultMessage(message, item.editedContent), live: false });
-                }
-                // A system message is prompt scaffolding, not conversation.
                 break;
             }
             case "custom_message": {
@@ -863,9 +957,17 @@ export function buildTranscript(
                 // Only the newest compaction shapes the view. Older ones inside a kept range stay
                 // model-context metadata and would repeat a summary the reader already saw.
                 break;
+            case "thinking_level_change":
+            case "model_change":
+            case "usage":
+            case "custom":
+            case "context_edit":
+            case "label":
+            case "session_info":
+                // Model, thinking-level and bookmark metadata never render as conversation.
+                break;
             default:
-                // Thinking-level, model, usage, custom-data, context-edit, label and session-info
-                // entries never render as conversation.
+                expectExhaustive(entry);
                 break;
         }
     }

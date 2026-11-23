@@ -6,6 +6,7 @@ import { Button, Icon, ScrollArea } from "@components";
 import { cn } from "@/lib/cn";
 import type { TranscriptItem } from "@/stores/session/transcript";
 
+import { BashExecutionBlock } from "./components/BashExecutionBlock/BashExecutionBlock";
 import { SkillInvocationBlock } from "./components/SkillInvocationBlock/SkillInvocationBlock";
 import { SystemNote } from "./components/SystemNote/SystemNote";
 import { TurnGroup } from "./components/TurnGroup/TurnGroup";
@@ -99,6 +100,8 @@ export function Transcript({
                                         {...(onOpenLink !== undefined ? { onOpenLink } : {})}
                                     />
                                 );
+                            case "bash":
+                                return <BashExecutionBlock key={item.id} item={item} />;
                             case "note":
                                 return (
                                     <SystemNote

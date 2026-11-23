@@ -37,6 +37,36 @@ function skillEntry(id: string, parentId: string | null, name: string, prompt: s
     return userEntry(id, parentId, prompt === null ? block : `${block}\n\n${prompt}`, 1_000);
 }
 
+type BashOverrides = Partial<{
+    command: string;
+    output: string;
+    exitCode: number | undefined;
+    cancelled: boolean;
+    truncated: boolean;
+    fullOutputPath: string;
+    excludeFromContext: boolean;
+}>;
+
+/** Build a user `!` command record as the session appends it after the command ends. */
+function bashEntry(id: string, parentId: string | null, overrides: BashOverrides = {}): FileEntry {
+    return {
+        type: "message",
+        id,
+        parentId,
+        timestamp: "2026-04-01T00:00:01.500Z",
+        message: {
+            role: "bashExecution",
+            command: "git status",
+            output: "clean",
+            exitCode: 0,
+            cancelled: false,
+            truncated: false,
+            timestamp: 1_500,
+            ...overrides,
+        },
+    };
+}
+
 function assistantEntry(
     id: string,
     parentId: string | null,
@@ -410,6 +440,103 @@ describe("buildTranscript", () => {
         expect(items).toEqual([
             { kind: "user", id: "user-m1", text: "Explain the <skill> tag", images: [], timestamp: 1_000 },
         ]);
+    });
+
+    it("renders a persisted `!` command between the turns it ran between", () => {
+        const items = buildTranscript(
+            project([
+                userEntry("m1", null, "Run checks", 1_000),
+                assistantEntry("m2", "m1", [{ type: "text", text: "Checks started." }], { timestamp: 1_200 }),
+                bashEntry("m3", "m2", { command: "pnpm test", output: "261 passed", exitCode: 0 }),
+                assistantEntry("m4", "m3", [{ type: "text", text: "Done." }], { timestamp: 3_000 }),
+            ]),
+        );
+
+        expect(items.map((item) => item.kind)).toEqual(["user", "turn", "bash", "turn"]);
+        expect(items[2]).toEqual({
+            kind: "bash",
+            id: "bash-m3",
+            command: "pnpm test",
+            output: "261 passed",
+            excludeFromContext: false,
+            status: { kind: "succeeded" },
+            truncation: { kind: "none" },
+            timestamp: 1_500,
+        });
+        // The command ends the turn before it and must not seed the next turn's duration.
+        expect(turnOf(items, 1).timing).toEqual({ kind: "static", durationMs: 200 });
+        expect(turnOf(items, 3).timing).toEqual({ kind: "static", durationMs: 0 });
+    });
+
+    it("maps the cancelled flag, the exit code, and their absence to distinct states", () => {
+        const itemOf = (overrides: BashOverrides) => {
+            const item = buildTranscript(project([bashEntry("m1", null, overrides)]))[0];
+            if (item === undefined) {
+                throw new Error("Expected one bash item");
+            }
+            return item;
+        };
+
+        expect(itemOf({ exitCode: 0 })).toMatchObject({ status: { kind: "succeeded" } });
+        expect(itemOf({ exitCode: 2 })).toMatchObject({ status: { kind: "failed", exitCode: 2 } });
+        expect(itemOf({ cancelled: true })).toMatchObject({ status: { kind: "cancelled" } });
+        expect(itemOf({ exitCode: undefined })).toMatchObject({ status: { kind: "noExitCode" } });
+    });
+
+    it("records truncation with the full output path when the record carries one", () => {
+        const truncated = buildTranscript(
+            project([bashEntry("m1", null, { truncated: true, fullOutputPath: "/tmp/pi-bash-a3d610.log" })]),
+        )[0];
+        const withoutPath = buildTranscript(project([bashEntry("m2", null, { truncated: true })]))[0];
+
+        expect(truncated).toMatchObject({
+            truncation: { kind: "truncated", fullOutputPath: "/tmp/pi-bash-a3d610.log" },
+        });
+        expect(withoutPath).toMatchObject({ truncation: { kind: "truncated", fullOutputPath: null } });
+    });
+
+    it("strips terminal escapes from the recorded output and keeps the excluded flag", () => {
+        const item = buildTranscript(
+            project([
+                bashEntry("m1", null, {
+                    output: "\u001B[31mfailed\u001B[0m: one test",
+                    excludeFromContext: true,
+                }),
+            ]),
+        )[0];
+
+        expect(item).toMatchObject({ output: "failed: one test", excludeFromContext: true });
+    });
+
+    it("degrades a corrupt bash record instead of throwing", () => {
+        const corrupt = {
+            type: "message",
+            id: "m1",
+            parentId: null,
+            timestamp: "2026-04-01T00:00:01.500Z",
+            message: {
+                role: "bashExecution",
+                command: 42,
+                output: null,
+                exitCode: "two",
+                cancelled: "yes",
+                truncated: 1,
+                timestamp: "soon",
+            },
+        } as unknown as FileEntry;
+
+        const item = buildTranscript(project([corrupt]))[0];
+
+        expect(item).toEqual({
+            kind: "bash",
+            id: "bash-m1",
+            command: "",
+            output: "",
+            excludeFromContext: false,
+            status: { kind: "noExitCode" },
+            truncation: { kind: "none" },
+            timestamp: 0,
+        });
     });
 
     it("appends the live assistant message and marks the trailing block as streaming", () => {
@@ -799,6 +926,25 @@ describe("buildTranscript boundary handling", () => {
 
         expect(turnOf(items, 1).outcome).toEqual({ kind: "completed" });
         expect(turnOf(items, 1).finalReply).toBe("Live answer");
+    });
+
+    it("ignores an entry type and a message role a newer session may hold", () => {
+        const unknownEntry = {
+            type: "future_entry",
+            id: "f1",
+            parentId: null,
+            timestamp: "2026-04-01T00:00:01.000Z",
+            data: {},
+        } as unknown as FileEntry;
+        const unknownRole = {
+            type: "message",
+            id: "f2",
+            parentId: "f1",
+            timestamp: "2026-04-01T00:00:02.000Z",
+            message: { role: "futureRole", timestamp: 2_000 },
+        } as unknown as FileEntry;
+
+        expect(buildTranscript(project([unknownEntry, unknownRole]))).toEqual([]);
     });
 });
 
