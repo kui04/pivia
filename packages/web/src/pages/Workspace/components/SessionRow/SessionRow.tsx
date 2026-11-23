@@ -149,7 +149,7 @@ function SessionRowInner({
                     {status.kind === "idle" ? (
                         formatRelativeAge(status.modifiedAtMs, nowMs)
                     ) : (
-                        <span className={styles.indicator} role="img" aria-label={status.label} />
+                        <span className={styles.indicator} role="img" aria-label={status.label} title={status.label} />
                     )}
                 </span>
             </button>
