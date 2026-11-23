@@ -48,7 +48,7 @@ function buildLongConversation(turnCount: number): TranscriptItem[] {
             id: `turn-${index}`,
             timing: { kind: "static", durationMs: 4_000 + index * 1_000 },
             streaming: false,
-            errorMessage: null,
+            outcome: { kind: "completed" },
             steps: [
                 {
                     kind: "thinking",
@@ -97,7 +97,7 @@ const shortItems: TranscriptItem[] = [
         id: "turn-single",
         timing: { kind: "static", durationMs: 3_000 },
         streaming: false,
-        errorMessage: null,
+        outcome: { kind: "completed" },
         steps: [
             {
                 kind: "toolCall",
@@ -232,7 +232,7 @@ function StreamingTranscriptDemo() {
             ? { kind: "since", startedAtMs: STREAM_STARTED_AT_MS }
             : { kind: "static", durationMs: 4_000 },
         streaming,
-        errorMessage: null,
+        outcome: streaming ? { kind: "open" } : { kind: "completed" },
         steps: [
             {
                 kind: "thinking",

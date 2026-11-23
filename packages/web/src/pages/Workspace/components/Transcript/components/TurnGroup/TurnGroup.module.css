@@ -18,7 +18,7 @@
  *   │                   │   └─ .rail       vertical guide line
  *   │                   └─ .replyBody      intermediate Markdown reply
  *   ├─ .finalReply               final reply rendered directly below the group
- *   └─ .error                    error alert rendered when the turn ended with an error
+ *   └─ .error                    notice rendered when the turn was truncated, aborted or failed
  *
  * Classes passed to child components stay top-level so CSS Modules keep one class of specificity:
  *

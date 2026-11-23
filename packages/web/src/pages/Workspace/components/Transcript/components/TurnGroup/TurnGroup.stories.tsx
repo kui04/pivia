@@ -27,7 +27,7 @@ const completedTurn: TranscriptTurnItem = {
     id: "turn-completed",
     timing: { kind: "static", durationMs: 11_000 },
     streaming: false,
-    errorMessage: null,
+    outcome: { kind: "completed" },
     steps: [
         {
             kind: "thinking",
@@ -71,7 +71,7 @@ const intermediateReplyTurn: TranscriptTurnItem = {
     id: "turn-intermediate",
     timing: { kind: "static", durationMs: 8_000 },
     streaming: false,
-    errorMessage: null,
+    outcome: { kind: "completed" },
     steps: [
         {
             kind: "thinking",
@@ -109,7 +109,7 @@ const streamingTurn: TranscriptTurnItem = {
     id: "turn-streaming",
     timing: { kind: "since", startedAtMs: Date.now() - 4_000 },
     streaming: true,
-    errorMessage: null,
+    outcome: { kind: "open" },
     steps: [
         {
             kind: "thinking",
@@ -141,7 +141,7 @@ const pendingTurn: TranscriptTurnItem = {
     id: "turn-pending",
     timing: { kind: "since", startedAtMs: Date.now() },
     streaming: true,
-    errorMessage: null,
+    outcome: { kind: "open" },
     steps: [],
     finalReply: null,
 };
@@ -151,7 +151,7 @@ const singleStepTurn: TranscriptTurnItem = {
     id: "turn-single-step",
     timing: { kind: "static", durationMs: 2_000 },
     streaming: false,
-    errorMessage: null,
+    outcome: { kind: "completed" },
     steps: [
         {
             kind: "thinking",
@@ -169,7 +169,7 @@ const errorTurn: TranscriptTurnItem = {
     id: "turn-error",
     timing: { kind: "static", durationMs: 3_000 },
     streaming: false,
-    errorMessage: "The provider closed the connection unexpectedly.",
+    outcome: { kind: "error", message: "Error: The provider closed the connection unexpectedly." },
     steps: [
         {
             kind: "toolCall",
@@ -186,6 +186,36 @@ const errorTurn: TranscriptTurnItem = {
             timing: { kind: "static", durationMs: 40 },
         },
     ],
+    finalReply: null,
+};
+
+const truncatedTurn: TranscriptTurnItem = {
+    kind: "turn",
+    id: "turn-truncated",
+    timing: { kind: "static", durationMs: 6_000 },
+    streaming: false,
+    outcome: { kind: "truncated" },
+    steps: [],
+    finalReply: "The first half of the answer arrives before the model runs out of output tokens.",
+};
+
+const abortedTurn: TranscriptTurnItem = {
+    kind: "turn",
+    id: "turn-aborted",
+    timing: { kind: "static", durationMs: 2_000 },
+    streaming: false,
+    outcome: { kind: "aborted", message: "Operation aborted" },
+    steps: [],
+    finalReply: "Partial answer before the reader stopped the run.",
+};
+
+const streamingErrorTurn: TranscriptTurnItem = {
+    kind: "turn",
+    id: "turn-streaming-error",
+    timing: { kind: "since", startedAtMs: Date.now() - 1_000 },
+    streaming: true,
+    outcome: { kind: "error", message: "Error: The provider closed the connection." },
+    steps: [],
     finalReply: null,
 };
 
@@ -330,6 +360,38 @@ export const TurnError: Story = {
         await expect(canvas.queryByRole("button", { name: /^Worked/ })).not.toBeInTheDocument();
         await expect(canvas.getByRole("button", { name: /Read/ })).toBeVisible();
         const alert = canvas.getByRole("alert");
-        await expect(alert).toHaveTextContent("The provider closed the connection unexpectedly.");
+        await expect(alert).toHaveTextContent("Error: The provider closed the connection unexpectedly.");
+    },
+};
+
+export const TurnTruncated: Story = {
+    args: {
+        turn: truncatedTurn,
+    },
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+        await expect(canvas.getByRole("status")).toHaveTextContent("Response was truncated before completion.");
+    },
+};
+
+export const TurnAborted: Story = {
+    args: {
+        turn: abortedTurn,
+    },
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+        await expect(canvas.getByRole("alert")).toHaveTextContent("Operation aborted");
+    },
+};
+
+export const StreamingTurnHidesNotice: Story = {
+    args: {
+        turn: streamingErrorTurn,
+    },
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+        await expect(canvas.getByRole("status")).toHaveTextContent("Working...");
+        // The runtime still reports activity, so a settled-looking error notice must wait.
+        await expect(canvas.queryByRole("alert")).not.toBeInTheDocument();
     },
 };

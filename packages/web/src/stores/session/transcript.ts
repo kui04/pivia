@@ -103,6 +103,22 @@ export type TranscriptNoteItem = {
 };
 
 /**
+ * How an assistant round ended, reduced to the states the transcript shows.
+ *
+ * `open` merges the SDK's `pending` and `toolUse` reasons because either one leaves the turn open,
+ * which is not the same fact as `TranscriptTurnItem.streaming` (that flag follows runtime
+ * activity). `aborted` and `error` carry their final text so a renderer never falls back to a
+ * default string of its own.
+ */
+export type TranscriptTurnOutcome =
+    | { readonly kind: "open" }
+    | { readonly kind: "completed" }
+    | { readonly kind: "truncated" }
+    | { readonly kind: "deferred" }
+    | { readonly kind: "aborted"; readonly message: string }
+    | { readonly kind: "error"; readonly message: string };
+
+/**
  * One complete agent response cycle between user prompts.
  *
  * The final text reply sits below the `Worked for Xs` group while all thoughts, tool calls and
@@ -113,7 +129,7 @@ export type TranscriptTurnItem = {
     id: string;
     steps: readonly TranscriptStep[];
     finalReply: string | null;
-    errorMessage: string | null;
+    outcome: TranscriptTurnOutcome;
     timing: TranscriptTiming;
     streaming: boolean;
 };
@@ -153,12 +169,15 @@ type AssistantBlock =
 /** One normalized tool result block, safe to render. */
 type ToolResultBlock = { readonly type: "text"; readonly text: string } | ImageContent;
 
+type AssistantStopReason = AssistantEntryMessage["stopReason"];
+
 /** Assistant message reduced to the fields the transcript reads. */
 type ViewAssistantMessage = {
     readonly role: "assistant";
     readonly content: readonly AssistantBlock[];
     readonly timestamp: number;
-    readonly stopReason: AssistantEntryMessage["stopReason"];
+    /** Known reason, or null when a session file or socket held an unrecognized value. */
+    readonly stopReason: AssistantStopReason | null;
     readonly errorMessage: string | null;
     readonly durationMs: number | null;
 };
@@ -438,7 +457,7 @@ function readAssistantMessage(
         role: "assistant",
         content: toAssistantBlocks(editedContent ?? message.content),
         timestamp: toTimestamp(message.timestamp),
-        stopReason: message.stopReason,
+        stopReason: isKnownStopReason(message.stopReason) ? message.stopReason : null,
         errorMessage: typeof message.errorMessage === "string" ? message.errorMessage : null,
         durationMs: toDuration(message.durationMs),
     };
@@ -469,6 +488,58 @@ function readToolResultContent(content: readonly ToolResultBlock[]): { output: s
         }
     }
     return { output: texts.join("\n"), images };
+}
+
+/** Trim a message parsed at the session boundary and use the fallback when it carries no text. */
+function messageTextOr(value: string | null, fallback: string): string {
+    const trimmed = value?.trim() ?? "";
+    return trimmed === "" ? fallback : trimmed;
+}
+
+/** Replace the SDK's generic abort text with the wording the transcript shows. */
+function readAbortMessage(errorMessage: string | null): string {
+    const text = messageTextOr(errorMessage, "Operation aborted");
+    return text === "Request was aborted" ? "Operation aborted" : text;
+}
+
+/**
+ * One outcome for every stop reason the SDK can record.
+ *
+ * The mapped type makes a new `StopReason` in the SDK a compile error here instead of a silent
+ * fallback to `completed`. `aborted` renames the SDK's generic "Request was aborted" text the same
+ * way the terminal UI does, and `error` always names the failure.
+ */
+const TURN_OUTCOME_BY_STOP_REASON: {
+    readonly [Reason in AssistantStopReason]: (errorMessage: string | null) => TranscriptTurnOutcome;
+} = {
+    pending: () => ({ kind: "open" }),
+    toolUse: () => ({ kind: "open" }),
+    stop: () => ({ kind: "completed" }),
+    length: () => ({ kind: "truncated" }),
+    deferred: () => ({ kind: "deferred" }),
+    aborted: (errorMessage) => ({ kind: "aborted", message: readAbortMessage(errorMessage) }),
+    error: (errorMessage) => ({
+        kind: "error",
+        message: `Error: ${messageTextOr(errorMessage, "Assistant request failed")}`,
+    }),
+};
+
+/**
+ * Narrow a reason read from a session file or socket to a reason this build knows.
+ *
+ * The key set comes from the table itself, so adding a reason to the SDK needs no second list.
+ */
+function isKnownStopReason(value: unknown): value is AssistantStopReason {
+    return typeof value === "string" && Object.hasOwn(TURN_OUTCOME_BY_STOP_REASON, value);
+}
+
+function readTurnOutcome(message: ViewAssistantMessage): TranscriptTurnOutcome {
+    // A session written by another Pi version can hold a reason this build does not know. The turn
+    // still renders without a notice instead of replacing the whole view with an error page, and
+    // the mapped table keeps the compile-time signal for reasons the installed SDK declares.
+    return message.stopReason === null
+        ? { kind: "completed" }
+        : TURN_OUTCOME_BY_STOP_REASON[message.stopReason](message.errorMessage);
 }
 
 function computeToolDurationMs(
@@ -635,16 +706,12 @@ function buildTurnItem(
         }
     }
 
-    const trimmedError = lastMessage.errorMessage?.trim() ?? "";
-    const errorMessage =
-        trimmedError !== "" ? trimmedError : lastMessage.stopReason === "error" ? "Assistant request failed" : null;
-
     return {
         kind: "turn",
         id: `turn-${firstAssistant.message.timestamp}`,
         steps,
         finalReply,
-        errorMessage,
+        outcome: readTurnOutcome(lastMessage),
         timing: streaming ? { kind: "since", startedAtMs: startMs } : { kind: "static", durationMs: settledDurationMs },
         streaming,
     };
@@ -775,7 +842,7 @@ export function buildTranscript(
                 role: "assistant",
                 content: toAssistantBlocks(live.content),
                 timestamp: toTimestamp(live.timestamp),
-                stopReason: live.stopReason,
+                stopReason: isKnownStopReason(live.stopReason) ? live.stopReason : null,
                 errorMessage: typeof live.errorMessage === "string" ? live.errorMessage : null,
                 durationMs: toDuration(live.durationMs),
             },

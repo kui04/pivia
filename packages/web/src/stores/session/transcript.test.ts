@@ -98,6 +98,31 @@ function corruptAssistantEntry(content: unknown): FileEntry {
     } as FileEntry;
 }
 
+/**
+ * Build an assistant entry whose stop reason violates the SDK type.
+ *
+ * A session written by another Pi version or edited by hand can hold a reason this build does not
+ * know; the view must degrade one turn instead of failing the render.
+ */
+function corruptStopReasonEntry(stopReason: unknown): FileEntry {
+    return {
+        type: "message",
+        id: "m2",
+        parentId: "m1",
+        timestamp: "2026-04-01T00:00:02.000Z",
+        message: {
+            role: "assistant",
+            content: [{ type: "text", text: "Partial answer" }],
+            api: "test",
+            provider: "test",
+            model: "test",
+            usage: EMPTY_USAGE,
+            stopReason,
+            timestamp: 2_000,
+        },
+    } as FileEntry;
+}
+
 /** Build a tool result whose content violates the SDK type, to test the render boundary. */
 function corruptToolResultEntry(content: unknown): FileEntry {
     return {
@@ -176,7 +201,7 @@ describe("buildTranscript", () => {
         const turn = turnOf(items, 1);
         expect(turn.id).toBe("turn-1500");
         expect(turn.finalReply).toBe("Committed as `b8a713e`.");
-        expect(turn.errorMessage).toBeNull();
+        expect(turn.outcome).toEqual({ kind: "completed" });
         expect(turn.timing).toEqual({ kind: "static", durationMs: 11_200 });
         expect(turn.streaming).toBe(false);
         expect(turn.steps.map((step) => step.kind)).toEqual(["thinking", "reply", "toolCall", "thinking"]);
@@ -476,7 +501,7 @@ describe("buildTranscript", () => {
 
         const turn = turnOf(items, 1);
         expect(turn.finalReply).toBeNull();
-        expect(turn.errorMessage).toBe("529 overloaded");
+        expect(turn.outcome).toEqual({ kind: "error", message: "Error: 529 overloaded" });
         expect(turn.streaming).toBe(false);
     });
 
@@ -488,7 +513,32 @@ describe("buildTranscript", () => {
             ]),
         );
 
-        expect(turnOf(items, 1).errorMessage).toBe("Assistant request failed");
+        expect(turnOf(items, 1).outcome).toEqual({ kind: "error", message: "Error: Assistant request failed" });
+    });
+
+    it.each([
+        ["stop", null, { kind: "completed" }],
+        ["length", null, { kind: "truncated" }],
+        ["pending", null, { kind: "open" }],
+        ["toolUse", null, { kind: "open" }],
+        ["deferred", null, { kind: "deferred" }],
+        ["aborted", null, { kind: "aborted", message: "Operation aborted" }],
+        ["aborted", "Request was aborted", { kind: "aborted", message: "Operation aborted" }],
+        ["aborted", "Stopped by the reader", { kind: "aborted", message: "Stopped by the reader" }],
+        ["error", " 529 overloaded ", { kind: "error", message: "Error: 529 overloaded" }],
+    ] as const)("maps stop reason %s to its turn outcome", (stopReason, errorMessage, expected) => {
+        const items = buildTranscript(
+            project([
+                userEntry("m1", null, "Hello", 1_000),
+                assistantEntry("m2", "m1", [], {
+                    timestamp: 1_500,
+                    stopReason,
+                    ...(errorMessage === null ? {} : { errorMessage }),
+                }),
+            ]),
+        );
+
+        expect(turnOf(items, 1).outcome).toEqual(expected);
     });
 
     it("keeps intermediate text inside the timeline when the last message still carries a tool call", () => {
@@ -631,6 +681,40 @@ describe("buildTranscript boundary handling", () => {
         );
 
         expect(toolStepOf(items, 1, 0)).toMatchObject({ status: "done", output: "", images: [] });
+    });
+
+    it.each([undefined, null, "futureReason", 42])(
+        "degrades an unknown persisted stop reason (%s) to a completed turn",
+        (stopReason) => {
+            const items = buildTranscript(
+                project([userEntry("m1", null, "Hello", 1_000), corruptStopReasonEntry(stopReason)]),
+            );
+
+            const turn = turnOf(items, 1);
+            expect(turn.outcome).toEqual({ kind: "completed" });
+            expect(turn.finalReply).toBe("Partial answer");
+        },
+    );
+
+    it("degrades an unknown live stop reason to a completed turn", () => {
+        const live = {
+            role: "assistant",
+            content: [{ type: "text", text: "Live answer" }],
+            api: "test",
+            provider: "test",
+            model: "test",
+            usage: EMPTY_USAGE,
+            stopReason: "futureReason",
+            timestamp: 2_000,
+        } as unknown as AssistantMessage;
+
+        const items = buildTranscript(project([userEntry("m1", null, "Hello", 1_000)]), {
+            liveMessage: live,
+            runtimeActive: true,
+        });
+
+        expect(turnOf(items, 1).outcome).toEqual({ kind: "completed" });
+        expect(turnOf(items, 1).finalReply).toBe("Live answer");
     });
 });
 

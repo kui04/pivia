@@ -4,7 +4,12 @@ import { Fragment, useId, useState, type ReactElement } from "react";
 
 import { Icon, Markdown } from "@components";
 import { cn } from "@/lib/cn";
-import { formatTurnDuration, type TranscriptStep, type TranscriptTurnItem } from "@/stores/session/transcript";
+import {
+    formatTurnDuration,
+    type TranscriptStep,
+    type TranscriptTurnItem,
+    type TranscriptTurnOutcome,
+} from "@/stores/session/transcript";
 
 import { useLiveDuration } from "../../useLiveDuration";
 import { ThinkingBlock } from "../ThinkingBlock/ThinkingBlock";
@@ -36,6 +41,23 @@ function formatHeaderLabel(streaming: boolean, durationMs: number | null): strin
     }
 
     return durationMs !== null ? `Worked for ${formatTurnDuration(durationMs)}` : "Worked";
+}
+
+/** Notice text for an abnormal ending, or null when the turn ended normally. */
+function outcomeNotice(outcome: TranscriptTurnOutcome): { readonly text: string; readonly announce: boolean } | null {
+    switch (outcome.kind) {
+        case "truncated":
+            return { text: "Response was truncated before completion.", announce: false };
+        case "aborted":
+        case "error":
+            return { text: outcome.message, announce: true };
+        case "open":
+        case "completed":
+        case "deferred":
+            return null;
+        default:
+            return assertNever(outcome);
+    }
 }
 
 function renderStep(
@@ -122,6 +144,9 @@ export function TurnGroup({
     };
 
     const headerLabel = formatHeaderLabel(turn.streaming, liveDurationMs);
+    // A live message settles before the runtime reports `agent_settled`, so the notice waits:
+    // otherwise a finished-looking error or truncation warning would sit beside the working row.
+    const notice = turn.streaming ? null : outcomeNotice(turn.outcome);
     const singleStep = turn.steps.length === 1 ? turn.steps[0] : undefined;
     const hasGroup = turn.steps.length > 1;
     const hasFinalReply = turn.finalReply !== null && turn.finalReply.trim().length > 0;
@@ -181,9 +206,9 @@ export function TurnGroup({
                 </div>
             ) : null}
 
-            {turn.errorMessage !== null ? (
-                <div className={styles.error} role="alert">
-                    {turn.errorMessage}
+            {notice !== null ? (
+                <div className={styles.error} role={notice.announce ? "alert" : "status"}>
+                    {notice.text}
                 </div>
             ) : null}
 
