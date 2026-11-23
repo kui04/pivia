@@ -6,12 +6,14 @@ import { Button, Icon, ScrollArea } from "@components";
 import { cn } from "@/lib/cn";
 import type { TranscriptItem } from "@/stores/session/transcript";
 
-import { BashExecutionBlock } from "./components/BashExecutionBlock/BashExecutionBlock";
-import { CustomMessageBlock } from "./components/CustomMessageBlock/CustomMessageBlock";
-import { SkillInvocationBlock } from "./components/SkillInvocationBlock/SkillInvocationBlock";
-import { SystemNote } from "./components/SystemNote/SystemNote";
-import { TurnGroup } from "./components/TurnGroup/TurnGroup";
-import { UserMessage } from "./components/UserMessage/UserMessage";
+import {
+    BashExecutionBlock,
+    CustomMessageBlock,
+    SkillInvocationBlock,
+    SystemNote,
+    TurnGroup,
+    UserMessage,
+} from "./components";
 import styles from "./Transcript.module.css";
 import { useAutoScroll } from "./useAutoScroll";
 
