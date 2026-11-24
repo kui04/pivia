@@ -607,3 +607,73 @@ export const ConnectionLost: Story = {
         await expect(canvas.getByText("Cannot reconnect to the session.")).toBeVisible();
     },
 };
+
+const liveToolCompactingScenario: Scenario = ({ socket }) => {
+    const ws = socket.latest();
+    ws?.open();
+    ws?.receive(
+        inlineSnapshot(
+            [
+                userEntry("m1", null, "Run the verification suite.", 1_000),
+                assistantEntry(
+                    "m2",
+                    "m1",
+                    [
+                        {
+                            type: "toolCall",
+                            id: "call-live-bash",
+                            name: "bash",
+                            arguments: { command: "pnpm test" },
+                        },
+                    ],
+                    { timestamp: 1_500, stopReason: "toolUse" },
+                ),
+            ],
+            sessionState({ isStreaming: true, messageCount: 2 }),
+        ),
+    );
+    ws?.receive(
+        deltaFrame(2, {
+            kind: "agent_event",
+            event: {
+                type: "tool_execution_start",
+                toolCallId: "call-live-bash",
+                toolName: "bash",
+                args: { command: "pnpm test" },
+            },
+        }),
+    );
+    ws?.receive(
+        deltaFrame(3, {
+            kind: "agent_event",
+            event: {
+                type: "tool_execution_update",
+                toolCallId: "call-live-bash",
+                toolName: "bash",
+                args: { command: "pnpm test" },
+                partialResult: {
+                    content: [{ type: "text", text: "RUN v5.1.1 running unit checks..." }],
+                    details: undefined,
+                },
+            },
+        }),
+    );
+    ws?.receive(
+        deltaFrame(4, {
+            kind: "agent_event",
+            event: { type: "compaction_start", reason: "overflow" },
+        }),
+    );
+};
+
+export const LiveToolAndCompacting: Story = {
+    render: () => <PageHarness route={`/workspace/${SESSION_ID}`} setup={liveToolCompactingScenario} />,
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+        const bashTrigger = await canvas.findByRole("button", { name: /Bash/ });
+        await expect(canvas.getByRole("status")).toHaveTextContent("Auto-compacting context...");
+
+        await userEvent.click(bashTrigger);
+        await expect(canvas.getByText("RUN v5.1.1 running unit checks...")).toBeVisible();
+    },
+};

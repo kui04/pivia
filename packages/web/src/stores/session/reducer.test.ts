@@ -159,6 +159,9 @@ describe("session sync reducer", () => {
             entries: [],
             entriesSync: { kind: "idle" },
             liveMessage: { kind: "none" },
+            liveToolExecutions: {},
+            liveActivity: { kind: "idle" },
+            activityNotice: null,
             pendingUiRequests: [],
             lastError: null,
         });
@@ -438,5 +441,237 @@ describe("session sync reducer", () => {
             sessionClose,
         );
         expect(reducer.applyDelta(sessionClose, { kind: "ui_request", request: dialog("late") })).toBe(sessionClose);
+    });
+
+    it("tracks top-level live tool executions and prunes them when persisted toolResult entries arrive", () => {
+        const reducer = createSessionSyncReducer();
+        let state = reducer.applySnapshot(connectingState(), makeSnapshot());
+
+        state = reducer.applyDelta(state, {
+            kind: "agent_event",
+            event: {
+                type: "tool_execution_start",
+                toolCallId: "cm-1",
+                toolName: "codemode",
+                args: { code: "return 1;" },
+            },
+        });
+        expect(state.liveToolExecutions["cm-1"]).toEqual({
+            kind: "running",
+            toolCallId: "cm-1",
+            toolName: "codemode",
+            args: { code: "return 1;" },
+            partialResult: null,
+        });
+
+        // Nested sub-calls carry parentToolCallId and must not create separate top-level tool entries.
+        state = reducer.applyDelta(state, {
+            kind: "agent_event",
+            event: {
+                type: "tool_execution_start",
+                toolCallId: "cm-1/1",
+                toolName: "read",
+                args: { path: "a.ts" },
+                parentToolCallId: "cm-1",
+            },
+        });
+        expect(state.liveToolExecutions["cm-1/1"]).toBeUndefined();
+
+        state = reducer.applyDelta(state, {
+            kind: "agent_event",
+            event: {
+                type: "tool_execution_update",
+                toolCallId: "cm-1",
+                toolName: "codemode",
+                args: { code: "return 1;" },
+                partialResult: {
+                    content: [{ type: "text", text: "line 1\n" }],
+                    details: { calls: [{ id: "cm-1/1", name: "read", args: '{"path":"a.ts"}', status: "running" }] },
+                },
+            },
+        });
+        expect(state.liveToolExecutions["cm-1"]).toMatchObject({
+            kind: "running",
+            partialResult: {
+                content: [{ type: "text", text: "line 1\n" }],
+                details: { calls: [{ id: "cm-1/1", name: "read", status: "running" }] },
+            },
+        });
+
+        state = reducer.applyDelta(state, {
+            kind: "agent_event",
+            event: {
+                type: "tool_execution_end",
+                toolCallId: "cm-1",
+                toolName: "codemode",
+                result: { content: [{ type: "text", text: "done" }], details: { calls: [] } },
+                isError: false,
+                durationMs: 245,
+            },
+        });
+        expect(state.liveToolExecutions["cm-1"]).toEqual({
+            kind: "settled",
+            toolCallId: "cm-1",
+            toolName: "codemode",
+            args: { code: "return 1;" },
+            result: { content: [{ type: "text", text: "done" }], details: { calls: [] } },
+            isError: false,
+            durationMs: 245,
+        });
+
+        state = reducer.applyDelta(state, {
+            kind: "entries_appended",
+            entriesVersion: V152,
+            baseEntryCount: 0,
+            entries: {
+                mode: "inline",
+                data: [
+                    {
+                        type: "message",
+                        id: "tr-1",
+                        parentId: null,
+                        timestamp: "2026-04-01T00:00:01.000Z",
+                        message: {
+                            role: "toolResult",
+                            toolCallId: "cm-1",
+                            toolName: "codemode",
+                            content: [{ type: "text", text: "done" }],
+                            isError: false,
+                            timestamp: 1_000,
+                        },
+                    },
+                ],
+            },
+        });
+        expect(state.liveToolExecutions).toEqual({});
+    });
+
+    it("tracks compaction, auto_retry, and summarization retry activity and notices", () => {
+        const reducer = createSessionSyncReducer();
+        let state = reducer.applySnapshot(connectingState(), makeSnapshot({ state: summary({ isCompacting: true }) }));
+        expect(state.liveActivity).toEqual({ kind: "compacting", reason: null });
+
+        state = reducer.applyDelta(state, {
+            kind: "agent_event",
+            event: { type: "compaction_start", reason: "threshold" },
+        });
+        expect(state.liveActivity).toEqual({ kind: "compacting", reason: "threshold" });
+
+        state = reducer.applyDelta(state, {
+            kind: "agent_event",
+            event: {
+                type: "compaction_end",
+                reason: "threshold",
+                result: undefined,
+                aborted: true,
+                willRetry: false,
+            },
+        });
+        expect(state.liveActivity).toEqual({ kind: "idle" });
+        expect(state.activityNotice).toEqual({ tone: "status", message: "Auto-compaction cancelled" });
+
+        state = reducer.applyDelta(state, {
+            kind: "agent_event",
+            event: {
+                type: "auto_retry_start",
+                attempt: 1,
+                maxAttempts: 3,
+                delayMs: 4_000,
+                errorMessage: "429 Rate limited",
+            },
+        });
+        expect(state.liveActivity).toEqual({
+            kind: "retrying",
+            scope: "turn",
+            attempt: 1,
+            maxAttempts: 3,
+            delayMs: 4_000,
+            errorMessage: "429 Rate limited",
+        });
+        expect(state.activityNotice).toBeNull();
+
+        state = reducer.applyDelta(state, {
+            kind: "agent_event",
+            event: {
+                type: "auto_retry_end",
+                success: false,
+                attempt: 3,
+                finalError: "Service overloaded",
+            },
+        });
+        expect(state.liveActivity).toEqual({ kind: "idle" });
+        expect(state.activityNotice).toEqual({
+            tone: "error",
+            message: "Retry failed after 3 attempts: Service overloaded",
+        });
+
+        state = reducer.applyDelta(state, {
+            kind: "agent_event",
+            event: { type: "agent_start" },
+        });
+        expect(state.liveActivity).toEqual({ kind: "working" });
+        expect(state.activityNotice).toBeNull();
+    });
+
+    it("handles mid-tool reconnect updates and preserves summarizingBranch across summarization retries", () => {
+        const reducer = createSessionSyncReducer();
+        let state = reducer.applySnapshot(connectingState(), makeSnapshot({ state: summary({ isCompacting: true }) }));
+
+        // Update/end without prior start (reconnect mid-execution) still captures partial/final state.
+        state = reducer.applyDelta(state, {
+            kind: "agent_event",
+            event: {
+                type: "tool_execution_update",
+                toolCallId: "reconnected-1",
+                toolName: "bash",
+                args: { command: "ls" },
+                partialResult: { content: [{ type: "text", text: "a.ts" }], details: undefined },
+            },
+        });
+        expect(state.liveToolExecutions["reconnected-1"]).toMatchObject({
+            kind: "running",
+            args: { command: "ls" },
+            partialResult: { content: [{ type: "text", text: "a.ts" }] },
+        });
+
+        state = reducer.applyDelta(state, {
+            kind: "agent_event",
+            event: {
+                type: "summarization_retry_scheduled",
+                attempt: 1,
+                maxAttempts: 2,
+                delayMs: 2_000,
+                errorMessage: "Temporary error",
+            },
+        });
+        expect(state.liveActivity).toMatchObject({ kind: "retrying", scope: "summarization" });
+        expect(state.activityNotice).toEqual({ tone: "error", message: "Temporary error" });
+
+        state = reducer.applyDelta(state, {
+            kind: "agent_event",
+            event: { type: "summarization_retry_attempt_start", source: "branchSummary" },
+        });
+        expect(state.liveActivity).toEqual({ kind: "summarizingBranch" });
+        expect(state.activityNotice).toBeNull();
+
+        state = reducer.applyDelta(state, {
+            kind: "agent_event",
+            event: { type: "summarization_retry_finished" },
+        });
+        expect(state.liveActivity).toEqual({ kind: "summarizingBranch" });
+
+        // Completed compaction clears any earlier notice.
+        state = reducer.applyDelta(state, {
+            kind: "agent_event",
+            event: {
+                type: "compaction_end",
+                reason: "manual",
+                result: { summary: "Done", firstKeptEntryId: "m1", tokensBefore: 1000 },
+                aborted: false,
+                willRetry: false,
+            },
+        });
+        expect(state.liveActivity).toEqual({ kind: "idle" });
+        expect(state.activityNotice).toBeNull();
     });
 });

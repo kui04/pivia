@@ -30,6 +30,7 @@ import {
     applyLocalSessionHydration,
     applySessionClosed,
     buildSessionPrefixAnchor,
+    CLEARED_LIVE_RUNTIME_STATE,
     createSessionSyncReducer,
     initialSessionState,
     type SessionHttpHydrationDescriptor,
@@ -37,7 +38,17 @@ import {
 } from "./reducer";
 
 export { initialSessionState, liveAssistantMessage } from "./reducer";
-export type { EntriesSyncState, LiveMessageState, SessionConnectionStatus, SessionState } from "./reducer";
+export type {
+    CompactionReason,
+    EntriesSyncState,
+    LiveMessageState,
+    LiveToolExecutionResult,
+    LiveToolExecutionState,
+    SessionActivityNotice,
+    SessionConnectionStatus,
+    SessionLiveActivity,
+    SessionState,
+} from "./reducer";
 
 /** Lightweight in-memory snapshot kept for instant UI display and Tier 2 anchors on switch-back. */
 export interface SessionMemoryCacheEntry {
@@ -354,8 +365,8 @@ export function createSessionStore(options: SessionStoreOptions) {
             onStateChange(nextState, meta) {
                 const prev = get();
                 let status = nextState.status;
-                let liveMessage = nextState.liveMessage;
                 let lastError = nextState.lastError;
+                let clearedLive: Partial<SessionState> = {};
                 if (nextState.status !== "closed") {
                     if (meta.phase.kind === "live" || meta.phase.kind === "hydrating_http") {
                         status = "open";
@@ -366,14 +377,14 @@ export function createSessionStore(options: SessionStoreOptions) {
                         status = "reconnecting";
                     } else if (meta.phase.kind === "error") {
                         status = "error";
-                        liveMessage = { kind: "none" };
+                        clearedLive = CLEARED_LIVE_RUNTIME_STATE;
                         lastError = meta.phase.message;
                     }
                 }
                 const committed: SessionState = {
                     ...nextState,
+                    ...clearedLive,
                     status,
-                    liveMessage,
                     lastError,
                 };
                 if (

@@ -1,4 +1,4 @@
-import type { JsonObject, JsonValue, NestedToolCallRecord, NestedToolCalls } from "@earendil-works/pi-ai";
+import type { ImageContent, JsonObject, JsonValue, NestedToolCallRecord, NestedToolCalls } from "@earendil-works/pi-ai";
 import type {
     BashToolDetails,
     CodemodeToolDetails,
@@ -10,7 +10,7 @@ import type {
     ToolCallEvent,
     TruncationResult,
 } from "@earendil-works/pi-coding-agent";
-import { assertNever, isFiniteNumber, isRecord } from "@pivia/protocol";
+import { assertNever, isFiniteNumber, isImageContent, isRecord } from "@pivia/protocol";
 
 import { resolveLanguage } from "@/components/CodeBlock/highlight";
 
@@ -166,6 +166,41 @@ function parsePositiveInteger(value: unknown): number | undefined {
     const num =
         typeof value === "string" && value.trim() !== "" ? Number(value) : isFiniteNumber(value) ? value : undefined;
     return num !== undefined && Number.isInteger(num) && num >= 1 ? num : undefined;
+}
+
+/** One normalized tool result content block, safe to render from either persisted entries or live updates. */
+export type NormalizedToolResultBlock = { readonly type: "text"; readonly text: string } | ImageContent;
+
+/** Copy tool arguments into a plain object, rejecting null, arrays, or scalar values. */
+export function toToolArguments(raw: unknown): TranscriptToolArguments {
+    return isRecord(raw) ? { ...raw } : {};
+}
+
+/** Normalize persisted, edited, or live tool result content into renderable blocks. */
+export function toToolResultBlocks(content: unknown): NormalizedToolResultBlock[] {
+    if (typeof content === "string") {
+        return [{ type: "text", text: content }];
+    }
+    if (!Array.isArray(content)) {
+        return [];
+    }
+    const blocks: NormalizedToolResultBlock[] = [];
+    for (const raw of content) {
+        if (!isRecord(raw)) {
+            continue;
+        }
+        if (raw.type === "text" && typeof raw.text === "string") {
+            blocks.push({ type: "text", text: raw.text });
+        } else if (isImageContent(raw)) {
+            blocks.push({ type: "image", data: raw.data, mimeType: raw.mimeType });
+        }
+    }
+    return blocks;
+}
+
+/** Normalize a duration in milliseconds, rejecting non-finite or negative numbers. */
+export function toNonNegativeDuration(value: unknown): number | null {
+    return isFiniteNumber(value) ? Math.max(0, value) : null;
 }
 
 /** Returns `value` when it is a finite positive number, or `undefined` otherwise. */

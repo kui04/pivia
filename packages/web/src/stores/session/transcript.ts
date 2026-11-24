@@ -5,6 +5,7 @@ import { isFiniteNumber, isImageContent, isRecord, type StrictOmit } from "@pivi
 import { stripAnsi } from "@/lib/ansi";
 
 import type { ProjectedTranscriptItem } from "./projection";
+import type { LiveToolExecutionState } from "./reducer";
 import { parseSkillBlock } from "./skill-block";
 import {
     buildToolPresentation,
@@ -13,6 +14,10 @@ import {
     formatUsdCost,
     readOptionalPositiveNumber,
     readToolFilePath,
+    toNonNegativeDuration,
+    toToolArguments,
+    toToolResultBlocks,
+    type NormalizedToolResultBlock,
     type TranscriptNestedCallStatus,
     type TranscriptNestedCallsSummary,
     type TranscriptNestedToolCall,
@@ -236,6 +241,8 @@ export type BuildTranscriptOptions = {
      * idle session never shows a fake working state.
      */
     readonly runtimeActive?: boolean | undefined;
+    /** Live tool executions indexed by `toolCallId`, used until persisted `toolResult` entries arrive. */
+    readonly liveToolExecutions?: Readonly<Record<string, LiveToolExecutionState>> | undefined;
 };
 
 /** One normalized assistant content block, safe to render. */
@@ -250,8 +257,7 @@ type AssistantBlock =
           readonly argumentsError: string | null;
       };
 
-/** One normalized tool result block, safe to render. */
-type ToolResultBlock = { readonly type: "text"; readonly text: string } | ImageContent;
+type ToolResultBlock = NormalizedToolResultBlock;
 
 type AssistantStopReason = AssistantEntryMessage["stopReason"];
 
@@ -297,9 +303,7 @@ function toTimestamp(value: unknown): number {
 }
 
 /** A duration is only useful when it is a finite, non-negative number. */
-function toDuration(value: unknown): number | null {
-    return isFiniteNumber(value) ? Math.max(0, value) : null;
-}
+const toDuration = toNonNegativeDuration;
 
 function collapseWhitespace(value: string): string {
     return value.replace(/\s+/g, " ").trim();
@@ -426,15 +430,7 @@ function parseIsoTimestamp(iso: string): number {
     return Number.isFinite(ms) ? ms : 0;
 }
 
-/**
- * Copy tool arguments into a plain object.
- *
- * Session parsing leaves the value unvalidated, so a null, array or scalar becomes an empty object
- * and the view never calls `Object.keys` on a non-object.
- */
-function toArguments(raw: unknown): TranscriptToolArguments {
-    return isRecord(raw) ? { ...raw } : {};
-}
+const toArguments = toToolArguments;
 
 /** Read one assistant block, or return null for an unknown or incomplete block. */
 function toAssistantBlock(raw: unknown): AssistantBlock | null {
@@ -481,28 +477,6 @@ function toAssistantBlocks(content: unknown): AssistantBlock[] {
         const block = toAssistantBlock(raw);
         if (block !== null) {
             blocks.push(block);
-        }
-    }
-    return blocks;
-}
-
-/** Read edited or stored tool result content as renderable blocks. */
-function toToolResultBlocks(content: unknown): ToolResultBlock[] {
-    if (typeof content === "string") {
-        return [{ type: "text", text: content }];
-    }
-    if (!Array.isArray(content)) {
-        return [];
-    }
-    const blocks: ToolResultBlock[] = [];
-    for (const raw of content) {
-        if (!isRecord(raw)) {
-            continue;
-        }
-        if (raw.type === "text" && typeof raw.text === "string") {
-            blocks.push({ type: "text", text: raw.text });
-        } else if (isImageContent(raw)) {
-            blocks.push({ type: "image", data: raw.data, mimeType: raw.mimeType });
         }
     }
     return blocks;
@@ -775,20 +749,55 @@ function buildTurnItem(
                     });
                 }
             } else {
-                const result = toolResults.get(block.id);
-                const meta = describeToolCall(block.name, block.arguments);
-                const { output, images } =
-                    result === undefined ? { output: "", images: [] } : readToolResultContent(result.content);
+                const persistedResult = toolResults.get(block.id);
+                const liveExecution =
+                    persistedResult === undefined && canStillRun && isLastAssistant && block.id !== ""
+                        ? options.liveToolExecutions?.[block.id]
+                        : undefined;
+                const effectiveArgs =
+                    Object.keys(block.arguments).length === 0 &&
+                    liveExecution !== undefined &&
+                    Object.keys(liveExecution.args).length > 0
+                        ? liveExecution.args
+                        : block.arguments;
+                const meta = describeToolCall(block.name, effectiveArgs);
+
+                const activeBlocks =
+                    persistedResult !== undefined
+                        ? persistedResult.content
+                        : liveExecution?.kind === "running"
+                          ? (liveExecution.partialResult?.content ?? [])
+                          : liveExecution?.kind === "settled"
+                            ? liveExecution.result.content
+                            : [];
+                const activeDetails =
+                    persistedResult !== undefined
+                        ? persistedResult.details
+                        : liveExecution?.kind === "running"
+                          ? liveExecution.partialResult?.details
+                          : liveExecution?.kind === "settled"
+                            ? liveExecution.result.details
+                            : undefined;
+
+                const { output, images } = readToolResultContent(activeBlocks);
 
                 let status: "running" | "done" | "error";
-                if (result !== undefined) {
-                    status = result.isError ? "error" : "done";
+                let timing: TranscriptTiming;
+                if (persistedResult !== undefined) {
+                    status = persistedResult.isError ? "error" : "done";
+                    timing = { kind: "static", durationMs: computeToolDurationMs(assistant, persistedResult) };
+                } else if (liveExecution?.kind === "settled") {
+                    status = liveExecution.isError ? "error" : "done";
+                    timing = { kind: "static", durationMs: liveExecution.durationMs };
                 } else if (assistant.stopReason === "error" || assistant.stopReason === "aborted") {
                     status = "error";
+                    timing = { kind: "static", durationMs: null };
                 } else if (canStillRun && isLastAssistant) {
                     status = "running";
+                    timing = { kind: "since", startedAtMs: assistant.timestamp };
                 } else {
                     status = "error";
+                    timing = { kind: "static", durationMs: null };
                 }
 
                 let stepId = block.id !== "" ? block.id : `${stepPrefix}-tool`;
@@ -799,20 +808,20 @@ function buildTurnItem(
 
                 const presentation = buildToolPresentation({
                     toolKind: meta.toolKind,
-                    args: block.arguments,
+                    args: effectiveArgs,
                     argumentsError: block.argumentsError,
                     status,
                     output,
                     hasImages: images.length > 0,
-                    details: result?.details,
-                    nestedCalls: result?.nestedCalls,
+                    details: activeDetails,
+                    nestedCalls: persistedResult?.nestedCalls,
                 });
 
                 steps.push({
                     kind: "toolCall",
                     id: stepId,
                     ...meta,
-                    arguments: block.arguments,
+                    arguments: effectiveArgs,
                     argumentsError: block.argumentsError,
                     status,
                     output: presentation.output,
@@ -820,10 +829,7 @@ function buildTurnItem(
                     preview: presentation.preview,
                     warnings: presentation.warnings,
                     nestedCalls: presentation.nestedCalls,
-                    timing:
-                        status === "running"
-                            ? { kind: "since", startedAtMs: assistant.timestamp }
-                            : { kind: "static", durationMs: computeToolDurationMs(assistant, result) },
+                    timing,
                 });
             }
         }
@@ -833,7 +839,12 @@ function buildTurnItem(
         }
     }
 
-    const streaming = (lastAssistant.live && options.runtimeActive === true) || steps.some(isRunningToolStep);
+    const awaitingNextRound =
+        isTrailingTurn &&
+        options.runtimeActive === true &&
+        (lastMessage.stopReason === "toolUse" || lastMessage.stopReason === "pending");
+    const streaming =
+        (lastAssistant.live && options.runtimeActive === true) || awaitingNextRound || steps.some(isRunningToolStep);
 
     const startMs = precedingUserTimestamp ?? firstAssistant.message.timestamp;
     let settledDurationMs: number | null = null;

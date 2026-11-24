@@ -4,6 +4,7 @@ import { useMemo, type ReactElement } from "react";
 import { Button, LoadingIndicator } from "@components";
 import { useSessionStore as defaultSessionStore } from "@/stores";
 import { projectSessionTranscript } from "@/stores/session/projection";
+import type { SessionActivityNotice, SessionLiveActivity } from "@/stores/session/store";
 import { buildTranscript, type TranscriptItem } from "@/stores/session/transcript";
 
 import { Transcript } from "./components/Transcript/Transcript";
@@ -19,6 +20,9 @@ export interface WorkspacePageProps {
     readonly onOpenLink?: ((href: string) => void) | undefined;
 }
 
+const IDLE_ACTIVITY: SessionLiveActivity = { kind: "idle" };
+const WORKING_ACTIVITY: SessionLiveActivity = { kind: "working" };
+
 /** Open a followed link in a new tab so the session view never navigates away in place. */
 function openExternalLink(href: string): void {
     window.open(href, "_blank", "noopener,noreferrer");
@@ -30,6 +34,8 @@ interface StageProps {
     /** Route session id; remounting the transcript resets its scroll and collapse state. */
     readonly transcriptKey: string;
     readonly items: readonly TranscriptItem[];
+    readonly liveActivity: SessionLiveActivity;
+    readonly activityNotice: SessionActivityNotice | null;
     readonly onOpenLink: (href: string) => void;
     readonly onRetryEntriesSync: () => void;
 }
@@ -39,6 +45,8 @@ function renderStage({
     lastError,
     transcriptKey,
     items,
+    liveActivity,
+    activityNotice,
     onOpenLink,
     onRetryEntriesSync,
 }: StageProps): ReactElement {
@@ -98,6 +106,8 @@ function renderStage({
                     <Transcript
                         key={transcriptKey}
                         items={items}
+                        liveActivity={liveActivity}
+                        activityNotice={activityNotice}
                         edgeFade={false}
                         className={styles.transcript}
                         onOpenLink={onOpenLink}
@@ -126,15 +136,27 @@ export function WorkspacePage(props: WorkspacePageProps = {}): ReactElement {
     const entries = sessionStore((state) => state.entries);
     const entriesSync = sessionStore((state) => state.entriesSync);
     const liveMessage = sessionStore((state) => state.liveMessage);
+    const liveToolExecutions = sessionStore((state) => state.liveToolExecutions);
+    const liveActivity = sessionStore((state) => state.liveActivity);
+    const activityNotice = sessionStore((state) => state.activityNotice);
     const runtimeStreaming = sessionStore((state) => state.state?.isStreaming ?? null);
     const lastError = sessionStore((state) => state.lastError);
     const retryEntriesSync = sessionStore((state) => state.retryEntriesSync);
 
     const routeMatchesStore = route.kind === "session" && activeSessionId === route.sessionId;
     const terminalStatus = status === "error" || status === "closed";
-    // The runtime can still append a result while the socket reports a stream or a message is
-    // arriving. A terminal session never can, even if its last snapshot kept isStreaming.
-    const runtimeActive = !terminalStatus && (runtimeStreaming === true || liveMessage.kind === "streaming");
+    const connectedRuntime = status === "open" || status === "reconnecting";
+    // The runtime can still append a result while an open/reconnecting socket reports a stream or
+    // message. A terminal or cached connecting session never triggers a live spinner pre-snapshot.
+    const runtimeActive = connectedRuntime && (runtimeStreaming === true || liveMessage.kind === "streaming");
+    const effectiveActivity: SessionLiveActivity = terminalStatus
+        ? IDLE_ACTIVITY
+        : liveActivity.kind !== "idle"
+          ? liveActivity
+          : runtimeActive
+            ? WORKING_ACTIVITY
+            : IDLE_ACTIVITY;
+    const effectiveNotice = terminalStatus ? null : activityNotice;
 
     // Projecting the branch walks every entry, so it must not run again for each streamed token.
     const projectedItems = useMemo(
@@ -146,15 +168,18 @@ export function WorkspacePage(props: WorkspacePageProps = {}): ReactElement {
             buildTranscript(projectedItems, {
                 liveMessage: liveMessage.kind === "none" ? null : liveMessage.message,
                 runtimeActive,
+                liveToolExecutions,
             }),
-        [liveMessage, projectedItems, runtimeActive],
+        [liveMessage, liveToolExecutions, projectedItems, runtimeActive],
     );
 
+    const hasVisibleActivity =
+        entriesSync.kind !== "loading" && (effectiveActivity.kind !== "idle" || effectiveNotice !== null);
     const view = selectWorkspaceView({
         routeMatchesStore,
         status,
         entriesSync,
-        hasTranscript: items.length > 0,
+        hasTranscript: items.length > 0 || hasVisibleActivity,
     });
 
     const composerArea = (
@@ -204,6 +229,8 @@ export function WorkspacePage(props: WorkspacePageProps = {}): ReactElement {
                     lastError,
                     transcriptKey: route.sessionId,
                     items,
+                    liveActivity: effectiveActivity,
+                    activityNotice: effectiveNotice,
                     onOpenLink,
                     onRetryEntriesSync: retryEntriesSync,
                 })}

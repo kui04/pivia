@@ -29,6 +29,8 @@ export type TurnGroupProps = {
     onOpenChange?: ((open: boolean) => void) | undefined;
     /** Forwarded to Markdown links inside intermediate and final replies. */
     onOpenLink?: ((href: string) => void) | undefined;
+    /** Dynamic label for the trailing working indicator while streaming (`Compacting context...`, etc.). */
+    activityLabel?: string | null | undefined;
     /** Optional class name on the outer container. */
     className?: string | undefined;
 };
@@ -131,6 +133,7 @@ export function TurnGroup({
     open: controlledOpen,
     onOpenChange,
     onOpenLink,
+    activityLabel,
     className,
 }: TurnGroupProps): ReactElement {
     const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen);
@@ -215,7 +218,9 @@ export function TurnGroup({
                 </div>
             ) : null}
 
-            {turn.streaming ? <WorkingIndicator /> : null}
+            {turn.streaming && activityLabel !== null ? (
+                <WorkingIndicator {...(activityLabel !== undefined ? { label: activityLabel } : {})} />
+            ) : null}
         </div>
     );
 }

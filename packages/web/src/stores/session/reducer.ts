@@ -2,6 +2,7 @@ import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { FileEntry, JsonAgentSessionEvent, RpcExtensionUIRequest } from "@earendil-works/pi-coding-agent";
 import {
     assertNever,
+    isRecord,
     type EntriesVersion,
     type HydratableSyncReducer,
     type SessionCloseReason,
@@ -12,6 +13,70 @@ import {
     type SessionStatePatch,
     type SessionStateSnapshot,
 } from "@pivia/protocol";
+
+import {
+    toNonNegativeDuration,
+    toToolArguments,
+    toToolResultBlocks,
+    type NormalizedToolResultBlock,
+    type TranscriptToolArguments,
+} from "./tool-details";
+
+type ToolExecutionStartEvent = Extract<JsonAgentSessionEvent, { type: "tool_execution_start" }>;
+type ToolExecutionEndEvent = Extract<JsonAgentSessionEvent, { type: "tool_execution_end" }>;
+type CompactionStartEvent = Extract<JsonAgentSessionEvent, { type: "compaction_start" }>;
+type AutoRetryStartEvent = Extract<JsonAgentSessionEvent, { type: "auto_retry_start" }>;
+
+/** Normalized payload carried by `tool_execution_update` and `tool_execution_end` wire events. */
+export interface LiveToolExecutionResult {
+    readonly content: readonly NormalizedToolResultBlock[];
+    readonly details: unknown;
+}
+
+/** Live execution state for one top-level tool call before its persisted `toolResult` entry arrives. */
+export type LiveToolExecutionState =
+    | {
+          readonly kind: "running";
+          readonly toolCallId: ToolExecutionStartEvent["toolCallId"];
+          readonly toolName: ToolExecutionStartEvent["toolName"];
+          readonly args: TranscriptToolArguments;
+          readonly partialResult: LiveToolExecutionResult | null;
+      }
+    | {
+          readonly kind: "settled";
+          readonly toolCallId: ToolExecutionEndEvent["toolCallId"];
+          readonly toolName: ToolExecutionEndEvent["toolName"];
+          readonly args: TranscriptToolArguments;
+          readonly result: LiveToolExecutionResult;
+          readonly isError: ToolExecutionEndEvent["isError"];
+          readonly durationMs: number | null;
+      };
+
+/** Compaction trigger reason; `null` when hydrated solely from a boolean `SessionStateSnapshot`. */
+export type CompactionReason = CompactionStartEvent["reason"] | null;
+
+/** Live session activity state driving `WorkingIndicator` and compaction/retry banners. */
+export type SessionLiveActivity =
+    | { readonly kind: "idle" }
+    | { readonly kind: "working" }
+    | { readonly kind: "compacting"; readonly reason: CompactionReason }
+    | { readonly kind: "summarizingBranch" }
+    | {
+          readonly kind: "retrying";
+          readonly scope: "turn" | "summarization";
+          readonly attempt: AutoRetryStartEvent["attempt"];
+          readonly maxAttempts: AutoRetryStartEvent["maxAttempts"];
+          readonly delayMs: AutoRetryStartEvent["delayMs"];
+          readonly errorMessage: AutoRetryStartEvent["errorMessage"];
+      };
+
+/** Transient terminal compaction or auto-retry status notice shown until the next run starts. */
+export interface SessionActivityNotice {
+    readonly tone: "status" | "error";
+    readonly message: string;
+}
+
+const EMPTY_LIVE_TOOL_EXECUTIONS: Readonly<Record<string, LiveToolExecutionState>> = {};
 
 /** Connection lifecycle of the one session the workspace currently shows. */
 export type SessionConnectionStatus = "idle" | "connecting" | "open" | "reconnecting" | "closed" | "error";
@@ -54,6 +119,12 @@ export interface SessionState {
     readonly entriesSync: EntriesSyncState;
     /** Assistant message being streamed or awaiting its persisted entry; deltas fold into it. */
     readonly liveMessage: LiveMessageState;
+    /** Top-level tool executions still running or awaiting their persisted `toolResult` entry. */
+    readonly liveToolExecutions: Readonly<Record<string, LiveToolExecutionState>>;
+    /** Current runtime activity (working, compacting, retrying, or summarizing a branch). */
+    readonly liveActivity: SessionLiveActivity;
+    /** Terminal cancellation or retry-failure notice cleared on the next run or session reset. */
+    readonly activityNotice: SessionActivityNotice | null;
     readonly pendingUiRequests: readonly RpcExtensionUIRequest[];
     readonly lastError: string | null;
 }
@@ -75,6 +146,9 @@ export const initialSessionState: SessionState = {
     entries: [],
     entriesSync: { kind: "idle" },
     liveMessage: { kind: "none" },
+    liveToolExecutions: EMPTY_LIVE_TOOL_EXECUTIONS,
+    liveActivity: { kind: "idle" },
+    activityNotice: null,
     pendingUiRequests: [],
     lastError: null,
 };
@@ -298,6 +372,222 @@ function applyStatePatch(summary: SessionStateSnapshot | null, patch: SessionSta
     };
 }
 
+function extractToolExecutionResult(raw: unknown): LiveToolExecutionResult {
+    if (!isRecord(raw)) {
+        return { content: [], details: undefined };
+    }
+    return {
+        content: toToolResultBlocks(raw.content),
+        details: raw.details,
+    };
+}
+
+function applyToolExecutionEvent(
+    liveTools: Readonly<Record<string, LiveToolExecutionState>>,
+    event: JsonAgentSessionEvent,
+): Readonly<Record<string, LiveToolExecutionState>> {
+    switch (event.type) {
+        case "tool_execution_start":
+            if (typeof event.parentToolCallId === "string" && event.parentToolCallId !== "") {
+                return liveTools;
+            }
+            return {
+                ...liveTools,
+                [event.toolCallId]: {
+                    kind: "running",
+                    toolCallId: event.toolCallId,
+                    toolName: event.toolName,
+                    args: toToolArguments(event.args),
+                    partialResult: null,
+                },
+            };
+        case "tool_execution_update": {
+            if (typeof event.parentToolCallId === "string" && event.parentToolCallId !== "") {
+                return liveTools;
+            }
+            const existing = liveTools[event.toolCallId];
+            const args =
+                existing !== undefined && Object.keys(existing.args).length > 0
+                    ? existing.args
+                    : toToolArguments(event.args);
+            return {
+                ...liveTools,
+                [event.toolCallId]: {
+                    kind: "running",
+                    toolCallId: event.toolCallId,
+                    toolName: event.toolName,
+                    args,
+                    partialResult: extractToolExecutionResult(event.partialResult),
+                },
+            };
+        }
+        case "tool_execution_end": {
+            if (typeof event.parentToolCallId === "string" && event.parentToolCallId !== "") {
+                return liveTools;
+            }
+            const existing = liveTools[event.toolCallId];
+            return {
+                ...liveTools,
+                [event.toolCallId]: {
+                    kind: "settled",
+                    toolCallId: event.toolCallId,
+                    toolName: event.toolName,
+                    args: existing?.args ?? {},
+                    result: extractToolExecutionResult(event.result),
+                    isError: event.isError === true,
+                    durationMs: toNonNegativeDuration(event.durationMs),
+                },
+            };
+        }
+        case "agent_settled":
+            return Object.keys(liveTools).length === 0 ? liveTools : EMPTY_LIVE_TOOL_EXECUTIONS;
+        default:
+            return liveTools;
+    }
+}
+
+function pruneSettledLiveTools(
+    liveTools: Readonly<Record<string, LiveToolExecutionState>>,
+    entries: readonly FileEntry[],
+): Readonly<Record<string, LiveToolExecutionState>> {
+    if (Object.keys(liveTools).length === 0) {
+        return liveTools;
+    }
+    let next: Record<string, LiveToolExecutionState> | null = null;
+    for (const entry of entries) {
+        if (entry.type === "message" && entry.message.role === "toolResult") {
+            const toolCallId = entry.message.toolCallId;
+            if (typeof toolCallId === "string" && Object.prototype.hasOwnProperty.call(liveTools, toolCallId)) {
+                next ??= { ...liveTools };
+                delete next[toolCallId];
+            }
+        }
+    }
+    return next ?? liveTools;
+}
+
+function snapshotLiveActivity(summary: SessionStateSnapshot): SessionLiveActivity {
+    if (summary.isCompacting) {
+        return { kind: "compacting", reason: null };
+    }
+    return summary.isStreaming ? { kind: "working" } : { kind: "idle" };
+}
+
+function applyActivityEvent(
+    prevActivity: SessionLiveActivity,
+    prevNotice: SessionActivityNotice | null,
+    event: JsonAgentSessionEvent,
+    nextSummary: SessionStateSnapshot | null,
+): { readonly activity: SessionLiveActivity; readonly notice: SessionActivityNotice | null } {
+    switch (event.type) {
+        case "agent_start":
+            return { activity: { kind: "working" }, notice: null };
+        case "turn_start":
+            return prevActivity.kind === "idle" || (prevActivity.kind === "retrying" && prevActivity.scope === "turn")
+                ? { activity: { kind: "working" }, notice: prevNotice }
+                : { activity: prevActivity, notice: prevNotice };
+        case "agent_settled":
+            if (
+                prevActivity.kind === "working" ||
+                (prevActivity.kind === "retrying" && prevActivity.scope === "turn")
+            ) {
+                return {
+                    activity: nextSummary?.isCompacting ? { kind: "compacting", reason: null } : { kind: "idle" },
+                    notice: prevNotice,
+                };
+            }
+            return { activity: prevActivity, notice: prevNotice };
+        case "compaction_start":
+            return { activity: { kind: "compacting", reason: event.reason }, notice: null };
+        case "compaction_end": {
+            const activity: SessionLiveActivity = nextSummary?.isStreaming ? { kind: "working" } : { kind: "idle" };
+            let notice: SessionActivityNotice | null = null;
+            if (event.aborted) {
+                notice = {
+                    tone: "status",
+                    message: event.reason === "manual" ? "Compaction cancelled" : "Auto-compaction cancelled",
+                };
+            } else if (
+                event.result === undefined &&
+                typeof event.errorMessage === "string" &&
+                event.errorMessage !== ""
+            ) {
+                notice = {
+                    tone: "error",
+                    message: event.errorMessage,
+                };
+            }
+            return { activity, notice };
+        }
+        case "auto_retry_start":
+            return {
+                activity: {
+                    kind: "retrying",
+                    scope: "turn",
+                    attempt: event.attempt,
+                    maxAttempts: event.maxAttempts,
+                    delayMs: toNonNegativeDuration(event.delayMs) ?? 0,
+                    errorMessage: event.errorMessage,
+                },
+                notice: null,
+            };
+        case "auto_retry_end":
+            if (event.success) {
+                return {
+                    activity: nextSummary?.isStreaming ? { kind: "working" } : { kind: "idle" },
+                    notice: null,
+                };
+            }
+            return {
+                activity: nextSummary?.isCompacting ? { kind: "compacting", reason: null } : { kind: "idle" },
+                notice: {
+                    tone: "error",
+                    message: `Retry failed after ${event.attempt} attempt${event.attempt === 1 ? "" : "s"}: ${event.finalError || "Unknown error"}`,
+                },
+            };
+        case "summarization_retry_scheduled":
+            return {
+                activity: {
+                    kind: "retrying",
+                    scope: "summarization",
+                    attempt: event.attempt,
+                    maxAttempts: event.maxAttempts,
+                    delayMs: toNonNegativeDuration(event.delayMs) ?? 0,
+                    errorMessage: event.errorMessage,
+                },
+                notice: {
+                    tone: "error",
+                    message: event.errorMessage,
+                },
+            };
+        case "summarization_retry_attempt_start":
+            return {
+                activity:
+                    event.source === "branchSummary"
+                        ? { kind: "summarizingBranch" }
+                        : { kind: "compacting", reason: event.reason },
+                notice: null,
+            };
+        case "summarization_retry_finished":
+            return {
+                activity:
+                    prevActivity.kind === "summarizingBranch"
+                        ? prevActivity
+                        : nextSummary?.isCompacting
+                          ? {
+                                kind: "compacting",
+                                reason: prevActivity.kind === "compacting" ? prevActivity.reason : null,
+                            }
+                          : nextSummary?.isStreaming
+                            ? { kind: "working" }
+                            : { kind: "idle" },
+                notice: prevNotice,
+            };
+        default:
+            return { activity: prevActivity, notice: prevNotice };
+    }
+}
+
 /** Merge an HTTP `GET /api/sessions/:id` entry slice cleanly into `state`. */
 export function applyHydratedEntries(
     state: SessionState,
@@ -328,6 +618,7 @@ export function applyHydratedEntries(
         entries: mergedEntries,
         entriesSync: { kind: "idle" },
         liveMessage: nextLive,
+        liveToolExecutions: pruneSettledLiveTools(state.liveToolExecutions, entries),
     };
 }
 
@@ -366,12 +657,20 @@ export function sessionCloseError(reason: SessionCloseReason, message?: string):
     return closeReasonError(reason);
 }
 
+/** Fields holding ephemeral live stream/execution state, cleared on close or terminal disconnect. */
+export const CLEARED_LIVE_RUNTIME_STATE = {
+    liveMessage: { kind: "none" },
+    liveToolExecutions: EMPTY_LIVE_TOOL_EXECUTIONS,
+    liveActivity: { kind: "idle" },
+    activityNotice: null,
+} as const satisfies Pick<SessionState, "liveMessage" | "liveToolExecutions" | "liveActivity" | "activityNotice">;
+
 /** Transition into terminal `closed` state while wiping transient dialogs and live streams. */
 export function applySessionClosed(state: SessionState, reason: SessionCloseReason, message?: string): SessionState {
     return {
         ...state,
         status: "closed",
-        liveMessage: { kind: "none" },
+        ...CLEARED_LIVE_RUNTIME_STATE,
         pendingUiRequests: [],
         lastError: sessionCloseError(reason, message),
     };
@@ -405,6 +704,9 @@ export function createSessionSyncReducer(): HydratableSyncReducer<
                     entries: basePrefix,
                     entriesSync: { kind: "loading" },
                     liveMessage: toLiveMessageState(snapshot.liveMessage),
+                    liveToolExecutions: EMPTY_LIVE_TOOL_EXECUTIONS,
+                    liveActivity: snapshotLiveActivity(snapshot.state),
+                    activityNotice: null,
                     pendingUiRequests: filterInteractiveUiRequests(snapshot.pendingUiRequests),
                     lastError: null,
                 };
@@ -422,6 +724,9 @@ export function createSessionSyncReducer(): HydratableSyncReducer<
                 entries: nextEntries,
                 entriesSync: { kind: "idle" },
                 liveMessage: toLiveMessageState(snapshot.liveMessage),
+                liveToolExecutions: EMPTY_LIVE_TOOL_EXECUTIONS,
+                liveActivity: snapshotLiveActivity(snapshot.state),
+                activityNotice: null,
                 pendingUiRequests: filterInteractiveUiRequests(snapshot.pendingUiRequests),
                 lastError: null,
             };
@@ -467,14 +772,25 @@ export function createSessionSyncReducer(): HydratableSyncReducer<
                 return prev;
             }
             switch (delta.kind) {
-                case "agent_event":
+                case "agent_event": {
+                    const nextSummary = applySessionEvent(prev.state, delta.event);
+                    const nextActivity = applyActivityEvent(
+                        prev.liveActivity,
+                        prev.activityNotice,
+                        delta.event,
+                        nextSummary,
+                    );
                     return {
                         ...prev,
                         status: "open",
-                        state: applySessionEvent(prev.state, delta.event),
+                        state: nextSummary,
                         liveMessage: applyAssistantEvent(prev.liveMessage, delta.event),
+                        liveToolExecutions: applyToolExecutionEvent(prev.liveToolExecutions, delta.event),
+                        liveActivity: nextActivity.activity,
+                        activityNotice: nextActivity.notice,
                         lastError: null,
                     };
+                }
                 case "entries_appended": {
                     if (delta.entries.mode === "http") {
                         return delta.entriesVersion === prev.entriesVersion
@@ -495,6 +811,7 @@ export function createSessionSyncReducer(): HydratableSyncReducer<
                         entriesVersion: delta.entriesVersion,
                         entries: merged.entries,
                         liveMessage: merged.liveMessage,
+                        liveToolExecutions: pruneSettledLiveTools(prev.liveToolExecutions, delta.entries.data),
                     };
                 }
                 case "state_patched":

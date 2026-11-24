@@ -594,3 +594,54 @@ export const EmptyTranscript: Story = {
         await expect(canvas.queryByRole("button", { name: "To bottom" })).not.toBeInTheDocument();
     },
 };
+
+export const RetryCountdownAndNotice: Story = {
+    args: {
+        items: shortItems,
+        liveActivity: {
+            kind: "retrying",
+            scope: "turn",
+            attempt: 2,
+            maxAttempts: 3,
+            delayMs: 30_000,
+            errorMessage: "429 Rate limit exceeded",
+        },
+        activityNotice: {
+            tone: "error",
+            message: "Auto-compaction failed: context overflow",
+        },
+    },
+    decorators: [
+        (Story) => (
+            <div className={styles.frame}>
+                <Story />
+            </div>
+        ),
+    ],
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+        await expect(canvas.getByRole("status")).toHaveTextContent(/Retrying \(2\/3\) in \d+s\.\.\./);
+        await expect(canvas.getByRole("alert")).toHaveTextContent("Auto-compaction failed: context overflow");
+    },
+};
+
+export const CompactingBetweenTurns: Story = {
+    args: {
+        items: shortItems,
+        liveActivity: {
+            kind: "compacting",
+            reason: "manual",
+        },
+    },
+    decorators: [
+        (Story) => (
+            <div className={styles.frame}>
+                <Story />
+            </div>
+        ),
+    ],
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+        await expect(canvas.getByRole("status")).toHaveTextContent("Compacting context...");
+    },
+};

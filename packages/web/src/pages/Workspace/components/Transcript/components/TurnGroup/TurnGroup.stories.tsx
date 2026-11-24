@@ -403,3 +403,14 @@ export const StreamingTurnHidesNotice: Story = {
         await expect(canvas.queryByRole("alert")).not.toBeInTheDocument();
     },
 };
+
+export const CompactingTurn: Story = {
+    args: {
+        turn: streamingTurn,
+        activityLabel: "Auto-compacting context...",
+    },
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+        await expect(canvas.getByRole("status")).toHaveTextContent("Auto-compacting context...");
+    },
+};

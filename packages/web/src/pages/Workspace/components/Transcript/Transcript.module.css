@@ -8,13 +8,16 @@
  *   └─ .jumpOverlay                bottom-centered container for the To bottom button
  *       └─ &[data-visible="true"]  reveals the button after scrolling above the bottom edge
  *
+ *   .column                        centered max-width stack of transcript items inside ScrollArea
+ *   └─ .activityNotice             inline compaction/retry status or error banner
+ *       └─ &[data-tone="error"]
+ *
  * Classes passed to child components stay top-level so CSS Modules keep one class of specificity:
  *
  *   .scroll                        ScrollArea root filling the transcript column
  *   .viewport                      ScrollArea viewport reserving focus clearance around the fades
  *   .viewportFade                  top and bottom mask fade for standalone use
  *   .content                       ScrollArea content constrained to the viewport width
- *   .column                        centered max-width stack of transcript items
  *   .jumpButton                    Button override keeping a raised surface over scrolling text
  *   .jumpIcon                      leading ArrowDown icon inside the jump button
  */
@@ -121,6 +124,24 @@
     min-inline-size: 0;
     margin-inline: auto;
     padding-inline: var(--space-16);
+
+    .activityNotice {
+        padding: var(--space-8) var(--space-12);
+        border: var(--border-width) solid var(--color-outline-variant);
+        border-radius: var(--shape-corner-small);
+        background-color: var(--color-surface-container);
+        color: var(--color-on-surface-variant);
+        font-size: var(--type-body-medium-size);
+        letter-spacing: var(--type-body-medium-tracking);
+        line-height: var(--type-body-medium-line-height);
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+
+        &[data-tone="error"] {
+            border-color: color-mix(in srgb, var(--color-error) 45%, var(--color-outline-variant));
+            color: var(--color-error);
+        }
+    }
 }
 
 /*

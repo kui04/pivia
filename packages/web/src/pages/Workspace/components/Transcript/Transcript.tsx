@@ -1,9 +1,10 @@
 import { assertNever } from "@pivia/protocol";
 import { ArrowDown } from "lucide-react";
-import { useCallback, useRef, type FocusEvent, type ReactElement } from "react";
+import { useCallback, useEffect, useRef, type FocusEvent, type ReactElement } from "react";
 
 import { Button, Icon, ScrollArea } from "@components";
 import { cn } from "@/lib/cn";
+import type { SessionActivityNotice, SessionLiveActivity } from "@/stores/session/store";
 import type { TranscriptItem } from "@/stores/session/transcript";
 
 import {
@@ -13,8 +14,10 @@ import {
     SystemNote,
     TurnGroup,
     UserMessage,
+    WorkingIndicator,
 } from "./components";
 import styles from "./Transcript.module.css";
+import { useActivityLabel } from "./useActivityLabel";
 import { useAutoScroll } from "./useAutoScroll";
 
 /** Props of {@link Transcript}. */
@@ -23,6 +26,10 @@ export type TranscriptProps = {
     items: readonly TranscriptItem[];
     /** Forwarded to Markdown links inside intermediate and final replies. */
     onOpenLink?: ((href: string) => void) | undefined;
+    /** Active runtime state (`compacting`, `retrying`, etc.) displayed inline with the transcript. */
+    liveActivity?: SessionLiveActivity | undefined;
+    /** Terminal compaction cancellation or retry failure notice shown below the transcript items. */
+    activityNotice?: SessionActivityNotice | null | undefined;
     /** Applies top and bottom CSS mask fades directly on the viewport. Disable when surrounding chrome owns the fades. */
     edgeFade?: boolean | undefined;
     /** Accessible name for the scroll region. Defaults to "Transcript". */
@@ -44,19 +51,36 @@ export type TranscriptProps = {
 export function Transcript({
     items,
     onOpenLink,
+    liveActivity,
+    activityNotice = null,
     edgeFade = true,
     label = "Transcript",
     labelledBy,
     className,
 }: TranscriptProps): ReactElement {
     const viewportNodeRef = useRef<HTMLDivElement | null>(null);
-    const streaming = items.some((item) => item.kind === "turn" && item.streaming);
+    const activityLabel = useActivityLabel(liveActivity ?? { kind: "idle" });
+    let lastStreamingTurnId: string | null = null;
+    for (const item of items) {
+        if (item.kind === "turn" && item.streaming) {
+            lastStreamingTurnId = item.id;
+        }
+    }
+    const streaming = lastStreamingTurnId !== null || activityLabel !== null;
 
     const { viewportRef, atBottom, scrollToBottom } = useAutoScroll({
         enabled: true,
         streaming,
         initialBottom: true,
     });
+
+    const prevNoticeRef = useRef<SessionActivityNotice | null>(null);
+    useEffect(() => {
+        if (activityNotice !== null && activityNotice !== prevNoticeRef.current && atBottom) {
+            scrollToBottom("auto");
+        }
+        prevNoticeRef.current = activityNotice;
+    }, [activityNotice, atBottom, scrollToBottom]);
 
     const handleViewportRef = useCallback(
         (node: HTMLDivElement | null) => {
@@ -127,6 +151,9 @@ export function Transcript({
                                     <TurnGroup
                                         key={item.id}
                                         turn={item}
+                                        {...(item.id === lastStreamingTurnId && activityLabel !== null
+                                            ? { activityLabel }
+                                            : {})}
                                         {...(onOpenLink !== undefined ? { onOpenLink } : {})}
                                     />
                                 );
@@ -134,6 +161,18 @@ export function Transcript({
                                 return assertNever(item);
                         }
                     })}
+                    {lastStreamingTurnId === null && activityLabel !== null ? (
+                        <WorkingIndicator label={activityLabel} />
+                    ) : null}
+                    {activityNotice !== null ? (
+                        <div
+                            className={styles.activityNotice}
+                            data-tone={activityNotice.tone}
+                            role={activityNotice.tone === "error" ? "alert" : "status"}
+                        >
+                            {activityNotice.message}
+                        </div>
+                    ) : null}
                 </div>
             </ScrollArea>
 

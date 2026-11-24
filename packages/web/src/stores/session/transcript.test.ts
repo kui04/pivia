@@ -1094,6 +1094,78 @@ describe("buildTranscript", () => {
             },
         });
     });
+
+    it("merges running and settled liveToolExecutions until persisted toolResult arrives", () => {
+        const entries = project([
+            userEntry("m1", null, "Run codemode check", 1_000),
+            assistantEntry("m2", "m1", [{ type: "toolCall", id: "live-1", name: "bash", arguments: {} }], {
+                timestamp: 1_200,
+                stopReason: "toolUse",
+            }),
+        ]);
+
+        const runningItems = buildTranscript(entries, {
+            runtimeActive: true,
+            liveToolExecutions: {
+                "live-1": {
+                    kind: "running",
+                    toolCallId: "live-1",
+                    toolName: "bash",
+                    args: { command: "pnpm test" },
+                    partialResult: {
+                        content: [{ type: "text", text: "running..." }],
+                        details: { fullOutputPath: "/tmp/live.log" },
+                    },
+                },
+            },
+        });
+        expect(toolStepOf(runningItems, 1, 0)).toMatchObject({
+            summary: "pnpm test",
+            status: "running",
+            output: "running...",
+            warnings: [{ kind: "fullOutput", path: "/tmp/live.log" }],
+            timing: { kind: "since", startedAtMs: 1_200 },
+        });
+
+        const settledItems = buildTranscript(entries, {
+            runtimeActive: true,
+            liveToolExecutions: {
+                "live-1": {
+                    kind: "settled",
+                    toolCallId: "live-1",
+                    toolName: "bash",
+                    args: { command: "pnpm test" },
+                    result: { content: [{ type: "text", text: "exit 1" }], details: undefined },
+                    isError: true,
+                    durationMs: 420,
+                },
+            },
+        });
+        expect(toolStepOf(settledItems, 1, 0)).toMatchObject({
+            status: "error",
+            output: "exit 1",
+            timing: { kind: "static", durationMs: 420 },
+        });
+        expect(turnOf(settledItems, 1).streaming).toBe(true);
+
+        // A historical unmatched call must ignore liveToolExecutions when runtimeActive is false.
+        const historicalItems = buildTranscript(entries, {
+            runtimeActive: false,
+            liveToolExecutions: {
+                "live-1": {
+                    kind: "running",
+                    toolCallId: "live-1",
+                    toolName: "bash",
+                    args: { command: "pnpm test" },
+                    partialResult: { content: [{ type: "text", text: "stale" }], details: undefined },
+                },
+            },
+        });
+        expect(toolStepOf(historicalItems, 1, 0)).toMatchObject({
+            status: "error",
+            output: "",
+        });
+    });
 });
 
 describe("buildTranscript boundary handling", () => {
