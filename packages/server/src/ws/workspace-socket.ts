@@ -4,7 +4,7 @@ import type { FastifyInstance } from "fastify";
 import type { SessionRegistry } from "../sessions/runtime.ts";
 import { createBackpressureSender } from "../sync/index.ts";
 import { createHeartbeat } from "./heartbeat.ts";
-import { DEFAULT_WS_HEARTBEAT_INTERVAL_MS, type SessionSocketRouteOptions } from "./session-socket.ts";
+import { DEFAULT_WS_HEARTBEAT_INTERVAL_MS, type WsRouteOptions } from "./options.ts";
 
 /**
  * Register the `/ws/workspace` WebSocket route.
@@ -16,7 +16,7 @@ import { DEFAULT_WS_HEARTBEAT_INTERVAL_MS, type SessionSocketRouteOptions } from
 export function registerWorkspaceSocketRoute(
     app: FastifyInstance,
     sessionRegistry: SessionRegistry,
-    options: SessionSocketRouteOptions = {},
+    options: WsRouteOptions = {},
 ): void {
     const heartbeat = createHeartbeat({
         intervalMs: options.heartbeatIntervalMs ?? DEFAULT_WS_HEARTBEAT_INTERVAL_MS,

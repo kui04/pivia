@@ -1,4 +1,4 @@
-import { SESSION_CLOSE_CODE, type SessionCloseCode } from "@pivia/protocol";
+import { WS_CLOSE_CODE, type WsCloseCode } from "@pivia/protocol";
 
 /** Close a client whose unsent backlog exceeds this, so a stalled link cannot grow memory. */
 export const MAX_WS_BUFFERED_BYTES = 4 * 1024 * 1024;
@@ -25,9 +25,9 @@ export interface SyncGuardLogger {
 }
 
 /** Pre-serialized transport adapter passed into `SyncStreamHost.attach`. */
-export interface SyncTransportClient {
+export interface SyncTransportClient<TCloseCode extends number = never> {
     sendRaw(raw: string): void;
-    close(code: SessionCloseCode, reason: string): void;
+    close(code: WsCloseCode | TCloseCode, reason: string): void;
 }
 
 /** Options for {@link createBackpressureSender}. */
@@ -48,12 +48,12 @@ export function createBackpressureSender(
     socket: BackpressureSocket,
     logger: SyncGuardLogger,
     options: BackpressureSenderOptions = {},
-): SyncTransportClient {
+): SyncTransportClient<number> {
     const maxBufferedBytes = options.maxBufferedBytes ?? MAX_WS_BUFFERED_BYTES;
     const logContext = options.logContext ?? {};
     let closed = false;
 
-    const close = (code: SessionCloseCode, reason: string): void => {
+    const close = (code: number, reason: string): void => {
         if (closed) {
             return;
         }
@@ -77,7 +77,7 @@ export function createBackpressureSender(
                     { ...logContext, bufferedAmount: socket.bufferedAmount },
                     "closing slow websocket consumer",
                 );
-                close(SESSION_CLOSE_CODE.slowConsumer, "Slow consumer");
+                close(WS_CLOSE_CODE.slowConsumer, "Slow consumer");
                 return;
             }
             try {

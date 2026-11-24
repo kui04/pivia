@@ -19,23 +19,7 @@ import {
 } from "../sessions/runtime.ts";
 import { createBackpressureSender } from "../sync/index.ts";
 import { createHeartbeat, type HeartbeatSocket } from "./heartbeat.ts";
-
-/** Largest WebSocket frame the server accepts. */
-export const MAX_WS_PAYLOAD_BYTES = 4 * 1024 * 1024;
-
-/**
- * Default interval for the protocol-level ping that detects a dead peer.
- *
- * A client that stops answering is terminated one interval later, so a half-open link is cleaned
- * up within a minute.
- */
-export const DEFAULT_WS_HEARTBEAT_INTERVAL_MS = 30_000;
-
-/** Options for {@link registerSessionSocketRoute}. */
-export interface SessionSocketRouteOptions {
-    /** Ping interval in milliseconds; `0` disables the heartbeat. */
-    readonly heartbeatIntervalMs?: number | undefined;
-}
+import { DEFAULT_WS_HEARTBEAT_INTERVAL_MS, type WsRouteOptions } from "./options.ts";
 
 interface OpenedWsSession {
     readonly handle: ActiveSessionHandle;
@@ -69,7 +53,7 @@ function websocketDataToText(data: unknown): string {
 export function registerSessionSocketRoute(
     app: FastifyInstance,
     sessionRegistry: SessionRegistry,
-    options: SessionSocketRouteOptions = {},
+    options: WsRouteOptions = {},
 ): void {
     const sessionIds = new WeakMap<HeartbeatSocket, SessionId>();
     const heartbeat = createHeartbeat({

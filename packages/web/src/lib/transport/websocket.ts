@@ -13,6 +13,22 @@ export interface WebSocketLike {
 export type WebSocketConstructor = new (url: string) => WebSocketLike;
 
 /**
+ * Resolves a relative WebSocket endpoint path to an absolute `ws://` or `wss://` URL.
+ *
+ * Throws an Error when `pageUrl` is omitted outside a browser environment.
+ */
+export function buildWebSocketUrl(path: string, pageUrl?: string): string {
+    const source = pageUrl ?? globalThis.location?.href;
+    if (source === undefined) {
+        throw new Error("A WebSocket URL is required outside the browser.");
+    }
+    const url = new URL(path, source);
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    url.hash = "";
+    return url.toString();
+}
+
+/**
  * Returns the global WebSocket constructor.
  *
  * Throws an Error when `globalThis.WebSocket` is unavailable in the current environment.

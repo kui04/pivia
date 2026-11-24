@@ -22,6 +22,7 @@ import {
     parseSessionWsServerMessage,
     parseSyncEpoch,
     SESSION_CLOSE_CODE,
+    WS_CLOSE_CODE,
 } from "@pivia/protocol";
 import type {
     CatalogDelta,
@@ -235,7 +236,7 @@ interface ActiveSession {
     readonly sessionId: SessionId;
     readonly cwd: string;
     readonly runtime: ManagedRuntime;
-    readonly syncHost: SyncStreamHost<"session", SessionSnapshot, SessionDelta, SessionPrefixAnchor>;
+    readonly syncHost: SyncStreamHost<"session", SessionSnapshot, SessionDelta, SessionPrefixAnchor, SessionCloseCode>;
     readonly clients: Set<SessionClient>;
     readonly uiBridge: SessionUiBridge;
     readonly readyPromise: Promise<void>;
@@ -653,7 +654,7 @@ export class SessionRegistry {
             return;
         }
         this.disposed = true;
-        this.catalogHost.dispose(SESSION_CLOSE_CODE.goingAway, "Server going away");
+        this.catalogHost.dispose(WS_CLOSE_CODE.goingAway, "Server going away");
 
         // Force-close current entries first so an open() waiting on closePromise cannot keep
         // disposeAll blocked behind a shutdown dialog.
@@ -757,7 +758,7 @@ export class SessionRegistry {
             throw new SessionRegistryError("not_found", "Session is closing.");
         }
 
-        const transport: SyncTransportClient = {
+        const transport: SyncTransportClient<SessionCloseCode> = {
             sendRaw: (raw) => {
                 if (client.sendRaw !== undefined) {
                     client.sendRaw(raw);
@@ -881,7 +882,13 @@ export class SessionRegistry {
         const initialState = session.getState();
         const header = initialEntries[0]?.type === "session" ? initialEntries[0] : null;
         const parsedCreatedAtMs = header === null ? Number.NaN : Date.parse(header.timestamp);
-        const syncHost = new SyncStreamHost<"session", SessionSnapshot, SessionDelta, SessionPrefixAnchor>({
+        const syncHost = new SyncStreamHost<
+            "session",
+            SessionSnapshot,
+            SessionDelta,
+            SessionPrefixAnchor,
+            SessionCloseCode
+        >({
             buffer,
             getSnapshot: (hint) => this.buildSessionSnapshot(sessionId, hint),
             logger: this.logger,

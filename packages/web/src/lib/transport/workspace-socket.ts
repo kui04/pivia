@@ -7,7 +7,12 @@ import {
 
 import { Log } from "@/lib/log";
 
-import { defaultWebSocketConstructor, type WebSocketConstructor, type WebSocketLike } from "./websocket";
+import {
+    buildWebSocketUrl,
+    defaultWebSocketConstructor,
+    type WebSocketConstructor,
+    type WebSocketLike,
+} from "./websocket";
 
 /** Lifecycle callbacks for {@link connectWorkspaceSocket}. */
 export interface WorkspaceSocketHandlers {
@@ -32,14 +37,7 @@ export interface WorkspaceSocket {
 
 /** Build the default `/ws/workspace` WebSocket endpoint from the current page origin. */
 export function buildWorkspaceSocketUrl(pageUrl?: string, cursor?: CatalogCursor): string {
-    const source = pageUrl ?? globalThis.location?.href;
-    if (source === undefined) {
-        throw new Error("A WebSocket URL is required outside the browser.");
-    }
-    const url = new URL(WS_ENDPOINTS.workspace.buildPath(cursor === undefined ? undefined : { cursor }), source);
-    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-    url.hash = "";
-    return url.toString();
+    return buildWebSocketUrl(WS_ENDPOINTS.workspace.buildPath(cursor === undefined ? undefined : { cursor }), pageUrl);
 }
 
 function detachHandlers(socket: WebSocketLike): void {

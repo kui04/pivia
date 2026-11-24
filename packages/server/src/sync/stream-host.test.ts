@@ -3,8 +3,7 @@ import {
     isRecord,
     parseSyncEpoch,
     parseSyncSeq,
-    SESSION_CLOSE_CODE,
-    type SessionCloseCode,
+    WS_CLOSE_CODE,
     type SyncCursor,
     type SyncEpoch,
     type SyncFrame,
@@ -46,7 +45,7 @@ const parseTestFrame = createSyncFrameParser<"test", TestSnapshot, TestDelta>({
 
 function createMockTransport() {
     const frames: TestFrame[] = [];
-    const closed: Array<{ readonly code: SessionCloseCode; readonly reason: string }> = [];
+    const closed: Array<{ readonly code: number; readonly reason: string }> = [];
     const client: SyncTransportClient = {
         sendRaw(raw) {
             const parsed = parseTestFrame(JSON.parse(raw) as unknown);
@@ -160,7 +159,7 @@ describe("SyncStreamHost", () => {
         await Promise.resolve();
 
         expect(c1.frames).toEqual([{ type: "sync:resync", reason: "buffer_evicted" }]);
-        expect(c1.closed).toEqual([{ code: SESSION_CLOSE_CODE.normal, reason: "Handshake resync required" }]);
+        expect(c1.closed).toEqual([{ code: WS_CLOSE_CODE.normal, reason: "Handshake resync required" }]);
         expect(host.subscriberCount).toBe(0);
 
         const failingHost = new SyncStreamHost<"test", TestSnapshot, TestDelta>({
@@ -171,7 +170,7 @@ describe("SyncStreamHost", () => {
         failingHost.attach(c2.client);
         await Promise.resolve();
         await Promise.resolve();
-        expect(c2.closed).toEqual([{ code: SESSION_CLOSE_CODE.internalError, reason: "Snapshot unavailable" }]);
+        expect(c2.closed).toEqual([{ code: WS_CLOSE_CODE.internalError, reason: "Snapshot unavailable" }]);
         expect(failingHost.subscriberCount).toBe(0);
     });
 
@@ -198,10 +197,10 @@ describe("SyncStreamHost", () => {
         const c2 = createMockTransport();
         host.attach(c2.client);
         host.dispose();
-        expect(c2.closed).toEqual([{ code: SESSION_CLOSE_CODE.goingAway, reason: "Stream disposed" }]);
+        expect(c2.closed).toEqual([{ code: WS_CLOSE_CODE.goingAway, reason: "Stream disposed" }]);
 
         const c3 = createMockTransport();
         host.attach(c3.client);
-        expect(c3.closed).toEqual([{ code: SESSION_CLOSE_CODE.goingAway, reason: "Stream disposed" }]);
+        expect(c3.closed).toEqual([{ code: WS_CLOSE_CODE.goingAway, reason: "Stream disposed" }]);
     });
 });

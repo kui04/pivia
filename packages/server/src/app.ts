@@ -13,7 +13,8 @@ import { createLogger } from "./logger.ts";
 import { SessionCatalog } from "./sessions/catalog.ts";
 import { registerSessionRoutes } from "./sessions/routes.ts";
 import { SessionRegistry } from "./sessions/runtime.ts";
-import { MAX_WS_PAYLOAD_BYTES, registerSessionSocketRoute } from "./ws/session-socket.ts";
+import { MAX_WS_PAYLOAD_BYTES } from "./ws/options.ts";
+import { registerSessionSocketRoute } from "./ws/session-socket.ts";
 import { registerWorkspaceSocketRoute } from "./ws/workspace-socket.ts";
 
 /** Options for {@link buildApp}. */
@@ -28,7 +29,7 @@ export interface BuildAppOptions {
     sessions?: SessionCatalog | undefined;
     /** Session runtime registry; defaults to one using the production pi runtime factory. */
     registry?: SessionRegistry | undefined;
-    /** Session WebSocket ping interval in milliseconds; `0` disables it. */
+    /** WebSocket ping interval in milliseconds; `0` disables it. */
     wsHeartbeatIntervalMs?: number | undefined;
 }
 

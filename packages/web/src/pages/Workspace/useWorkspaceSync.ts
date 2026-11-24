@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 
-import { assertNever, SESSION_CLOSE_CODE, type CatalogDelta, type CatalogSnapshot } from "@pivia/protocol";
+import { assertNever, WS_CLOSE_CODE, type CatalogDelta, type CatalogSnapshot } from "@pivia/protocol";
 
 import { Log } from "@/lib/log";
 import {
@@ -134,7 +134,7 @@ export function createWorkspaceSyncController(options: WorkspaceSyncOptions = {}
             }
             const current = socket;
             socket = null;
-            current?.close(SESSION_CLOSE_CODE.normal, "Catalog resync");
+            current?.close(WS_CLOSE_CODE.normal, "Catalog resync");
             reconnect.scheduleResync(reason);
         },
     });
@@ -180,7 +180,7 @@ export function createWorkspaceSyncController(options: WorkspaceSyncOptions = {}
             clearRefreshDelayTimer();
             const current = socket;
             socket = null;
-            current?.close(SESSION_CLOSE_CODE.normal, "Unauthorized");
+            current?.close(WS_CLOSE_CODE.normal, "Unauthorized");
             onUnauthorized();
         },
         onScheduled(nextAttempt) {
@@ -214,7 +214,7 @@ export function createWorkspaceSyncController(options: WorkspaceSyncOptions = {}
             clearRefreshDelayTimer();
             const current = socket;
             socket = null;
-            current?.close(SESSION_CLOSE_CODE.normal, "Workspace closed");
+            current?.close(WS_CLOSE_CODE.normal, "Workspace closed");
         },
         handleVisibilityChange(visible) {
             if (visible && !stopped && socket === null) {

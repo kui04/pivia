@@ -19,6 +19,7 @@ import {
     type PatchOf,
     type StrictOmit,
 } from "../shared/primitives.ts";
+import { WS_CLOSE_CODE } from "../shared/ws.ts";
 import {
     createSyncFrameParser,
     encodeSyncHandshakeQuery,
@@ -47,12 +48,9 @@ export type SessionCursor = SyncCursor<"session">;
 /** Handshake parameters sent on `/ws/sessions/:id` connect and reconnect. */
 export type SessionHandshake = SyncHandshake<"session", SessionPrefixAnchor>;
 
-/** WebSocket close codes shared by the session server and the browser client. */
+/** WebSocket close codes used by the session route (standard codes plus session-specific 44xx codes). */
 export const SESSION_CLOSE_CODE = {
-    normal: 1000,
-    goingAway: 1001,
-    internalError: 1011,
-    slowConsumer: 1013,
+    ...WS_CLOSE_CODE,
     sessionClosed: 4400,
     sessionNotFound: 4404,
 } as const;

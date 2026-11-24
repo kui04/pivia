@@ -1,11 +1,11 @@
 import {
-    SESSION_CLOSE_CODE,
+    WS_CLOSE_CODE,
     type SequencedDelta,
-    type SessionCloseCode,
     type SyncCursor,
     type SyncFrame,
     type SyncHandshake,
     type SyncSeq,
+    type WsCloseCode,
 } from "@pivia/protocol";
 
 import type { ReplayRingBuffer } from "./replay-buffer.ts";
@@ -70,12 +70,12 @@ function isPromiseLike<T>(value: T | Promise<T>): value is Promise<T> {
  * Owns monotonic `publish()` into {@link ReplayRingBuffer}, Tier 1 replay handshakes,
  * Subscribe-before-Snapshot watermark draining for async snapshots, and fan-out to live clients.
  */
-export class SyncStreamHost<D extends string, TSnapshot, TDelta, THint = undefined> {
+export class SyncStreamHost<D extends string, TSnapshot, TDelta, THint = undefined, TCloseCode extends number = never> {
     readonly buffer: ReplayRingBuffer<D, TDelta>;
     private readonly getSnapshot: SyncStreamHostOptions<D, TSnapshot, TDelta, THint>["getSnapshot"];
     private readonly maxPendingPerClient: number;
     private readonly logger: SyncGuardLogger | undefined;
-    private readonly clients = new Map<SyncTransportClient, AttachedClient<D>>();
+    private readonly clients = new Map<SyncTransportClient<TCloseCode>, AttachedClient<D>>();
     private disposed = false;
 
     constructor(options: SyncStreamHostOptions<D, TSnapshot, TDelta, THint>) {
@@ -137,9 +137,9 @@ export class SyncStreamHost<D extends string, TSnapshot, TDelta, THint = undefin
      * Returns an idempotent `detach()` function immediately so close listeners can clean up even
      * while an async `getSnapshot()` call is still in flight.
      */
-    attach(client: SyncTransportClient, handshake: SyncHandshake<D, THint> = {}): () => void {
+    attach(client: SyncTransportClient<TCloseCode>, handshake: SyncHandshake<D, THint> = {}): () => void {
         if (this.disposed) {
-            client.close(SESSION_CLOSE_CODE.goingAway, "Stream disposed");
+            client.close(WS_CLOSE_CODE.goingAway, "Stream disposed");
             return () => {};
         }
 
@@ -178,7 +178,7 @@ export class SyncStreamHost<D extends string, TSnapshot, TDelta, THint = undefin
                     reason: "buffer_evicted",
                 };
                 client.sendRaw(JSON.stringify(resyncFrame));
-                client.close(SESSION_CLOSE_CODE.normal, "Handshake resync required");
+                client.close(WS_CLOSE_CODE.normal, "Handshake resync required");
                 return;
             }
 
@@ -212,7 +212,7 @@ export class SyncStreamHost<D extends string, TSnapshot, TDelta, THint = undefin
             }
             this.clients.delete(client);
             this.logger?.warn({ err: error }, "failed to build sync snapshot for attaching client");
-            client.close(SESSION_CLOSE_CODE.internalError, "Snapshot unavailable");
+            client.close(WS_CLOSE_CODE.internalError, "Snapshot unavailable");
         };
 
         try {
@@ -230,7 +230,7 @@ export class SyncStreamHost<D extends string, TSnapshot, TDelta, THint = undefin
     }
 
     /** Close all attached clients and reject any in-flight handshakes. Idempotent. */
-    dispose(code: SessionCloseCode = SESSION_CLOSE_CODE.goingAway, reason = "Stream disposed"): void {
+    dispose(code: WsCloseCode | TCloseCode = WS_CLOSE_CODE.goingAway, reason = "Stream disposed"): void {
         if (this.disposed) {
             return;
         }

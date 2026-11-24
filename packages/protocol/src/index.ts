@@ -18,6 +18,7 @@ export {
     type WsQueryEndpoint,
 } from "./shared/endpoint.ts";
 export { assertNever, isRecord, type JsonDecoder, type PatchOf, type StrictOmit } from "./shared/primitives.ts";
+export { WS_CLOSE_CODE, type WsCloseCode } from "./shared/ws.ts";
 export * from "./sync/index.ts";
 export * from "./system/index.ts";
 export * from "./workspace/index.ts";

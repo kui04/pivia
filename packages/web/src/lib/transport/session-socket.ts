@@ -16,7 +16,12 @@ import {
 
 import { Log } from "@/lib/log";
 
-import { defaultWebSocketConstructor, type WebSocketConstructor, type WebSocketLike } from "./websocket";
+import {
+    buildWebSocketUrl,
+    defaultWebSocketConstructor,
+    type WebSocketConstructor,
+    type WebSocketLike,
+} from "./websocket";
 
 /** RPC response envelope returned by {@link SessionSocket.sendCommand}. */
 export type SessionRpcResponseMessage = Extract<SessionRpcServerMessage, { readonly type: "rpc:response" }>;
@@ -85,14 +90,7 @@ const WS_READY_STATE_OPEN = 1;
 
 /** Builds the default endpoint from a page URL and optional Tier 1/2 handshake anchors. */
 export function buildSessionSocketUrl(sessionId: SessionId, handshake?: SessionHandshake, pageUrl?: string): string {
-    const source = pageUrl ?? globalThis.location?.href;
-    if (source === undefined) {
-        throw new Error("A WebSocket URL is required outside the browser.");
-    }
-    const url = new URL(WS_ENDPOINTS.session.buildPath({ id: sessionId }, handshake), source);
-    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-    url.hash = "";
-    return url.toString();
+    return buildWebSocketUrl(WS_ENDPOINTS.session.buildPath({ id: sessionId }, handshake), pageUrl);
 }
 
 let fallbackCommandId = 0;

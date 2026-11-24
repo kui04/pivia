@@ -1,4 +1,4 @@
-import { SESSION_CLOSE_CODE } from "@pivia/protocol";
+import { WS_CLOSE_CODE } from "@pivia/protocol";
 import { describe, expect, it, vi } from "vitest";
 
 import { createBackpressureSender, shouldOffloadPayload } from "./ws-guard.ts";
@@ -18,7 +18,7 @@ describe("ws-guard", () => {
         const sender = createBackpressureSender(socket, { warn }, { maxBufferedBytes: 100, onClose });
         sender.sendRaw("hello");
         expect(send).not.toHaveBeenCalled();
-        expect(close).toHaveBeenCalledWith(SESSION_CLOSE_CODE.slowConsumer, "Slow consumer");
+        expect(close).toHaveBeenCalledWith(WS_CLOSE_CODE.slowConsumer, "Slow consumer");
         expect(onClose).toHaveBeenCalledOnce();
         expect(warn).toHaveBeenCalledOnce();
 
