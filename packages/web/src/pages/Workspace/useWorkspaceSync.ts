@@ -11,7 +11,7 @@ import {
 } from "@/lib/sync";
 import { showError } from "@/lib/toast";
 import { apiClient as defaultApiClient, type ApiClient } from "@/lib/transport/http";
-import type { SessionSocketConstructor } from "@/lib/transport/session-socket";
+import type { WebSocketConstructor } from "@/lib/transport/websocket";
 import { connectWorkspaceSocket, type WorkspaceSocket } from "@/lib/transport/workspace-socket";
 import { useAuthStore as defaultAuthStore, useWorkspaceStore as defaultWorkspaceStore } from "@/stores";
 import { createCatalogSyncReducer, type CatalogSyncState } from "@/stores/workspace/model";
@@ -25,7 +25,7 @@ export const DEFAULT_MIN_REFRESH_DURATION_MS = 300;
 export interface WorkspaceSyncOptions {
     readonly apiClient?: Pick<ApiClient, "listSessions" | "getAuthStatus"> | undefined;
     readonly workspaceStore?: typeof defaultWorkspaceStore | undefined;
-    readonly WebSocket?: SessionSocketConstructor | undefined;
+    readonly WebSocket?: WebSocketConstructor | undefined;
     readonly reconnectDelaysMs?: readonly number[] | undefined;
     readonly minRefreshDurationMs?: number | undefined;
     readonly authProbeFailureThreshold?: number | undefined;

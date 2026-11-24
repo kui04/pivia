@@ -9,7 +9,7 @@ import {
 } from "@pivia/protocol";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { SessionSocketLike } from "./session-socket";
+import type { WebSocketLike } from "./websocket";
 import { buildWorkspaceSocketUrl, connectWorkspaceSocket } from "./workspace-socket";
 
 function sid(raw: string): SessionId {
@@ -36,7 +36,7 @@ function seq(raw: number): SyncSeq<"catalog"> {
     return parsed;
 }
 
-class FakeWorkspaceSocket implements SessionSocketLike {
+class FakeWorkspaceSocket implements WebSocketLike {
     static instances: FakeWorkspaceSocket[] = [];
 
     readonly url: string;

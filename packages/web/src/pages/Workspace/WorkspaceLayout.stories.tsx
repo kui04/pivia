@@ -14,7 +14,7 @@ import { expect, fn, waitFor, within } from "storybook/test";
 
 import { ToastProvider } from "@/components/Toast/Toast";
 import { toastManager } from "@/lib/toast";
-import type { SessionSocketConstructor, SessionSocketLike } from "@/lib/transport/session-socket";
+import type { WebSocketConstructor, WebSocketLike } from "@/lib/transport/websocket";
 import { createAuthStore, type AuthClient } from "@/stores/auth/store";
 import { createSessionStore } from "@/stores/session/store";
 import { createWorkspaceStore, type WorkspaceCatalogCache } from "@/stores/workspace/store";
@@ -75,7 +75,7 @@ const noopAuthClient: AuthClient = {
  * The layout stories only exercise the shell, so the routed page must not reach a real
  * `/ws/sessions/:id` endpoint or a real HTTP entry request.
  */
-class QuietSessionSocket implements SessionSocketLike {
+class QuietSessionSocket implements WebSocketLike {
     readonly url: string;
     readyState = 0;
     onopen: (() => void) | null = null;
@@ -99,7 +99,7 @@ class QuietSessionSocket implements SessionSocketLike {
 }
 
 interface HarnessSocketController {
-    readonly WebSocket: SessionSocketConstructor;
+    readonly WebSocket: WebSocketConstructor;
     emitMessage: (payload: unknown) => void;
 }
 
@@ -112,7 +112,7 @@ function createFakeWorkspaceSocket(initialSessions: readonly SessionSummary[]): 
         onerror: (() => void) | null;
     }> = [];
 
-    class FakeSocket implements SessionSocketLike {
+    class FakeSocket implements WebSocketLike {
         readyState = 0;
         onopen: (() => void) | null = null;
         onmessage: ((event: MessageEvent) => void) | null = null;

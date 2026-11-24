@@ -16,7 +16,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { IndexedDbAppCache } from "@/lib/cache";
 import { createApiClient, type FetchLike } from "@/lib/transport/http";
-import type { SessionSocketLike } from "@/lib/transport/session-socket";
+import type { WebSocketLike } from "@/lib/transport/websocket";
 
 import { createAppStores } from "./index";
 
@@ -56,7 +56,7 @@ const SESSION_1 = sid("session-1");
 const SESSION_2 = sid("session-2");
 const V152 = ev("3:1.5.2");
 
-class FakeSocket implements SessionSocketLike {
+class FakeSocket implements WebSocketLike {
     static instances: FakeSocket[] = [];
 
     readonly url: string;

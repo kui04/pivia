@@ -65,12 +65,12 @@ const storageBacking = vi.hoisted(() => {
     return entries;
 });
 
-import type { SessionSocketLike } from "@/lib/transport/session-socket";
+import type { WebSocketLike } from "@/lib/transport/websocket";
 import { createWorkspaceStore, type WorkspaceCatalogCache } from "@/stores/workspace/store";
 
 import { createWorkspaceSyncController } from "./useWorkspaceSync";
 
-class FakeWorkspaceSocket implements SessionSocketLike {
+class FakeWorkspaceSocket implements WebSocketLike {
     static instances: FakeWorkspaceSocket[] = [];
 
     readonly url: string;

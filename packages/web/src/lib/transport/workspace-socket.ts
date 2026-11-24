@@ -7,7 +7,7 @@ import {
 
 import { Log } from "@/lib/log";
 
-import type { SessionSocketConstructor, SessionSocketLike } from "./session-socket";
+import { defaultWebSocketConstructor, type WebSocketConstructor, type WebSocketLike } from "./websocket";
 
 /** Lifecycle callbacks for {@link connectWorkspaceSocket}. */
 export interface WorkspaceSocketHandlers {
@@ -21,7 +21,7 @@ export interface WorkspaceSocketHandlers {
 export interface WorkspaceSocketOptions {
     readonly url?: string | undefined;
     readonly cursor?: CatalogCursor | undefined;
-    readonly WebSocket?: SessionSocketConstructor | undefined;
+    readonly WebSocket?: WebSocketConstructor | undefined;
     readonly handlers: WorkspaceSocketHandlers;
 }
 
@@ -42,16 +42,7 @@ export function buildWorkspaceSocketUrl(pageUrl?: string, cursor?: CatalogCursor
     return url.toString();
 }
 
-function defaultSocketConstructor(): SessionSocketConstructor {
-    const constructor = globalThis.WebSocket;
-    if (constructor === undefined) {
-        throw new Error("WebSocket is not available in this environment.");
-    }
-    // Browser WebSocket shares the same surface; the cast narrows DOM event handlers to our interface.
-    return constructor as unknown as SessionSocketConstructor;
-}
-
-function detachHandlers(socket: SessionSocketLike): void {
+function detachHandlers(socket: WebSocketLike): void {
     socket.onopen = null;
     socket.onmessage = null;
     socket.onclose = null;
@@ -63,7 +54,7 @@ function detachHandlers(socket: SessionSocketLike): void {
  * {@link parseWorkspaceWsServerMessage}.
  */
 export function connectWorkspaceSocket(options: WorkspaceSocketOptions): WorkspaceSocket {
-    const SocketImpl = options.WebSocket ?? defaultSocketConstructor();
+    const SocketImpl = options.WebSocket ?? defaultWebSocketConstructor();
     const url = options.url ?? buildWorkspaceSocketUrl(undefined, options.cursor);
     const socket = new SocketImpl(url);
     const { handlers } = options;

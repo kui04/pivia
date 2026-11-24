@@ -22,8 +22,8 @@ import {
     SessionSocketClosedError,
     type SessionRpcResponseMessage,
     type SessionSocketClose,
-    type SessionSocketConstructor,
 } from "@/lib/transport/session-socket";
+import type { WebSocketConstructor } from "@/lib/transport/websocket";
 
 import {
     applyHydratedEntries,
@@ -48,7 +48,7 @@ export interface SessionMemoryCacheEntry {
 
 /** Options for {@link createSessionStore}. */
 export interface SessionStoreOptions {
-    readonly WebSocket?: SessionSocketConstructor | undefined;
+    readonly WebSocket?: WebSocketConstructor | undefined;
     readonly cache?: SessionCache | undefined;
     readonly apiClient: Pick<ApiClient, "getSession">;
     readonly reconnectDelayMs?: number | undefined;

@@ -57,11 +57,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { IndexedDbAppCache } from "@/lib/cache";
 import { ApiClientError, type ApiClient } from "@/lib/transport/http";
-import type { SessionSocketLike } from "@/lib/transport/session-socket";
+import type { WebSocketLike } from "@/lib/transport/websocket";
 
 import { createSessionStore } from "./store";
 
-class FakeSocket implements SessionSocketLike {
+class FakeSocket implements WebSocketLike {
     static instances: FakeSocket[] = [];
 
     readonly url: string;

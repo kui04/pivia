@@ -21,7 +21,7 @@ import { useEffect, useRef, useState, type ReactElement } from "react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { expect, userEvent, waitFor, within } from "storybook/test";
 
-import type { SessionSocketConstructor, SessionSocketLike } from "@/lib/transport/session-socket";
+import type { WebSocketConstructor, WebSocketLike } from "@/lib/transport/websocket";
 import { createSessionStore } from "@/stores/session/store";
 
 import { WorkspacePage } from "./WorkspacePage";
@@ -226,7 +226,7 @@ function assistantMessage(content: AssistantMessage["content"], timestamp: numbe
     };
 }
 
-class StorySessionSocket implements SessionSocketLike {
+class StorySessionSocket implements WebSocketLike {
     readyState = 0;
     onopen: (() => void) | null = null;
     onmessage: ((event: MessageEvent) => void) | null = null;
@@ -257,7 +257,7 @@ class StorySessionSocket implements SessionSocketLike {
 }
 
 function createStorySocket(): {
-    readonly WebSocket: SessionSocketConstructor;
+    readonly WebSocket: WebSocketConstructor;
     latest: () => StorySessionSocket | null;
 } {
     const instances: StorySessionSocket[] = [];

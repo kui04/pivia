@@ -9,7 +9,7 @@ import { copyText } from "@/lib/clipboard";
 import { Log } from "@/lib/log";
 import { showError, showWarning } from "@/lib/toast";
 import { ApiClientError, apiClient as defaultApiClient, type ApiClient } from "@/lib/transport/http";
-import type { SessionSocketConstructor } from "@/lib/transport/session-socket";
+import type { WebSocketConstructor } from "@/lib/transport/websocket";
 import { useAuthStore as defaultAuthStore, useWorkspaceStore as defaultWorkspaceStore } from "@/stores";
 import { buildWorkspaceModel, collectKnownCwds, selectedSession } from "@/stores/workspace/model";
 
@@ -38,7 +38,7 @@ export interface WorkspaceLayoutProps {
     readonly apiClient?: WorkspaceApiClient | undefined;
     readonly workspaceStore?: typeof defaultWorkspaceStore | undefined;
     readonly authStore?: typeof defaultAuthStore | undefined;
-    readonly WebSocket?: SessionSocketConstructor | undefined;
+    readonly WebSocket?: WebSocketConstructor | undefined;
     readonly minRefreshDurationMs?: number | undefined;
 }
 

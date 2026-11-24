@@ -16,6 +16,8 @@ import {
 
 import { Log } from "@/lib/log";
 
+import { defaultWebSocketConstructor, type WebSocketConstructor, type WebSocketLike } from "./websocket";
+
 /** RPC response envelope returned by {@link SessionSocket.sendCommand}. */
 export type SessionRpcResponseMessage = Extract<SessionRpcServerMessage, { readonly type: "rpc:response" }>;
 
@@ -30,20 +32,6 @@ export interface SessionSocketClose {
     readonly wasClean: boolean;
 }
 
-/** The subset of the browser WebSocket that the client uses. */
-export interface SessionSocketLike {
-    readonly readyState: number;
-    send(data: string): void;
-    close(code?: number, reason?: string): void;
-    onopen: (() => void) | null;
-    onmessage: ((event: MessageEvent) => void) | null;
-    onclose: ((event: CloseEvent) => void) | null;
-    onerror: (() => void) | null;
-}
-
-/** Constructor for an injectable WebSocket implementation. */
-export type SessionSocketConstructor = new (url: string) => SessionSocketLike;
-
 /** Options for {@link SessionSocket}. */
 export interface SessionSocketOptions {
     readonly sessionId: SessionId;
@@ -52,7 +40,7 @@ export interface SessionSocketOptions {
     /** Absolute `ws://` or `wss://` URL. Defaults to the current origin and `/ws/sessions/:id`. */
     readonly url?: string | undefined;
     /** WebSocket constructor. Defaults to `globalThis.WebSocket`. */
-    readonly WebSocket?: SessionSocketConstructor | undefined;
+    readonly WebSocket?: WebSocketConstructor | undefined;
     readonly onOpen?: (() => void) | undefined;
     /** Receives decoded Sync lane frames (`sync:*`). */
     readonly onSyncFrame?: ((frame: SessionSyncFrame) => void) | undefined;
@@ -117,15 +105,6 @@ function createCommandId(): string {
     return `command-${String(fallbackCommandId)}`;
 }
 
-function defaultSocketConstructor(): SessionSocketConstructor {
-    const constructor = globalThis.WebSocket;
-    if (constructor === undefined) {
-        throw new Error("WebSocket is not available in this environment.");
-    }
-    // The browser WebSocket has the same members; the cast only narrows the event parameters.
-    return constructor as unknown as SessionSocketConstructor;
-}
-
 /**
  * WebSocket client for one session runtime.
  *
@@ -138,14 +117,14 @@ export class SessionSocket {
     private readonly sessionId: SessionId;
     private readonly handshake: SessionHandshake;
     private readonly url: string | undefined;
-    private readonly socketConstructor: SessionSocketConstructor | undefined;
+    private readonly socketConstructor: WebSocketConstructor | undefined;
     private readonly onOpen: (() => void) | undefined;
     private readonly onSyncFrame: ((frame: SessionSyncFrame) => void) | undefined;
     private readonly onRpcError: ((error: SessionRpcErrorMessage) => void) | undefined;
     private readonly onClose: ((close: SessionSocketClose) => void) | undefined;
     private readonly onError: ((message: string) => void) | undefined;
 
-    private socket: SessionSocketLike | null = null;
+    private socket: WebSocketLike | null = null;
     private closed = false;
     private closeReason: SessionCloseReason | null = null;
     private readonly outbox: string[] = [];
@@ -174,7 +153,7 @@ export class SessionSocket {
             return;
         }
 
-        const constructor = this.socketConstructor ?? defaultSocketConstructor();
+        const constructor = this.socketConstructor ?? defaultWebSocketConstructor();
         const url = this.url ?? buildSessionSocketUrl(this.sessionId, this.handshake);
         const socket = new constructor(url);
         this.socket = socket;

@@ -1,6 +1,6 @@
 import { appCache, type AppCache } from "@/lib/cache";
 import { apiClient as defaultApiClient, type ApiClient } from "@/lib/transport/http";
-import type { SessionSocketConstructor } from "@/lib/transport/session-socket";
+import type { WebSocketConstructor } from "@/lib/transport/websocket";
 
 import { createAuthStore } from "./auth/store";
 import { createSessionStore } from "./session/store";
@@ -10,7 +10,7 @@ import { createWorkspaceStore } from "./workspace/store";
 export interface AppStoresOptions {
     readonly apiClient?: ApiClient | undefined;
     readonly cache?: AppCache | undefined;
-    readonly WebSocket?: SessionSocketConstructor | undefined;
+    readonly WebSocket?: WebSocketConstructor | undefined;
 }
 
 /**

@@ -50,15 +50,10 @@ const SESSION_1 = sid("session-1");
 const RUNTIME_1 = rt("runtime-1");
 const V152 = ev("3:1.5.2");
 
-import {
-    buildSessionSocketUrl,
-    SessionCommandError,
-    SessionSocket,
-    SessionSocketClosedError,
-    type SessionSocketLike,
-} from "./session-socket";
+import { buildSessionSocketUrl, SessionCommandError, SessionSocket, SessionSocketClosedError } from "./session-socket";
+import type { WebSocketLike } from "./websocket";
 
-class FakeSocket implements SessionSocketLike {
+class FakeSocket implements WebSocketLike {
     static instances: FakeSocket[] = [];
 
     readonly url: string;
