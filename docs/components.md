@@ -1,111 +1,38 @@
 # Components
 
-- Before writing a component or any other UI, check the Base UI index at `https://base-ui.com/llms.txt`. If a
-  suitable component or utility exists, wrap that part (`@base-ui/react/<name>`) instead of re-implementing its
-  behaviour.
-- Icons go through `packages/web/src/components/Icon`, not a bare Lucide import. It owns the box, the glyph size and
-  the decorative `aria-hidden`, so icons keep one scale across components. The Checkbox check is the exception: the
-  16px control box is already the container, so it draws a 12px check directly. A lone icon that must start on the
-  same line as a text edge sets `--icon-padding-inline-start: 0` in its own CSS class; only the start padding goes,
-  so the box gets narrower (20px for the default `md` size) and the caller must account for that in the label
-  offset.
-- `LoadingIndicator` wraps Base UI Progress in indeterminate mode (`value={null}`) and renders a circular SVG ring
-  spinner inside `Icon`, so it shares the `sm`, `no-container`, `md`, `lg` and `xl` box and glyph presets. `label`
-  defaults to `"Loading"` for the `progressbar` accessible name unless `aria-labelledby` is provided. Only the active
-  arc group rotates, and the arc keeps a 25% minimum length; a shorter arc collapses into a dot and shimmers at 16px.
-- Compose class names with `cn` from `packages/web/src/lib/cn.ts`. There is no Tailwind, so utility-conflict merging
-  does not apply and `tailwind-merge` would be the wrong tool.
-- `packages/web/src/lib/clipboard.ts` is the only place that writes to the clipboard: `navigator.clipboard.writeText`
-  first, with the deprecated `execCommand` path as the fallback for denied or non-secure contexts.
-- `ScrollArea` wraps Base UI's Scroll Area. Native scrollbars are hidden and 6px custom bars overlay the content, so no
-  scrollbar gutter appears and the content width does not change. The horizontal bar stays visible while content
-  overflows sideways; the vertical bar shows on hover or scroll and hides after the pointer leaves and Base UI's
-  scroll idle timeout (500 ms in 1.9.0). On touch devices the vertical bar stays visible while scrollable and keeps a
-  wider invisible hit area. `CodeBlock`, Markdown tables and display math use it for sideways overflow; do not
-  reintroduce native `overflow-x: auto` there. The viewport is a named group by default; only page-level scrollers (the
-  transcript, the session sidebar and the server directory browser) pass `landmark` to expose a `region`, so repeated
-  commands or notes cannot duplicate a landmark name.
-- `CodeBlock` wraps Shiki with the light-plus and dark-plus themes. `language` picks the grammar; while `streaming` is true the
-  block stays plain, then highlights once the answer ends. The toolbar toggles wrapping and copies the source through
-  `lib/clipboard.ts`; `lineNumbers`, `startLine`, `formatLineNumber` and `copyable` control the gutter and copy action, and
-  `onCopy` runs after a successful write. Diff input keeps its signs in a sticky gutter.
-- `Markdown` renders model output with GFM, KaTeX and single-newline breaks. Fenced code goes through `CodeBlock`;
-  `streaming` keeps those blocks plain until the answer ends. `remarkCurrency` keeps prices such as `$5` from becoming
-  math, while `$x$` and `$$...$$` still render. External links open via `onOpenLink` (opening in a new tab/window) so
-  the active session view never navigates away in place; `#fragment` links scroll smoothly to their target and move
-  focus there. Markdown images go through `Image` and open one message-level `ImageViewer`; the Markdown title
-  becomes the viewer caption. An image inside a link stays static so the link remains valid.
-- `Markdown` is the deliberate exception to the token rule: its CSS module defines a local `--md-*` type scale,
-  spacing and colors for the transcript, so do not pull the UI tokens back into it.
-- `Menu` wraps Base UI Menu. The caller supplies the trigger (usually an `IconButton`); the popup, items
-  and separators carry the overlay styles. Base UI owns keyboard navigation, typeahead, collision handling and
-  focus return. The popup animates from opacity 0 and scale 0.98 with `--motion-duration-effects-fast` and
-  `--motion-easing-standard`; never reintroduce a raw duration or easing. Base UI skips the animation for
-  keyboard activation and dismiss closes. The positioner uses `--z-modal`: a menu inside a dialog or drawer
-  mounts inside that modal's portal, after its viewport, so the shared modal layer keeps it above the panel
-  that contains it; `--z-dropdown` would put it under the scrim.
-- `AlertDialog` wraps Base UI Alert Dialog. The caller supplies an optional trigger, title, optional description and
-  optional body; the component renders the backdrop, centered popup, built-in Cancel and Confirm actions and a
-  destructive variant. Base UI owns the modal focus trap, scroll lock, Escape, focus return and the `alertdialog` role;
-  pointer dismissal is disabled. The dialog closes on either action, so an asynchronous confirmation must control
-  `open` and stop the close in `onOpenChange` until the work finishes.
-- `Dialog` is the base layout shell built on Base UI Dialog. It renders only the backdrop, centered viewport and
-  popup with the shared surface, spacing and motion styles. The caller composes the content from `DialogHeader`,
-  `DialogTitle`, `DialogDescription`, `DialogActions` and `DialogClose`, and owns any `Form` and action buttons. Dialog
-  and AlertDialog import `DialogSurface.module.css` for the shared overlay; `AlertDialog` is the semantic confirmation
-  wrapper with its own actions. Base UI owns the modal focus trap, scroll lock, Escape and focus return.
-- `Drawer` wraps Base UI Drawer as an edge-anchored modal panel (`left`, `right`, or `bottom` bottom sheet), used
-  for the session sidebar and mobile sheets below the column breakpoint. Base UI owns the focus trap, the scroll lock, Escape, focus return and the swipe gesture, and focuses the
-  panel on open, which keeps mobile virtual keyboards closed; a disabled primary action is skipped by the tab order, so
-  the first Tab reaches the first usable control. The panel portals to `document.body`, outside the `#root` safe-area
-  padding, so the viewport adds `env(safe-area-inset-*)` itself and keeps the larger of the safe area and `--kb-inset`
-  at the bottom: while the keyboard is open it covers the home indicator. A bottom sheet also caps its
-  height to the viewport content box and scrolls its form body, so the keyboard inset cannot push the
-  actions off-screen. The portal stays mounted while the drawer is
-  closed, so the content keeps its own state such as search text and scroll position; Base UI hides the panel and the
-  backdrop from the accessibility tree meanwhile. `useInsideDrawer` tells content whether it renders inside the panel, so
-  page-level gestures do not claim the drawer's swipe area.
-- `Field` wraps Base UI Field and supplies the label, description and error for one control. Base UI connects them
-  to the control, tracks validity and exposes `data-invalid`/`data-disabled`. Pass `nativeLabel={false}` when the
-  control is a Select trigger. An explicit `error` marks the field invalid and replaces the native message. The
-  message row appears only when a description or error exists; an explicit error replaces the description in the
-  same row without layout shift while the hidden description keeps the row height. A field with neither reserves no
-  space; a native or explicit error adds the row when it appears. `Field` components must be inside `Form` for submit
-  validation.
-- `Fieldset` wraps Base UI Fieldset. The required legend names the group; a disabled fieldset disables every Field
-  descendant through Base UI's context.
-- `Form` wraps Base UI Form and supplies the vertical field layout. It validates registered Fields on submit, focuses
-  the first invalid control and blocks submission until valid. `errors` carries external field errors and
-  `onFormSubmit` receives the collected values; native `onSubmit` remains available.
-- `Button` wraps Base UI Button and owns the emphasis, the compact default, the larger `lg` type and padding, the
-  radius parameter and the touch target; a coarse primary pointer always gets the 48px height. It keeps Base UI's
-  disabled and `render` behaviour.
-- `Checkbox` wraps Base UI Checkbox. The 16px box draws its 12px check directly, because an `Icon` box would repeat
-  the control box. The label is a native `<label>`, so the text and the box share one hit area; Base UI keeps focus
-  on the visible `role="checkbox"` box, so the document focus rule draws the ring there. A bare checkbox submits
-  through the native form; `Form.onFormSubmit` only collects registered Fields, so use native submission when that
-  value must reach the callback. It is not a `Field`: the label sits beside the control, not above it.
-- `Input` wraps Base UI Input as a bare control. Wrap it in `Field` for the label, description, error and validation
-  wiring; `Input` only owns the text-field styling.
-- `Select` wraps Base UI Select as a bare single-select control. Wrap it in `Field` with `nativeLabel={false}` for
-  the label, description, error and validation wiring. It renders the hidden input for forms, uses `items` for the
-  selected label, and copies the trigger's label reference to the listbox so the open popup keeps the Field label as
-  its accessible name. It defaults to a non-modal popup so it can open inside a Dialog. The popup shares `--z-modal`
-  with the dialog because its portal is appended after the dialog portal; keep that order when changing either layer.
-- `Image` is the presentational image and optional trigger; it never owns viewer state. `ImageViewer` is a
-  controlled single-image dialog built on Base UI Dialog with `react-zoom-pan-pinch` for zoom and pan. The dialog
-  owns focus, scroll lock, Escape and focus return; zoom toolbar actions are immediate, so the dialog is the only
-  timed transition. Its backdrop uses `--color-viewer-backdrop`. Galleries are deliberately out of scope.
-- `Toast` wraps Base UI Toast. `ToastProvider` renders the toast portal, fixed viewport and stack; callers use
-  `useToast` from `useToast.ts` inside it. The viewport defaults to bottom-right and accepts the six logical
-  `position` values; the stack mirrors its vertical side, and swipe directions follow the corner. It shows at most
-  three toasts by default, expands on hover or focus and uses `info`, `success`, `warning` and `error` for semantic
-  status icons. Base UI owns timers, focus, swipe and live-region semantics. A `warning` or an `error` has no default
-  timeout, so it stays until the user dismisses it, while the other types use the provider timeout; an explicit
-  `timeout` on one message always wins. The stack uses Base UI's `--toast-*` variables, which the library writes and
-  this project cannot rename, plus the local `--toast-stack-gap` and `--toast-stack-peek`; motion comes from the
-  token durations and easing, and the viewport uses `--z-toast`. A status icon sits on the close button's 24px line,
-  so both glyphs share one centre, and it keeps only the start padding off so its glyph stays flush with the title.
-  The close button stays visible and actionable at rest; behind toasts hide it while the stack is collapsed so it
-  cannot take focus out of order. The app mounts one provider at the root with the manager from
-  `packages/web/src/lib/toast.ts`, top center, and reports errors and warnings through `showError` and `showWarning`.
+## General Rules
+
+- Check the Base UI index at `https://base-ui.com/llms.txt` before you build new UI. Wrap `@base-ui/react/<name>` when a matching primitive exists instead of re-implementing its behaviour.
+- Base UI owns modal focus trapping, scroll lock, `Escape` handling, focus return, and overlay keyboard navigation across `Menu`, `Dialog`, `AlertDialog`, `Drawer`, `Select`, and `Toast`. Do not re-implement those mechanics in wrappers.
+- Compose class names with `cn` from `packages/web/src/lib/cn.ts`. The app does not use Tailwind, so do not add `tailwind-merge`.
+- Write to the clipboard only through `packages/web/src/lib/clipboard.ts`. It tries `navigator.clipboard.writeText` first and falls back to `execCommand("copy")` in denied or non-secure contexts.
+
+## Primitives and Layout
+
+- **Icon** (`packages/web/src/components/Icon`): Route every icon through `Icon` instead of importing Lucide icons directly. It owns the box, glyph scale, and `aria-hidden`. `Checkbox` is the only exception: its 16px control box draws a 12px check directly. A lone icon aligned to a text edge sets `--icon-padding-inline-start: 0` in its own CSS class; only start padding drops (`24px - 4px = 20px` for `md`), so the caller must account for the narrower box.
+- **LoadingIndicator**: Wraps Base UI Progress (`value={null}`) around an SVG ring inside `Icon`, so it shares `sm`, `no-container`, `md`, `lg`, and `xl` presets. `label` defaults to `"Loading"` unless `aria-labelledby` is set. Only the active arc group rotates, and the arc keeps a 25% minimum length to avoid collapsing at 16px.
+- **ScrollArea**: Wraps Base UI Scroll Area with hidden native scrollbars and 6px overlay bars so content width never shifts. The horizontal bar stays visible while overflowing; the vertical bar appears on hover or scroll and hides after Base UI's idle timeout (500 ms in 1.9.0), or stays visible with a wider invisible hit area on touch devices. `CodeBlock`, Markdown tables, and display math must use `ScrollArea` instead of native `overflow-x: auto`. Only page-level scrollers (transcript, session sidebar, server directory browser) pass `landmark` to expose `role="region"`; repeated blocks keep `role="group"`.
+
+## Overlays and Feedback
+
+- **Menu**: Caller passes the trigger (usually `IconButton`). The popup animates opacity and scale with `--motion-duration-effects-fast` and `--motion-easing-standard`; never use raw durations or easings. Base UI skips animation for keyboard activation and dismiss closes. The positioner uses `--z-modal`: a menu inside a dialog or drawer mounts inside that modal's portal after its viewport so it stays above the scrim (`--z-dropdown` would place it underneath).
+- **Dialog**: Base modal shell built on Base UI Dialog, sharing `DialogSurface.module.css` with `AlertDialog`. Callers compose `DialogHeader`, `DialogTitle`, `DialogDescription`, `DialogActions`, and `DialogClose`, plus any `Form` or buttons.
+- **AlertDialog**: Semantic confirmation shell (`role="alertdialog"`, pointer dismissal disabled) with Cancel, Confirm, and a destructive variant. It closes on either action, so an asynchronous confirmation must control `open` and block closing in `onOpenChange` until the work finishes.
+- **Drawer**: Edge-anchored modal panel (`left`, `right`, or `bottom`) used for the session sidebar and mobile sheets. Base UI focuses the panel on open to keep mobile virtual keyboards closed, and skips disabled primary actions in tab order. The portal mounts to `document.body` outside `#root` safe-area padding, so the viewport adds `env(safe-area-inset-*)` and uses the larger of the bottom safe area and `--kb-inset`. A bottom sheet caps its height to `min(85dvh, 42rem)` plus the bleed; callers with forms (such as `CreateSessionDialog`) override `max-block-size: 100%` on their popup and scroll the form body. The portal uses `keepMounted` so closed content preserves search and scroll state. Use `useInsideDrawer` to prevent page-level gestures from claiming the swipe area.
+- **Toast**: `ToastProvider` mounts once at the app root (`packages/web/src/main.tsx`, top center) with the shared manager from `packages/web/src/lib/toast.ts`. Do not mount a second provider; report errors and warnings through `showError` and `showWarning`. `useToast` from `useToast.ts` uses `info`, `success`, `warning`, and `error` status icons; `warning` and `error` default to persistent (`timeout: 0`) unless an explicit `timeout` is passed. Stack variables use `--toast-stack-*` so they do not collide with Base UI's `--toast-*` variables, and collapsed back toasts hide their close button to protect tab order.
+
+## Forms
+
+- **Form**: Wraps Base UI Form for vertical layout, submit validation, focusing the first invalid control, and external `errors`. `onFormSubmit` receives values from registered `Field` controls; native `onSubmit` remains available.
+- **Fieldset**: Wraps Base UI Fieldset with a required `legend`. Disabling it disables all `Field` descendants through Base UI context.
+- **Field**: Connects `label`, `description`, and `error` to one control and exposes `data-invalid` / `data-disabled`. Pass `nativeLabel={false}` for button triggers such as `Select`. An explicit `error` marks the field invalid and replaces `description` without layout shift while the hidden description preserves row height; fields without either reserve no message row. `Field` must live inside `Form` for submit validation.
+- **Button**: Owns `variant`, `size`, `radius`, and a 48px minimum height on coarse primary pointers while preserving Base UI `disabled` and `render` behaviour.
+- **Input**: Bare text-field styling over Base UI Input. Always wrap in `Field` when a label, description, or validation error is needed.
+- **Select**: Bare single-select control over Base UI Select. Wrap in `Field` with `nativeLabel={false}`. Uses `items` for selected labels, copies the trigger's `aria-labelledby` to the listbox, defaults to `modal={false}` so it works inside `Dialog`, and uses `--z-modal` (its portal must stay ordered after the dialog portal).
+- **Checkbox**: Renders a native `<label>` beside a 16px box with a direct 12px check. Focus stays on the visible `role="checkbox"` element. Because it is not a `Field`, `Form.onFormSubmit` does not collect it; use native form submission when needed.
+
+## Rich Content and Media
+
+- **CodeBlock**: Wraps Shiki (`light-plus` / `dark-plus`) and keeps `streaming` blocks plain until complete. Diff input keeps signs in a sticky gutter. Toolbar wraps lines and copies via `lib/clipboard.ts`.
+- **Markdown**: Renders model output with GFM, KaTeX, and single-newline breaks, routing fenced code to `CodeBlock`, tables and display math to `ScrollArea`, and images to `Image` + one message-level `ImageViewer` (images inside links stay static). `remarkCurrency` prevents prices such as `$5` from parsing as math while preserving `$x$` and `$$...$$`. External links open via `onOpenLink` so the session never navigates away; `#fragment` links scroll smoothly and move focus. `Markdown.module.css` is the deliberate exception to UI tokens and owns local `--md-*` scales and colors; do not replace them with global UI tokens.
+- **Image & ImageViewer**: `Image` is presentational (plus optional trigger) and owns no viewer state. `ImageViewer` is a controlled single-image dialog with `react-zoom-pan-pinch`, `--color-viewer-backdrop`, and immediate zoom controls (only the dialog transition is timed). Multi-image galleries are out of scope.

@@ -50,8 +50,9 @@
     --color-on-secondary-container: var(--color-on-surface);
 
     /*
-     * Tertiary is the one purple accent: skill invocation headers use it so the row reads apart
-     * from thinking and note rows. It keeps at least 4.5:1 against the surface in both themes.
+     * Tertiary is the one purple accent: skill invocation headers, extension message headers, and
+     * non-failed `!!` command borders use it to stand apart from neutral rows. It keeps at least
+     * 4.5:1 against the surface in both themes.
      */
     --color-tertiary: light-dark(#6750a4, #d0bcff);
 
