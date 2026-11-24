@@ -29,6 +29,8 @@ const bashStep: TranscriptToolCallStep = {
     status: "done",
     output: longBashOutput,
     images: [],
+    preview: { kind: "none" },
+    warnings: [],
     timing: { kind: "static", durationMs: 120 },
 };
 
@@ -43,6 +45,8 @@ const runningStep: TranscriptToolCallStep = {
     status: "running",
     output: Array.from({ length: 18 }, (_, index) => `RUN test suite ${index + 1}...`).join("\n"),
     images: [],
+    preview: { kind: "none" },
+    warnings: [],
     timing: { kind: "since", startedAtMs: Date.now() - 1_500 },
 };
 
@@ -57,6 +61,8 @@ const errorStep: TranscriptToolCallStep = {
     status: "error",
     output: "Error: Target text was not found in src/App.tsx",
     images: [],
+    preview: { kind: "none" },
+    warnings: [],
     timing: { kind: "static", durationMs: 42 },
 };
 
@@ -193,6 +199,117 @@ export const ErrorResult: Story = {
         const trigger = canvas.getByRole("button", { name: /Edit/ });
         await expect(trigger).toHaveAttribute("data-status", "error");
         await expect(canvas.getByText(/Target text was not found/)).toBeVisible();
+    },
+};
+
+export const EditDiff: Story = {
+    args: {
+        step: {
+            kind: "toolCall",
+            id: "tool-edit-diff",
+            toolKind: "edit",
+            label: "Edit",
+            summary: "src/App.tsx",
+            arguments: { path: "src/App.tsx" },
+            argumentsError: null,
+            status: "done",
+            output: "Successfully replaced 1 block(s) in src/App.tsx.",
+            images: [],
+            preview: {
+                kind: "diff",
+                diff: "--- a/src/App.tsx\n+++ b/src/App.tsx\n@@ -10,3 +10,3 @@\n const title = 'old';\n-const count = 1;\n+const count = 2;\n export { title, count };",
+            },
+            warnings: [],
+            timing: { kind: "static", durationMs: 80 },
+        },
+        defaultOpen: true,
+    },
+    play: async ({ canvasElement, args }) => {
+        const canvas = within(canvasElement);
+        await expect(canvas.getByText("diff")).toBeVisible();
+        await expect(canvas.getByText("const count = 1;")).toBeVisible();
+        await expect(canvas.getByText("const count = 2;")).toBeVisible();
+
+        const writeText = spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+        try {
+            await userEvent.click(canvas.getByRole("button", { name: "Copy code" }));
+            await waitFor(async () => {
+                await expect(canvas.getByRole("status")).toHaveTextContent("Copied");
+            });
+            await expect(args.onCopy).toHaveBeenCalled();
+        } finally {
+            writeText.mockRestore();
+        }
+    },
+};
+
+export const WriteCodePreview: Story = {
+    args: {
+        step: {
+            kind: "toolCall",
+            id: "tool-write-code",
+            toolKind: "write",
+            label: "Write",
+            summary: "src/helper.ts",
+            arguments: {
+                path: "src/helper.ts",
+                content: "export function greet(name: string): string {\n    return `Hello, ${name}`;\n}\n",
+            },
+            argumentsError: null,
+            status: "done",
+            output: "Successfully wrote to src/helper.ts",
+            images: [],
+            preview: {
+                kind: "code",
+                code: "export function greet(name: string): string {\n    return `Hello, ${name}`;\n}",
+                language: "typescript",
+                startLine: 1,
+            },
+            warnings: [],
+            timing: { kind: "static", durationMs: 65 },
+        },
+        defaultOpen: true,
+    },
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+        await expect(canvas.getByText("typescript")).toBeVisible();
+        await expect(canvas.getByText(/Hello, \$\{name\}/)).toBeVisible();
+        await expect(canvas.queryByText("Successfully wrote to src/helper.ts")).not.toBeInTheDocument();
+    },
+};
+
+export const ReadWithWarnings: Story = {
+    args: {
+        step: {
+            kind: "toolCall",
+            id: "tool-read-warn",
+            toolKind: "read",
+            label: "Read",
+            summary: "src/store.ts:15-17",
+            arguments: { path: "src/store.ts", offset: 15, limit: 3 },
+            argumentsError: null,
+            status: "done",
+            output: "const first = 1;\nconst second = 2;\nconst third = 3;",
+            images: [],
+            preview: {
+                kind: "code",
+                code: "const first = 1;\nconst second = 2;\nconst third = 3;",
+                language: "typescript",
+                startLine: 15,
+            },
+            warnings: [
+                { kind: "fullOutput", path: "/tmp/pi-read-full.log" },
+                { kind: "notice", message: "Truncated: showing 3 of 2500 lines (2000 line limit)" },
+            ],
+            timing: { kind: "static", durationMs: 35 },
+        },
+        defaultOpen: true,
+    },
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+        await expect(canvas.getByText("src/store.ts:15-17")).toBeVisible();
+        await expect(canvas.getByText("/tmp/pi-read-full.log")).toBeVisible();
+        await expect(canvas.getByText(/Truncated: showing 3 of 2500 lines/)).toBeVisible();
     },
 };
 

@@ -4,28 +4,37 @@
  * The nesting this file styles:
  *
  *   .root
- *   ├─ .trigger                  button row: tool icon, name, summary, elapsed timer, chevron
- *   │   ├─ .name                 accented tool label, in the error colour for a failed call
- *   │   ├─ .summary              single-line truncated summary of the primary arguments
- *   │   └─ .duration             formatted elapsed time while running and after completion
- *   └─ .collapse                 animated 0fr -> 1fr grid container (data-open)
- *       └─ .collapseInner        overflow hidden and inert while closed
- *           └─ .body             2-column grid aligning the rail under the icon and the card under the label
- *               ├─ .rail         vertical guide line
- *               └─ .card         surface container holding the toolbar, status and output
- *                   ├─ .toolbar  top-right wrap and copy IconButtons
- *                   ├─ .status   visually hidden copy status announcement
- *                   ├─ .output   monospace output block (data-wrapped, data-muted)
- *                   ├─ .errorNote  inline argument parse error text
- *                   └─ .images   image thumbnails emitted by the tool
+ *   ├─ .trigger                      button row: tool icon, name, summary, elapsed timer, chevron
+ *   │   ├─ .name                     accented tool label, in the error colour for a failed call
+ *   │   ├─ .summary                  single-line truncated summary of the primary arguments
+ *   │   └─ .duration                 formatted elapsed time while running and after completion
+ *   └─ .collapse                     animated 0fr -> 1fr grid container (data-open)
+ *       └─ .collapseInner            overflow hidden and inert while closed
+ *           └─ .body                 2-column grid aligning the rail under the icon and detail under the label
+ *               ├─ .rail             vertical guide line
+ *               ├─ .previewStack     rich CodeBlock preview with optional warnings and images
+ *               │   └─ .previewNotices
+ *               ├─ .card             surface container holding the toolbar, status, output and notices
+ *               │   ├─ .toolbar      top-right wrap and copy IconButtons
+ *               │   ├─ .status       visually hidden copy status announcement
+ *               │   ├─ .output       monospace output block (data-wrapped, data-muted)
+ *               │   ├─ .errorNote    margin spacing inside the card scroll area
+ *               │   ├─ .images       margin spacing inside the card scroll area
+ *               │   └─ .notices      top divider when placed inside .card
+ *               ├─ .errorNote        inline argument parse error text (shared across .previewStack and .card)
+ *               ├─ .images           image thumbnails emitted by the tool (shared across .previewStack and .card)
+ *               └─ .notices          truncation and full-output path notices (shared across .previewNotices and .card)
+ *                   └─ .notice
  *
  * Classes passed to child components stay top-level so CSS Modules keep one class of specificity:
  *
  *   .icon
  *   .iconError
- *   .chevron                     rotates 90deg when data-open="true"
+ *   .chevron                         rotates 90deg when data-open="true"
  *   .scroll
- *   .viewport                    bounded scroller with top and bottom mask fades
+ *   .viewport                        bounded scroller with top and bottom mask fades
+ *   .previewScroll                   vertical cap passed to CodeBlock ScrollArea
+ *   .previewViewport                 vertical cap passed to CodeBlock ScrollArea viewport
  *   .fadeTop
  *   .fadeBottom
  *   .content
@@ -141,6 +150,22 @@
                 transform: scaleX(0.5);
             }
 
+            .previewStack {
+                grid-column: 2;
+                display: flex;
+                flex-direction: column;
+                gap: var(--space-8);
+                min-inline-size: 0;
+                margin-block: var(--space-4) var(--space-8);
+
+                .previewNotices {
+                    overflow: hidden;
+                    border: var(--border-width) solid var(--color-outline-variant);
+                    border-radius: var(--shape-corner-small);
+                    background-color: var(--color-surface-container);
+                }
+            }
+
             .card {
                 position: relative;
                 grid-column: 2;
@@ -209,21 +234,53 @@
                 }
 
                 .errorNote {
-                    margin: 0 0 var(--space-8);
-                    color: var(--color-error);
-                    font-family: var(--font-mono);
-                    font-size: var(--type-label-medium-size);
-                    letter-spacing: var(--type-label-medium-tracking);
-                    line-height: var(--type-body-medium-line-height);
-                    white-space: pre-wrap;
-                    overflow-wrap: anywhere;
+                    margin-block-end: var(--space-8);
                 }
 
                 .images {
-                    display: flex;
-                    flex-wrap: wrap;
-                    gap: var(--space-8);
                     margin-block-start: var(--space-8);
+                }
+
+                .notices {
+                    border-block-start: var(--border-width) solid var(--color-outline-variant);
+                }
+            }
+
+            .errorNote {
+                margin: 0;
+                color: var(--color-error);
+                font-family: var(--font-mono);
+                font-size: var(--type-label-medium-size);
+                letter-spacing: var(--type-label-medium-tracking);
+                line-height: var(--type-body-medium-line-height);
+                white-space: pre-wrap;
+                overflow-wrap: anywhere;
+            }
+
+            .images {
+                display: flex;
+                flex-wrap: wrap;
+                gap: var(--space-8);
+            }
+
+            .notices {
+                display: flex;
+                flex-direction: column;
+                gap: var(--space-2);
+                padding: var(--space-8) var(--space-12);
+
+                .notice {
+                    margin: 0;
+                    color: var(--color-on-surface-variant);
+                    font-size: var(--type-label-medium-size);
+                    letter-spacing: var(--type-label-medium-tracking);
+                    line-height: var(--type-body-medium-line-height);
+                    overflow-wrap: anywhere;
+
+                    code {
+                        color: var(--color-on-surface);
+                        font-family: var(--font-mono);
+                    }
                 }
             }
         }
@@ -260,7 +317,8 @@
     }
 }
 
-.scroll {
+.scroll,
+.previewScroll {
     min-inline-size: 0;
     max-block-size: calc(var(--space-64) * 3.5);
 }
@@ -269,12 +327,16 @@
  * scroll-padding-block matches the fade, so a keyboard-focused image inside the output never stops
  * partially faded under an edge.
  */
+.viewport,
+.previewViewport {
+    max-block-size: calc(var(--space-64) * 3.5);
+}
+
 .viewport {
     --fade-size: var(--space-24);
     --fade-top: black;
     --fade-bottom: black;
 
-    max-block-size: calc(var(--space-64) * 3.5);
     scroll-padding-block: var(--fade-size);
     -webkit-mask-image: linear-gradient(
         to bottom,

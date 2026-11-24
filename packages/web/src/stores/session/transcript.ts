@@ -1,11 +1,22 @@
 import type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
 import type { ParsedSkillBlock } from "@earendil-works/pi-coding-agent";
-import { isImageContent, isRecord, type StrictOmit } from "@pivia/protocol";
+import { isFiniteNumber, isImageContent, isRecord, type StrictOmit } from "@pivia/protocol";
 
 import { stripAnsi } from "@/lib/ansi";
 
 import type { ProjectedTranscriptItem } from "./projection";
 import { parseSkillBlock } from "./skill-block";
+import {
+    buildToolPresentation,
+    formatReadLineRangeSummary,
+    readOptionalPositiveNumber,
+    readToolFilePath,
+    type TranscriptToolArguments,
+    type TranscriptToolKind,
+    type TranscriptToolPreview,
+    type TranscriptToolStatus,
+    type TranscriptToolWarning,
+} from "./tool-details";
 
 function ignoreUnknownVariant(value: never): void {
     // Compile-time exhaustiveness check over the Pi SDK union; unknown variants from a newer
@@ -13,14 +24,13 @@ function ignoreUnknownVariant(value: never): void {
     void value;
 }
 
-/**
- * The Pi built-in tools that receive dedicated icons and argument summaries in the transcript.
- *
- * Every extension or MCP tool falls back to `generic`, so a custom ecosystem never splinters into
- * inconsistent row layouts.
- */
-export type TranscriptToolKind =
-    "bash" | "powershell" | "read" | "write" | "edit" | "grep" | "find" | "ls" | "codemode" | "tool_search" | "generic";
+export type {
+    TranscriptToolArguments,
+    TranscriptToolKind,
+    TranscriptToolPreview,
+    TranscriptToolStatus,
+    TranscriptToolWarning,
+};
 
 type ProjectedEntryItem = Extract<ProjectedTranscriptItem, { kind: "entry" }>;
 type SessionEntry = ProjectedEntryItem["entry"];
@@ -32,14 +42,6 @@ type ToolResultEntryMessage = MessageOf<"toolResult">;
 type BashExecutionRecord = MessageOf<"bashExecution">;
 type CustomMessageEntry = EntryOf<"custom_message">;
 type EditableContent = NonNullable<ProjectedEntryItem["editedContent"]>;
-
-/**
- * Tool arguments as they reached the view.
- *
- * Session parsing only checks the message envelope, so the values stay unknown and every reader
- * narrows them again. A caller must not assume any key exists.
- */
-export type TranscriptToolArguments = Readonly<Record<string, unknown>>;
 
 /** Display metadata extracted for one tool call header row. */
 export type TranscriptToolMeta = {
@@ -77,9 +79,11 @@ export type TranscriptToolCallStep = TranscriptToolMeta & {
     readonly id: string;
     readonly arguments: TranscriptToolArguments;
     readonly argumentsError: string | null;
-    readonly status: "running" | "done" | "error";
+    readonly status: TranscriptToolStatus;
     readonly output: string;
     readonly images: readonly ImageContent[];
+    readonly preview: TranscriptToolPreview;
+    readonly warnings: readonly TranscriptToolWarning[];
     readonly timing: TranscriptTiming;
 };
 
@@ -256,6 +260,7 @@ type ViewToolResultMessage = {
     readonly role: "toolResult";
     readonly toolCallId: string;
     readonly content: readonly ToolResultBlock[];
+    readonly details: unknown;
     readonly isError: boolean;
     readonly timestamp: number;
     readonly durationMs: number | null;
@@ -276,12 +281,12 @@ type AssistantTurnMessage = {
 
 /** A timestamp is only useful when it is finite; a broken one must not poison ids or durations. */
 function toTimestamp(value: unknown): number {
-    return typeof value === "number" && Number.isFinite(value) ? value : 0;
+    return isFiniteNumber(value) ? value : 0;
 }
 
 /** A duration is only useful when it is a finite, non-negative number. */
 function toDuration(value: unknown): number | null {
-    return typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : null;
+    return isFiniteNumber(value) ? Math.max(0, value) : null;
 }
 
 function collapseWhitespace(value: string): string {
@@ -336,6 +341,19 @@ function isBuiltinTool(name: string): name is Exclude<TranscriptToolKind, "gener
     return Object.prototype.hasOwnProperty.call(BUILTIN_TOOL_LABELS, name);
 }
 
+function formatSearchSummary(args: TranscriptToolArguments, extraQualifier?: string): string {
+    const pattern = stringArg(args, "pattern");
+    const path = stringArg(args, "path");
+    const base = pattern !== "" && path !== "" ? `${pattern} in ${path}` : pattern !== "" ? pattern : path;
+    if (base === "") {
+        return "";
+    }
+    const limit = readOptionalPositiveNumber(args.limit);
+    const qualifierSuffix = extraQualifier !== undefined && extraQualifier !== "" ? ` (${extraQualifier})` : "";
+    const limitSuffix = limit !== undefined ? ` (limit ${limit})` : "";
+    return `${base}${qualifierSuffix}${limitSuffix}`;
+}
+
 /**
  * Classifies one tool call and extracts a single-line primary argument summary for its header row.
  *
@@ -351,28 +369,33 @@ export function describeToolCall(name: string, args: TranscriptToolArguments): T
 
     switch (name) {
         case "bash":
-        case "powershell":
-            summary = stringArg(args, "command");
-            break;
-        case "read":
-        case "write":
-        case "edit":
-            summary = stringArg(args, "path");
-            break;
-        case "grep":
-        case "find": {
-            const pattern = stringArg(args, "pattern");
-            const path = stringArg(args, "path");
-            if (pattern !== "" && path !== "") {
-                summary = `${pattern} in ${path}`;
-            } else {
-                summary = pattern !== "" ? pattern : path;
-            }
+        case "powershell": {
+            const command = stringArg(args, "command");
+            const timeout = readOptionalPositiveNumber(args.timeout);
+            summary = timeout !== undefined && command !== "" ? `${command} (timeout ${timeout}s)` : command;
             break;
         }
+        case "read": {
+            const path = readToolFilePath(args) ?? "";
+            const range = formatReadLineRangeSummary(args.offset, args.limit);
+            summary = path !== "" ? `${path}${range}` : "";
+            break;
+        }
+        case "write":
+        case "edit":
+            summary = readToolFilePath(args) ?? "";
+            break;
+        case "grep":
+            summary = formatSearchSummary(args, stringArg(args, "glob"));
+            break;
+        case "find":
+            summary = formatSearchSummary(args);
+            break;
         case "ls": {
             const path = stringArg(args, "path");
-            summary = path !== "" ? path : ".";
+            const limit = readOptionalPositiveNumber(args.limit);
+            const base = path !== "" ? path : ".";
+            summary = limit !== undefined ? `${base} (limit ${limit})` : base;
             break;
         }
         case "codemode":
@@ -520,6 +543,7 @@ function readToolResultMessage(
         role: "toolResult",
         toolCallId: typeof message.toolCallId === "string" ? message.toolCallId : "",
         content: toToolResultBlocks(editedContent ?? message.content),
+        details: message.details,
         isError: message.isError === true,
         timestamp: toTimestamp(message.timestamp),
         durationMs: toDuration(message.durationMs),
@@ -539,8 +563,7 @@ function readBashStatus(cancelled: boolean, exitCode: number | null): Transcript
 
 /** Read one persisted `!` command record; output keeps its text, loses terminal escapes and uses LF. */
 function readBashItem(entryId: string, message: BashExecutionRecord): TranscriptBashItem {
-    const exitCode =
-        typeof message.exitCode === "number" && Number.isFinite(message.exitCode) ? message.exitCode : null;
+    const exitCode = isFiniteNumber(message.exitCode) ? message.exitCode : null;
     const fullOutputPath =
         typeof message.fullOutputPath === "string" && message.fullOutputPath !== "" ? message.fullOutputPath : null;
     return {
@@ -761,6 +784,16 @@ function buildTurnItem(
                 }
                 seenToolIds.add(stepId);
 
+                const presentation = buildToolPresentation({
+                    toolKind: meta.toolKind,
+                    args: block.arguments,
+                    argumentsError: block.argumentsError,
+                    status,
+                    output,
+                    hasImages: images.length > 0,
+                    details: result?.details,
+                });
+
                 steps.push({
                     kind: "toolCall",
                     id: stepId,
@@ -770,6 +803,8 @@ function buildTurnItem(
                     status,
                     output,
                     images,
+                    preview: presentation.preview,
+                    warnings: presentation.warnings,
                     timing:
                         status === "running"
                             ? { kind: "since", startedAtMs: assistant.timestamp }

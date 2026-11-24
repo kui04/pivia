@@ -304,8 +304,115 @@ describe("buildTranscript", () => {
             summary: "git status",
             status: "done",
             output: "clean",
+            preview: { kind: "none" },
+            warnings: [],
             timing: { kind: "static", durationMs: 1_000 },
         });
+    });
+
+    it("attaches edit diff previews, write code previews, read previews and tool truncation warnings", () => {
+        const items = buildTranscript(
+            project([
+                userEntry("m1", null, "Update files", 1_000),
+                assistantEntry(
+                    "m2",
+                    "m1",
+                    [
+                        { type: "toolCall", id: "call-edit", name: "edit", arguments: { path: "src/App.tsx" } },
+                        {
+                            type: "toolCall",
+                            id: "call-write",
+                            name: "write",
+                            arguments: { path: "src/new.ts", content: "export const x = 1;\n" },
+                        },
+                        {
+                            type: "toolCall",
+                            id: "call-bash",
+                            name: "bash",
+                            arguments: { command: "cat big.log" },
+                        },
+                    ],
+                    { timestamp: 1_500, stopReason: "toolUse" },
+                ),
+                {
+                    type: "message",
+                    id: "m3",
+                    parentId: "m2",
+                    timestamp: "2026-04-01T00:00:02.000Z",
+                    message: {
+                        role: "toolResult",
+                        toolCallId: "call-edit",
+                        toolName: "edit",
+                        content: [{ type: "text", text: "Successfully replaced 1 block(s) in src/App.tsx." }],
+                        details: {
+                            diff: "-1 const a = 1;\n+1 const a = 2;",
+                            patch: "--- a/src/App.tsx\n+++ b/src/App.tsx\n@@ -1 +1 @@\n-const a = 1;\n+const a = 2;",
+                        },
+                        isError: false,
+                        timestamp: 2_000,
+                    },
+                },
+                {
+                    type: "message",
+                    id: "m4",
+                    parentId: "m3",
+                    timestamp: "2026-04-01T00:00:02.100Z",
+                    message: {
+                        role: "toolResult",
+                        toolCallId: "call-write",
+                        toolName: "write",
+                        content: [{ type: "text", text: "Successfully wrote to src/new.ts" }],
+                        isError: false,
+                        timestamp: 2_100,
+                    },
+                },
+                {
+                    type: "message",
+                    id: "m5",
+                    parentId: "m4",
+                    timestamp: "2026-04-01T00:00:02.200Z",
+                    message: {
+                        role: "toolResult",
+                        toolCallId: "call-bash",
+                        toolName: "bash",
+                        content: [{ type: "text", text: "tail output" }],
+                        details: {
+                            fullOutputPath: "/tmp/bash-full.log",
+                            truncation: {
+                                content: "tail output",
+                                truncated: true,
+                                truncatedBy: "lines",
+                                totalLines: 5000,
+                                totalBytes: 80_000,
+                                outputLines: 2000,
+                                outputBytes: 30_000,
+                                lastLinePartial: false,
+                                firstLineExceedsLimit: false,
+                                maxLines: 2000,
+                                maxBytes: 50 * 1024,
+                            },
+                        },
+                        isError: false,
+                        timestamp: 2_200,
+                    },
+                },
+            ]),
+        );
+
+        expect(toolStepOf(items, 1, 0).preview).toEqual({
+            kind: "diff",
+            diff: "--- a/src/App.tsx\n+++ b/src/App.tsx\n@@ -1 +1 @@\n-const a = 1;\n+const a = 2;",
+        });
+        expect(toolStepOf(items, 1, 1).preview).toEqual({
+            kind: "code",
+            code: "export const x = 1;",
+            language: "typescript",
+            startLine: 1,
+        });
+        expect(toolStepOf(items, 1, 2).warnings).toEqual([
+            { kind: "fullOutput", path: "/tmp/bash-full.log" },
+            { kind: "notice", message: "Truncated: showing 2000 of 5000 lines" },
+        ]);
     });
 
     it("prefers context_edit replacement content over the stored entry content", () => {
@@ -1122,6 +1229,34 @@ describe("describeToolCall", () => {
             toolKind: "tool_search",
             label: "Tool search",
             summary: "github pull request",
+        });
+    });
+
+    it("includes line ranges, timeouts, globs, limits and legacy file_path in summaries", () => {
+        expect(describeToolCall("read", { file_path: "src/App.tsx", offset: 10, limit: 25 })).toEqual({
+            toolKind: "read",
+            label: "Read",
+            summary: "src/App.tsx:10-34",
+        });
+        expect(describeToolCall("bash", { command: "pnpm test", timeout: 30 })).toEqual({
+            toolKind: "bash",
+            label: "Bash",
+            summary: "pnpm test (timeout 30s)",
+        });
+        expect(describeToolCall("grep", { pattern: "foo", path: "src", glob: "*.ts", limit: 20 })).toEqual({
+            toolKind: "grep",
+            label: "Grep",
+            summary: "foo in src (*.ts) (limit 20)",
+        });
+        expect(describeToolCall("find", { pattern: "*.css", path: "src", limit: 50 })).toEqual({
+            toolKind: "find",
+            label: "Find",
+            summary: "*.css in src (limit 50)",
+        });
+        expect(describeToolCall("ls", { path: "packages", limit: 10 })).toEqual({
+            toolKind: "ls",
+            label: "Ls",
+            summary: "packages (limit 10)",
         });
     });
 

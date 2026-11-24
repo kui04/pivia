@@ -38,6 +38,10 @@ export type CodeBlockProps = {
     copyable?: boolean;
     /** Called after the clipboard write succeeds. */
     onCopy?: (code: string) => void;
+    /** Optional class name passed to the inner ScrollArea root (for vertical sizing). */
+    scrollClassName?: string | undefined;
+    /** Optional class name passed to the inner ScrollArea viewport. */
+    viewportClassName?: string | undefined;
     className?: string | undefined;
 };
 
@@ -51,6 +55,8 @@ export function CodeBlock({
     formatLineNumber,
     copyable = true,
     onCopy,
+    scrollClassName,
+    viewportClassName,
     className,
 }: CodeBlockProps) {
     const [wrapped, setWrapped] = useState(defaultWrap);
@@ -149,7 +155,11 @@ export function CodeBlock({
                     ) : null}
                 </div>
             </div>
-            <ScrollArea label={language === undefined ? "Code" : `${language} code`}>
+            <ScrollArea
+                label={language === undefined ? "Code" : `${language} code`}
+                className={scrollClassName}
+                viewportClassName={viewportClassName}
+            >
                 <pre
                     className={cn(styles.pre, wrapped && styles.wrapped)}
                     data-gutter={hasGutter || undefined}
