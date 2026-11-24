@@ -53,8 +53,8 @@ import { createWorkspaceStore, type WorkspaceCatalogCache } from "./store";
 
 function noopCache(): WorkspaceCatalogCache {
     return {
-        getWorkspaceCatalog: () => Promise.resolve(null),
-        putWorkspaceCatalog: () => Promise.resolve(),
+        get: () => Promise.resolve(null),
+        put: () => Promise.resolve(),
     };
 }
 
@@ -101,10 +101,10 @@ describe("createWorkspaceStore", () => {
     });
 
     it("commits synced catalog snapshot, persists cache when requested, and reconciles selection and pins", () => {
-        const putWorkspaceCatalog = vi.fn(() => Promise.resolve());
+        const put = vi.fn(() => Promise.resolve());
         const cache: WorkspaceCatalogCache = {
-            getWorkspaceCatalog: vi.fn(() => Promise.resolve(null)),
-            putWorkspaceCatalog,
+            get: vi.fn(() => Promise.resolve(null)),
+            put,
         };
         const workspace = createWorkspaceStore({ cache });
         const store = workspace.getState();
@@ -127,7 +127,7 @@ describe("createWorkspaceStore", () => {
         expect(state.sync).toEqual({ kind: "live" });
         expect(state.pins).toEqual([LIVE]);
         expect(state.selectedId).toBeNull();
-        expect(putWorkspaceCatalog).toHaveBeenCalledWith(liveSessions, 42_000);
+        expect(put).toHaveBeenCalledWith({ sessions: liveSessions, updatedAtMs: 42_000 });
     });
 
     it("keeps the last rows and selection when a sync fails", () => {
@@ -295,10 +295,8 @@ describe("createWorkspaceStore", () => {
 
     it("hydrates stale-while-revalidate catalog rows from cache only before the first live sync", async () => {
         const fakeCache: WorkspaceCatalogCache = {
-            getWorkspaceCatalog: vi.fn(() =>
-                Promise.resolve({ key: "default" as const, sessions: [summary(CACHED)], updatedAtMs: 5_000 }),
-            ),
-            putWorkspaceCatalog: vi.fn(() => Promise.resolve()),
+            get: vi.fn(() => Promise.resolve({ sessions: [summary(CACHED)], updatedAtMs: 5_000 })),
+            put: vi.fn(() => Promise.resolve()),
         };
         const workspace = createWorkspaceStore({ cache: fakeCache });
         await workspace.getState().hydrateCatalog();
@@ -329,6 +327,38 @@ describe("createWorkspaceStore", () => {
         });
 
         expect(warnSpy).toHaveBeenCalledTimes(1);
+        warnSpy.mockRestore();
+    });
+
+    it("skips cache writes when persistCache is false or updatedAtMs is null, and tolerates null or failing hydrateCatalog", async () => {
+        const warnSpy = vi.spyOn(Log, "warn").mockImplementation(() => {});
+        const put = vi.fn(() => Promise.resolve());
+        const get = vi
+            .fn<WorkspaceCatalogCache["get"]>()
+            .mockResolvedValueOnce(null)
+            .mockRejectedValueOnce(new Error("read failed"));
+        const workspace = createWorkspaceStore({ cache: { get, put } });
+
+        await workspace.getState().hydrateCatalog();
+        expect(workspace.getState().sessions).toEqual([]);
+
+        await workspace.getState().hydrateCatalog();
+        expect(workspace.getState().sessions).toEqual([]);
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+
+        workspace.getState().commitSyncedCatalog({
+            sessions: [summary(A)],
+            updatedAtMs: 1_000,
+            sync: { kind: "live" },
+        });
+        workspace.getState().commitSyncedCatalog({
+            sessions: [summary(A)],
+            updatedAtMs: null,
+            sync: { kind: "live" },
+            persistCache: true,
+        });
+        expect(put).not.toHaveBeenCalled();
+
         warnSpy.mockRestore();
     });
 });

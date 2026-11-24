@@ -1,4 +1,4 @@
-import { sessionCache, type SessionCacheStore } from "@/lib/cache/session-cache";
+import { appCache, type AppCache } from "@/lib/cache";
 import { apiClient as defaultApiClient, type ApiClient } from "@/lib/transport/http";
 import type { SessionSocketConstructor } from "@/lib/transport/session-socket";
 
@@ -9,7 +9,7 @@ import { createWorkspaceStore } from "./workspace/store";
 /** Dependencies required to compose and wire the application stores. */
 export interface AppStoresOptions {
     readonly apiClient?: ApiClient | undefined;
-    readonly cache?: SessionCacheStore | undefined;
+    readonly cache?: AppCache | undefined;
     readonly WebSocket?: SessionSocketConstructor | undefined;
 }
 
@@ -23,12 +23,12 @@ export interface AppStoresOptions {
  */
 export function createAppStores(options: AppStoresOptions = {}) {
     const client = options.apiClient ?? defaultApiClient;
-    const cache = options.cache ?? sessionCache;
+    const cache = options.cache ?? appCache;
 
-    const useWorkspaceStore = createWorkspaceStore({ cache });
+    const useWorkspaceStore = createWorkspaceStore({ cache: cache.catalog });
 
     const useSessionStore = createSessionStore({
-        cache,
+        cache: cache.sessions,
         apiClient: client,
         ...(options.WebSocket === undefined ? {} : { WebSocket: options.WebSocket }),
         onSessionMissing: (sessionId) => {

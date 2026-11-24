@@ -14,7 +14,7 @@ import {
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { IndexedDbSessionCache } from "@/lib/cache/session-cache";
+import { IndexedDbAppCache } from "@/lib/cache";
 import { createApiClient, type FetchLike } from "@/lib/transport/http";
 import type { SessionSocketLike } from "@/lib/transport/session-socket";
 
@@ -134,8 +134,8 @@ function requestUrl(input: RequestInfo | URL): string {
     return typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
 }
 
-function createTestCache(): IndexedDbSessionCache {
-    return new IndexedDbSessionCache({
+function createTestCache(): IndexedDbAppCache {
+    return new IndexedDbAppCache({
         indexedDB: new IDBFactory(),
         keyRange: IDBKeyRange,
     });

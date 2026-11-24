@@ -1,7 +1,7 @@
 import type { AuthLoginResponse, AuthLogoutResponse, AuthStatusResponse } from "@pivia/protocol";
 import { create } from "zustand";
 
-import type { SessionCacheStore } from "@/lib/cache/session-cache";
+import type { ClearableCache } from "@/lib/cache";
 import { Log } from "@/lib/log";
 import { ApiClientError } from "@/lib/transport/http";
 
@@ -78,6 +78,12 @@ function retryAfterOf(error: unknown): number | null {
     return error instanceof ApiClientError ? (error.retryAfterSeconds ?? null) : null;
 }
 
+/** Optional cache-clearing hooks invoked synchronously/asynchronously on logout and 401. */
+export interface AuthStoreHooks {
+    readonly cache?: ClearableCache | undefined;
+    readonly onClearSessionMemory?: (() => void) | undefined;
+}
+
 /**
  * Creates the single-host auth store.
  *
@@ -86,12 +92,6 @@ function retryAfterOf(error: unknown): number | null {
  * message, which lets the layout offer a retry instead of showing the password gate for a network
  * failure.
  */
-/** Optional cache-clearing hooks invoked synchronously/asynchronously on logout and 401. */
-export interface AuthStoreHooks {
-    readonly cache?: SessionCacheStore | undefined;
-    readonly onClearSessionMemory?: (() => void) | undefined;
-}
-
 export function createAuthStore(client: AuthClient, hooks: AuthStoreHooks = {}) {
     let statusRequest: Promise<void> | null = null;
 

@@ -2,10 +2,12 @@ import { isRecord, parseSessionId, type CatalogDelta, type SessionId, type Sessi
 import { create } from "zustand";
 import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
 
-import type { SessionCacheStore } from "@/lib/cache/session-cache";
+import type { WorkspaceCatalogCache } from "@/lib/cache";
 import { Log } from "@/lib/log";
 
 import { createCatalogSyncReducer, type CatalogSyncPhase } from "./model";
+
+export type { WorkspaceCatalogCache } from "@/lib/cache";
 
 /** One in-memory storage so a browser context that denies localStorage still runs. */
 const FALLBACK_STORAGE = new Map<string, string>();
@@ -81,9 +83,6 @@ export interface WorkspaceState {
     /** Working directories whose rows are hidden. */
     readonly collapsed: readonly string[];
 }
-
-/** Subset of {@link SessionCacheStore} required by the workspace catalog store. */
-export type WorkspaceCatalogCache = Pick<SessionCacheStore, "getWorkspaceCatalog" | "putWorkspaceCatalog">;
 
 /** Dependencies injected when creating a workspace store instance. */
 export interface WorkspaceStoreOptions {
@@ -178,7 +177,13 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}) {
                     if (cache === undefined) {
                         return;
                     }
-                    const cached = await cache.getWorkspaceCatalog();
+                    let cached;
+                    try {
+                        cached = await cache.get();
+                    } catch (error) {
+                        Log.warn("Failed to hydrate workspace catalog cache", error);
+                        return;
+                    }
                     if (cached === null) {
                         return;
                     }
@@ -194,9 +199,6 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}) {
                 commitSyncedCatalog: ({ sessions, updatedAtMs, sync, persistCache }) => {
                     const cache = persistCache ? resolveCache() : undefined;
                     set((state) => {
-                        if (cache !== undefined && updatedAtMs !== null) {
-                            void cache.putWorkspaceCatalog(sessions, updatedAtMs);
-                        }
                         const ids = new Set(sessions.map((session) => session.id));
                         return {
                             sessions,
@@ -208,6 +210,11 @@ export function createWorkspaceStore(options: WorkspaceStoreOptions = {}) {
                                 state.selectedId !== null && ids.has(state.selectedId) ? state.selectedId : null,
                         };
                     });
+                    if (cache !== undefined && updatedAtMs !== null) {
+                        void cache.put({ sessions, updatedAtMs }).catch((error: unknown) => {
+                            Log.warn("Failed to persist workspace catalog cache", error);
+                        });
+                    }
                 },
                 setSync: (sync) =>
                     set((state) => {

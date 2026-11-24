@@ -158,10 +158,8 @@ describe("createWorkspaceSyncController", () => {
 
     it("hydrates IndexedDB cache on start and applies live snapshot and incremental events", async () => {
         const cache: WorkspaceCatalogCache = {
-            getWorkspaceCatalog: vi.fn(() =>
-                Promise.resolve({ key: "default" as const, sessions: [summary(CACHED)], updatedAtMs: 500 }),
-            ),
-            putWorkspaceCatalog: vi.fn(() => Promise.resolve()),
+            get: vi.fn(() => Promise.resolve({ sessions: [summary(CACHED)], updatedAtMs: 500 })),
+            put: vi.fn(() => Promise.resolve()),
         };
         const workspaceStore = createWorkspaceStore({ cache });
         const controller = createWorkspaceSyncController({
@@ -237,8 +235,8 @@ describe("createWorkspaceSyncController", () => {
     it("reconnects with backoff on unexpected close and reconnects immediately on visibility change", async () => {
         const workspaceStore = createWorkspaceStore({
             cache: {
-                getWorkspaceCatalog: () => Promise.resolve(null),
-                putWorkspaceCatalog: () => Promise.resolve(),
+                get: () => Promise.resolve(null),
+                put: () => Promise.resolve(),
             },
         });
         const controller = createWorkspaceSyncController({
@@ -286,8 +284,8 @@ describe("createWorkspaceSyncController", () => {
     it("enforces single-flight manual refresh, reconnects if disconnected, and notifies on failure", async () => {
         const workspaceStore = createWorkspaceStore({
             cache: {
-                getWorkspaceCatalog: () => Promise.resolve(null),
-                putWorkspaceCatalog: () => Promise.resolve(),
+                get: () => Promise.resolve(null),
+                put: () => Promise.resolve(),
             },
         });
         let resolveRefresh: ((value: SessionListResponse) => void) | undefined;
@@ -350,8 +348,8 @@ describe("createWorkspaceSyncController", () => {
     it("ignores late refresh responses after stop", async () => {
         const workspaceStore = createWorkspaceStore({
             cache: {
-                getWorkspaceCatalog: () => Promise.resolve(null),
-                putWorkspaceCatalog: () => Promise.resolve(),
+                get: () => Promise.resolve(null),
+                put: () => Promise.resolve(),
             },
         });
         let resolveRefresh: ((value: SessionListResponse) => void) | undefined;
@@ -385,8 +383,8 @@ describe("createWorkspaceSyncController", () => {
     it("keeps syncing phase active for minRefreshDurationMs when refresh settles quickly", async () => {
         const workspaceStore = createWorkspaceStore({
             cache: {
-                getWorkspaceCatalog: () => Promise.resolve(null),
-                putWorkspaceCatalog: () => Promise.resolve(),
+                get: () => Promise.resolve(null),
+                put: () => Promise.resolve(),
             },
         });
         const controller = createWorkspaceSyncController({
@@ -422,8 +420,8 @@ describe("createWorkspaceSyncController", () => {
     it("probes auth status after repeated close failures and triggers unauthorized when expired", async () => {
         const workspaceStore = createWorkspaceStore({
             cache: {
-                getWorkspaceCatalog: () => Promise.resolve(null),
-                putWorkspaceCatalog: () => Promise.resolve(),
+                get: () => Promise.resolve(null),
+                put: () => Promise.resolve(),
             },
         });
         const getAuthStatus = vi.fn(() => Promise.resolve({ authRequired: true, authenticated: false }));
@@ -459,8 +457,8 @@ describe("createWorkspaceSyncController", () => {
     it("keeps the reconnected socket live when an older auth probe settles later", async () => {
         const workspaceStore = createWorkspaceStore({
             cache: {
-                getWorkspaceCatalog: () => Promise.resolve(null),
-                putWorkspaceCatalog: () => Promise.resolve(),
+                get: () => Promise.resolve(null),
+                put: () => Promise.resolve(),
             },
         });
         let resolveAuth: ((status: AuthStatusResponse) => void) | undefined;
@@ -510,11 +508,11 @@ describe("createWorkspaceSyncController", () => {
     });
 
     it("merges newer WS patches onto an older in-flight HTTP refresh before updating store and cache", async () => {
-        const putWorkspaceCatalog = vi.fn(() => Promise.resolve());
+        const put = vi.fn(() => Promise.resolve());
         const workspaceStore = createWorkspaceStore({
             cache: {
-                getWorkspaceCatalog: () => Promise.resolve(null),
-                putWorkspaceCatalog,
+                get: () => Promise.resolve(null),
+                put,
             },
         });
         let resolveRefresh: ((value: SessionListResponse) => void) | undefined;
@@ -545,7 +543,7 @@ describe("createWorkspaceSyncController", () => {
                 updatedAtMs: 1_000,
             },
         });
-        putWorkspaceCatalog.mockClear();
+        put.mockClear();
 
         // Start manual refresh while server snapshot is still at seq 10.
         controller.refresh();
@@ -580,8 +578,8 @@ describe("createWorkspaceSyncController", () => {
         ];
         expect(workspaceStore.getState().sync).toEqual({ kind: "live" });
         expect(workspaceStore.getState().sessions).toEqual(expectedMerged);
-        expect(putWorkspaceCatalog).toHaveBeenCalledTimes(1);
-        expect(putWorkspaceCatalog).toHaveBeenCalledWith(expectedMerged, 2_010);
+        expect(put).toHaveBeenCalledTimes(1);
+        expect(put).toHaveBeenCalledWith({ sessions: expectedMerged, updatedAtMs: 2_010 });
 
         controller.stop();
     });
@@ -589,8 +587,8 @@ describe("createWorkspaceSyncController", () => {
     it("resumes with cursor handshake and resets cursor when server requests resync", async () => {
         const workspaceStore = createWorkspaceStore({
             cache: {
-                getWorkspaceCatalog: () => Promise.resolve(null),
-                putWorkspaceCatalog: () => Promise.resolve(),
+                get: () => Promise.resolve(null),
+                put: () => Promise.resolve(),
             },
         });
         const controller = createWorkspaceSyncController({
@@ -650,8 +648,8 @@ describe("createWorkspaceSyncController", () => {
     it("exits syncing cleanly back to live when a manual refresh is superseded by a newer WS snapshot", async () => {
         const workspaceStore = createWorkspaceStore({
             cache: {
-                getWorkspaceCatalog: () => Promise.resolve(null),
-                putWorkspaceCatalog: () => Promise.resolve(),
+                get: () => Promise.resolve(null),
+                put: () => Promise.resolve(),
             },
         });
         const listSessions = vi.fn<() => Promise<SessionListResponse>>(() =>

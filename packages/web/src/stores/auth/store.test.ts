@@ -1,6 +1,7 @@
 import type { AuthStatusResponse } from "@pivia/protocol";
 import { describe, expect, it, vi } from "vitest";
 
+import { Log } from "@/lib/log";
 import { ApiClientError } from "@/lib/transport/http";
 
 import { createAuthStore, formatRateLimitMessage, initialAuthState, type AuthClient } from "./store";
@@ -239,7 +240,7 @@ describe("createAuthStore", () => {
         const clearAll = vi.fn(() => Promise.resolve());
         const onClearSessionMemory = vi.fn();
         const store = createAuthStore(authClient(), {
-            cache: { clearAll } as never,
+            cache: { clearAll },
             onClearSessionMemory,
         });
 
@@ -252,5 +253,30 @@ describe("createAuthStore", () => {
         store.getState().markUnauthorized();
         expect(onClearSessionMemory).toHaveBeenCalledTimes(2);
         expect(clearAll).toHaveBeenCalledTimes(2);
+    });
+
+    it("still transitions to unauthenticated and logs warnings if cache clearing throws or rejects", async () => {
+        const warnSpy = vi.spyOn(Log, "warn").mockImplementation(() => {});
+        const store = createAuthStore(authClient(), {
+            cache: {
+                clearAll: vi.fn(() => Promise.reject(new Error("IDB failure"))),
+            },
+            onClearSessionMemory: () => {
+                throw new Error("Memory clear failure");
+            },
+        });
+
+        await store.getState().login("secret");
+        await store.getState().logout();
+        expect(store.getState().phase).toBe("unauthenticated");
+
+        await store.getState().login("secret");
+        store.getState().markUnauthorized();
+        expect(store.getState().phase).toBe("unauthenticated");
+
+        await vi.waitFor(() => {
+            expect(warnSpy).toHaveBeenCalledTimes(4);
+        });
+        warnSpy.mockRestore();
     });
 });

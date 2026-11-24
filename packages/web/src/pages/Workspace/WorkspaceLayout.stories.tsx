@@ -59,8 +59,8 @@ function summary(id: SessionId, overrides: Partial<SessionSummary> = {}): Sessio
 }
 
 const noopCache: WorkspaceCatalogCache = {
-    getWorkspaceCatalog: () => Promise.resolve(null),
-    putWorkspaceCatalog: () => Promise.resolve(),
+    get: () => Promise.resolve(null),
+    put: () => Promise.resolve(),
 };
 
 const noopAuthClient: AuthClient = {

@@ -13,7 +13,7 @@ import {
 } from "@pivia/protocol";
 import { create } from "zustand";
 
-import type { SessionCacheStore } from "@/lib/cache/session-cache";
+import type { SessionCache } from "@/lib/cache";
 import { Log } from "@/lib/log";
 import { createReconnectController, type ReconnectController, SyncStreamClient } from "@/lib/sync";
 import { ApiClientError, type ApiClient } from "@/lib/transport/http";
@@ -49,8 +49,7 @@ export interface SessionMemoryCacheEntry {
 /** Options for {@link createSessionStore}. */
 export interface SessionStoreOptions {
     readonly WebSocket?: SessionSocketConstructor | undefined;
-    readonly cache?:
-        Pick<SessionCacheStore, "getSession" | "appendEntries" | "replaceEntries" | "deleteSession"> | undefined;
+    readonly cache?: SessionCache | undefined;
     readonly apiClient: Pick<ApiClient, "getSession">;
     readonly reconnectDelayMs?: number | undefined;
     readonly maxReconnectAttempts?: number | undefined;
@@ -181,7 +180,7 @@ export function createSessionStore(options: SessionStoreOptions) {
         const evictMissingSession = (sessionId: SessionId): void => {
             memoryLru.delete(sessionId);
             if (cache !== undefined) {
-                void cache.deleteSession(sessionId);
+                void cache.delete(sessionId);
             }
             onSessionMissing?.(sessionId);
         };
@@ -522,7 +521,7 @@ export function createSessionStore(options: SessionStoreOptions) {
             }
 
             void cache
-                .getSession(sessionId)
+                .get(sessionId)
                 .catch((error: unknown) => {
                     Log.warn("Failed to hydrate session from IndexedDB", error);
                     return null;

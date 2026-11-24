@@ -55,7 +55,7 @@ const V152 = ev("3:1.5.2");
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { IndexedDbSessionCache } from "@/lib/cache/session-cache";
+import { IndexedDbAppCache } from "@/lib/cache";
 import { ApiClientError, type ApiClient } from "@/lib/transport/http";
 import type { SessionSocketLike } from "@/lib/transport/session-socket";
 
@@ -407,7 +407,7 @@ describe("createSessionStore", () => {
     });
 
     it("hydrates from IndexedDB and memory LRU on session switch A -> B -> A with Tier 2 anchors only", async () => {
-        const cache = new IndexedDbSessionCache({ indexedDB: new IDBFactory(), keyRange: IDBKeyRange });
+        const cache = new IndexedDbAppCache({ indexedDB: new IDBFactory(), keyRange: IDBKeyRange });
         const headerEntry: FileEntry = {
             type: "session",
             version: 3,
@@ -422,9 +422,9 @@ describe("createSessionStore", () => {
             timestamp: "2026-04-01T00:00:01.000Z",
             message: { role: "user", content: "from idb", timestamp: 1 },
         };
-        await cache.replaceEntries(SESSION_A, V152, [headerEntry, msgEntry]);
+        await cache.sessions.replaceEntries(SESSION_A, V152, [headerEntry, msgEntry]);
 
-        const store = createSessionStore({ WebSocket: FakeSocket, cache, apiClient: stubApiClient });
+        const store = createSessionStore({ WebSocket: FakeSocket, cache: cache.sessions, apiClient: stubApiClient });
         store.getState().connect(SESSION_A);
 
         // Wait for async IndexedDB read to complete and open WS with prefix anchors.
@@ -466,7 +466,7 @@ describe("createSessionStore", () => {
     });
 
     it("loads oversized sessions via HTTP, retries transient errors, and evicts on 404/4404", async () => {
-        const cache = new IndexedDbSessionCache({ indexedDB: new IDBFactory(), keyRange: IDBKeyRange });
+        const cache = new IndexedDbAppCache({ indexedDB: new IDBFactory(), keyRange: IDBKeyRange });
         const headerEntry: FileEntry = {
             type: "session",
             version: 3,
@@ -499,7 +499,7 @@ describe("createSessionStore", () => {
 
         const store = createSessionStore({
             WebSocket: FakeSocket,
-            cache,
+            cache: cache.sessions,
             apiClient,
             retryDelaysMs: [0],
             onSessionMissing,
@@ -529,12 +529,12 @@ describe("createSessionStore", () => {
         });
         expect(getSession).toHaveBeenCalledTimes(2);
         expect(store.getState().entries.map((entry) => entry.id)).toEqual(["session-big"]);
-        expect((await cache.getSession(SESSION_BIG))?.entries).toHaveLength(1);
+        expect((await cache.sessions.get(SESSION_BIG))?.entries).toHaveLength(1);
 
         // Server closing with 4404 evicts IndexedDB cache and notifies workspace store.
         sock.serverClose(SESSION_CLOSE_CODE.sessionNotFound, "Session not found");
         await vi.waitFor(async () => {
-            expect(await cache.getSession(SESSION_BIG)).toBeNull();
+            expect(await cache.sessions.get(SESSION_BIG)).toBeNull();
         });
         expect(onSessionMissing).toHaveBeenCalledWith(SESSION_BIG);
     });
