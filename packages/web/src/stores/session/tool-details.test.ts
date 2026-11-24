@@ -3,12 +3,16 @@ import { describe, expect, it } from "vitest";
 import {
     buildToolPresentation,
     formatByteSize,
+    formatNestedCallDuration,
     formatReadLineRangeSummary,
+    formatUsdCost,
     inferLanguageFromPath,
+    parseCodemodeToolDetails,
     parseEditToolDetails,
     parseFindToolDetails,
     parseGrepToolDetails,
     parseLsToolDetails,
+    parseNestedToolCalls,
     parseReadToolDetails,
     parseShellToolDetails,
     parseTruncationResult,
@@ -394,5 +398,185 @@ describe("buildToolPresentation", () => {
             details: { fullOutputPath: "/tmp/mcp-out.txt" },
         });
         expect(generic.warnings).toEqual([{ kind: "fullOutput", path: "/tmp/mcp-out.txt" }]);
+    });
+
+    it("parses CodemodeToolDetails and NestedToolCalls and formats cost and duration", () => {
+        expect(
+            parseCodemodeToolDetails({
+                calls: [
+                    {
+                        id: "c1/1",
+                        name: "read",
+                        args: '{"path":"a.ts"}',
+                        status: "ok",
+                        durationMs: 12,
+                        cost: 0.00123,
+                    },
+                    {
+                        id: "c1/2",
+                        name: "bash",
+                        args: '{"command":"ls"}',
+                        status: "error",
+                        error: "exit 1",
+                    },
+                ],
+                fullOutputPath: "/tmp/cm.log",
+            }),
+        ).toEqual({
+            calls: [
+                {
+                    id: "c1/1",
+                    name: "read",
+                    args: '{"path":"a.ts"}',
+                    status: "ok",
+                    durationMs: 12,
+                    cost: 0.00123,
+                },
+                {
+                    id: "c1/2",
+                    name: "bash",
+                    args: '{"command":"ls"}',
+                    status: "error",
+                    error: "exit 1",
+                },
+            ],
+            fullOutputPath: "/tmp/cm.log",
+        });
+        expect(parseCodemodeToolDetails({ calls: "bad" })).toBeNull();
+
+        expect(
+            parseNestedToolCalls({
+                calls: [
+                    {
+                        id: "t/1",
+                        name: "custom_fetch",
+                        arguments: { url: "https://example.com" },
+                        status: "ok",
+                        durationMs: 240,
+                    },
+                    {
+                        id: "t/2",
+                        name: "custom_heavy",
+                        argumentsBytes: 12_288,
+                        status: "unfinished",
+                    },
+                ],
+                complete: false,
+            }),
+        ).toEqual({
+            calls: [
+                {
+                    id: "t/1",
+                    name: "custom_fetch",
+                    arguments: { url: "https://example.com" },
+                    status: "ok",
+                    durationMs: 240,
+                },
+                {
+                    id: "t/2",
+                    name: "custom_heavy",
+                    argumentsBytes: 12_288,
+                    status: "unfinished",
+                },
+            ],
+            complete: false,
+        });
+        expect(parseNestedToolCalls({ calls: [], complete: "no" })).toBeNull();
+
+        expect(formatNestedCallDuration(12.4)).toBe("12ms");
+        expect(formatNestedCallDuration(999.6)).toBe("1.0s");
+        expect(formatNestedCallDuration(1420)).toBe("1.4s");
+        expect(formatUsdCost(0.000456)).toBe("$0.00046");
+        expect(formatUsdCost(0.025)).toBe("$0.03");
+    });
+
+    it("builds javascript script preview, strips header, and summarizes nested calls without duplication", () => {
+        const cm = buildToolPresentation({
+            toolKind: "codemode",
+            args: { code: "const files = await tools.find({ pattern: '*.ts' });\nreturn files;\n" },
+            argumentsError: null,
+            status: "done",
+            output: "Script completed\nWall time 0.12 seconds\nOutput:\nsrc/a.ts\n",
+            hasImages: false,
+            details: {
+                calls: [
+                    { id: "cm/1", name: "find", args: '{"pattern":"*.ts"}', status: "ok", durationMs: 14, cost: 0.002 },
+                    { id: "cm/2", name: "models.classify", args: "{}", status: "ok", durationMs: 320, cost: 0.003 },
+                ],
+                fullOutputPath: "/tmp/codemode-full.log",
+            },
+            nestedCalls: {
+                calls: [{ id: "cm/1", name: "find", arguments: { pattern: "*.ts" }, status: "ok" }],
+                complete: false,
+            },
+        });
+        expect(cm.preview).toEqual({
+            kind: "script",
+            code: "const files = await tools.find({ pattern: '*.ts' });\nreturn files;",
+            language: "javascript",
+        });
+        expect(cm.output).toBe("src/a.ts");
+        expect(cm.warnings).toEqual([{ kind: "fullOutput", path: "/tmp/codemode-full.log" }]);
+        expect(cm.nestedCalls).toEqual({
+            calls: [
+                {
+                    id: "cm/1",
+                    name: "find",
+                    args: '{"pattern":"*.ts"}',
+                    status: "ok",
+                    durationMs: 14,
+                    error: null,
+                    cost: 0.002,
+                },
+                {
+                    id: "cm/2",
+                    name: "models.classify",
+                    args: "{}",
+                    status: "ok",
+                    durationMs: 320,
+                    error: null,
+                    cost: 0.003,
+                },
+            ],
+            complete: false,
+            totalCost: 0.005,
+        });
+
+        const fallbackTool = buildToolPresentation({
+            toolKind: "generic",
+            args: {},
+            argumentsError: null,
+            status: "done",
+            output: "ok",
+            hasImages: false,
+            details: undefined,
+            nestedCalls: {
+                calls: [
+                    {
+                        id: "g/1",
+                        name: "write",
+                        argumentsBytes: 12_288,
+                        status: "error",
+                        error: "Permission denied",
+                    },
+                ],
+                complete: false,
+            },
+        });
+        expect(fallbackTool.nestedCalls).toEqual({
+            calls: [
+                {
+                    id: "g/1",
+                    name: "write",
+                    args: "(12.0KB args)",
+                    status: "error",
+                    durationMs: null,
+                    error: "Permission denied",
+                    cost: null,
+                },
+            ],
+            complete: false,
+            totalCost: null,
+        });
     });
 });

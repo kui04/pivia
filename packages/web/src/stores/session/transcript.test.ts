@@ -1006,6 +1006,94 @@ describe("buildTranscript", () => {
         expect(turn.finalReply).toBeNull();
         expect(turn.steps.map((step) => step.kind)).toEqual(["reply", "toolCall"]);
     });
+
+    it("projects codemode script preview, stripped output header, and nested calls", () => {
+        const items = buildTranscript(
+            project([
+                userEntry("m1", null, "Run codemode check", 1_000),
+                assistantEntry(
+                    "m2",
+                    "m1",
+                    [
+                        {
+                            type: "toolCall",
+                            id: "cm-1",
+                            name: "codemode",
+                            arguments: { code: "const files = await tools.find({ pattern: '*.ts' });\nreturn files;" },
+                        },
+                    ],
+                    { timestamp: 1_200, stopReason: "toolUse" },
+                ),
+                {
+                    type: "message",
+                    id: "m3",
+                    parentId: "m2",
+                    timestamp: "2026-04-01T00:00:01.600Z",
+                    message: {
+                        role: "toolResult",
+                        toolCallId: "cm-1",
+                        toolName: "codemode",
+                        content: [
+                            { type: "text", text: "Script completed\nWall time 0.40 seconds\nOutput:\nsrc/a.ts" },
+                        ],
+                        details: {
+                            calls: [
+                                {
+                                    id: "cm-1/1",
+                                    name: "find",
+                                    args: '{"pattern":"*.ts"}',
+                                    status: "ok",
+                                    durationMs: 18,
+                                },
+                                {
+                                    id: "cm-1/2",
+                                    name: "models.classify",
+                                    args: "{}",
+                                    status: "ok",
+                                    durationMs: 120,
+                                    cost: 0.002,
+                                },
+                                {
+                                    id: "cm-1/3",
+                                    name: "models.classify",
+                                    args: "{}",
+                                    status: "ok",
+                                    durationMs: 140,
+                                    cost: 0.004,
+                                },
+                            ],
+                        },
+                        nestedCalls: {
+                            calls: [{ id: "cm-1/1", name: "find", arguments: { pattern: "*.ts" }, status: "ok" }],
+                            complete: true,
+                        },
+                        isError: false,
+                        timestamp: 1_600,
+                    },
+                },
+                assistantEntry("m4", "m3", [{ type: "text", text: "Done." }], { timestamp: 2_000 }),
+            ]),
+        );
+
+        expect(toolStepOf(items, 1, 0)).toMatchObject({
+            toolKind: "codemode",
+            output: "src/a.ts",
+            preview: {
+                kind: "script",
+                code: "const files = await tools.find({ pattern: '*.ts' });\nreturn files;",
+                language: "javascript",
+            },
+            nestedCalls: {
+                complete: true,
+                totalCost: 0.006,
+                calls: [
+                    { id: "cm-1/1", name: "find", status: "ok", durationMs: 18 },
+                    { id: "cm-1/2", name: "models.classify", status: "ok", durationMs: 120, cost: 0.002 },
+                    { id: "cm-1/3", name: "models.classify", status: "ok", durationMs: 140, cost: 0.004 },
+                ],
+            },
+        });
+    });
 });
 
 describe("buildTranscript boundary handling", () => {

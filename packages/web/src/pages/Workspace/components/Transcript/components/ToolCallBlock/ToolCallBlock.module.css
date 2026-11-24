@@ -12,15 +12,26 @@
  *       └─ .collapseInner            overflow hidden and inert while closed
  *           └─ .body                 2-column grid aligning the rail under the icon and detail under the label
  *               ├─ .rail             vertical guide line
- *               ├─ .previewStack     rich CodeBlock preview with optional warnings and images
- *               │   └─ .previewNotices
- *               ├─ .card             surface container holding the toolbar, status, output and notices
+ *               ├─ .previewStack     vertical stack for preview CodeBlock, nested calls, notices, card
+ *               │   ├─ .previewNotices
+ *               │   ├─ .nestedCalls  nested tool call list container with optional footer
+ *               │   │   ├─ .nestedCallList
+ *               │   │   │   └─ .nestedCallItem
+ *               │   │   │       ├─ .nestedCallRow
+ *               │   │   │       │   ├─ .nestedCallName
+ *               │   │   │       │   ├─ .nestedCallArgs
+ *               │   │   │       │   └─ .nestedCallMeta
+ *               │   │   │       └─ .nestedCallError
+ *               │   │   └─ .nestedCallsFooter
+ *               │   │       └─ .nestedCallsNote
+ *               │   └─ .card         resets margin-block when nested in .previewStack
+ *               ├─ .card             surface container holding the toolbar, output and notices
  *               │   ├─ .toolbar      top-right wrap and copy IconButtons
- *               │   ├─ .status       visually hidden copy status announcement
  *               │   ├─ .output       monospace output block (data-wrapped, data-muted)
  *               │   ├─ .errorNote    margin spacing inside the card scroll area
  *               │   ├─ .images       margin spacing inside the card scroll area
  *               │   └─ .notices      top divider when placed inside .card
+ *               ├─ .status           visually hidden status text (shared across .card and .nestedCallRow)
  *               ├─ .errorNote        inline argument parse error text (shared across .previewStack and .card)
  *               ├─ .images           image thumbnails emitted by the tool (shared across .previewStack and .card)
  *               └─ .notices          truncation and full-output path notices (shared across .previewNotices and .card)
@@ -30,11 +41,15 @@
  *
  *   .icon
  *   .iconError
+ *   .nestedCallIcon                  status icon inside .nestedCallRow (data-status)
  *   .chevron                         rotates 90deg when data-open="true"
  *   .scroll
  *   .viewport                        bounded scroller with top and bottom mask fades
  *   .previewScroll                   vertical cap passed to CodeBlock ScrollArea
  *   .previewViewport                 vertical cap passed to CodeBlock ScrollArea viewport
+ *   .nestedCallsScroll
+ *   .nestedCallsViewport
+ *   .nestedCallsContent
  *   .fadeTop
  *   .fadeBottom
  *   .content
@@ -164,6 +179,109 @@
                     border-radius: var(--shape-corner-small);
                     background-color: var(--color-surface-container);
                 }
+
+                .nestedCalls {
+                    overflow: hidden;
+                    border: var(--border-width) solid var(--color-outline-variant);
+                    border-radius: var(--shape-corner-small);
+                    background-color: var(--color-surface-container);
+
+                    .nestedCallList {
+                        display: flex;
+                        flex-direction: column;
+                        gap: var(--space-4);
+                        margin: 0;
+                        padding: 0;
+                        list-style: none;
+
+                        .nestedCallItem {
+                            display: flex;
+                            flex-direction: column;
+                            gap: var(--space-2);
+                            min-inline-size: 0;
+
+                            .nestedCallRow {
+                                position: relative;
+                                display: flex;
+                                align-items: center;
+                                gap: var(--space-8);
+                                min-inline-size: 0;
+
+                                .nestedCallName {
+                                    flex: none;
+                                    color: var(--color-on-surface);
+                                    font-family: var(--font-mono);
+                                    font-size: var(--type-label-medium-size);
+                                    font-weight: var(--font-weight-medium);
+                                    letter-spacing: var(--type-label-medium-tracking);
+                                    line-height: var(--type-label-medium-line-height);
+                                }
+
+                                .nestedCallArgs {
+                                    flex: 1;
+                                    min-inline-size: 0;
+                                    overflow: hidden;
+                                    color: var(--color-on-surface-variant);
+                                    font-family: var(--font-mono);
+                                    font-size: var(--type-label-medium-size);
+                                    letter-spacing: var(--type-label-medium-tracking);
+                                    line-height: var(--type-label-medium-line-height);
+                                    text-overflow: ellipsis;
+                                    white-space: nowrap;
+                                }
+
+                                .nestedCallName + .nestedCallMeta {
+                                    margin-inline-start: auto;
+                                }
+
+                                .nestedCallMeta {
+                                    flex: none;
+                                    color: var(--color-on-surface-variant);
+                                    font-family: var(--font-mono);
+                                    font-size: var(--type-label-medium-size);
+                                    font-variant-numeric: tabular-nums;
+                                    letter-spacing: var(--type-label-medium-tracking);
+                                    line-height: var(--type-label-medium-line-height);
+                                }
+                            }
+
+                            .nestedCallError {
+                                margin: 0;
+                                padding-inline-start: var(--space-24);
+                                color: var(--color-error);
+                                font-family: var(--font-mono);
+                                font-size: var(--type-label-medium-size);
+                                letter-spacing: var(--type-label-medium-tracking);
+                                line-height: var(--type-body-medium-line-height);
+                                white-space: pre-wrap;
+                                overflow-wrap: anywhere;
+                            }
+                        }
+                    }
+
+                    .nestedCallsFooter {
+                        display: flex;
+                        flex-direction: column;
+                        gap: var(--space-2);
+                        padding: var(--space-6) var(--space-12);
+
+                        &:not(:first-child) {
+                            border-block-start: var(--border-width) solid var(--color-outline-variant);
+                        }
+
+                        .nestedCallsNote {
+                            margin: 0;
+                            color: var(--color-on-surface-variant);
+                            font-size: var(--type-label-medium-size);
+                            letter-spacing: var(--type-label-medium-tracking);
+                            line-height: var(--type-label-medium-line-height);
+                        }
+                    }
+                }
+
+                .card {
+                    margin-block: 0;
+                }
             }
 
             .card {
@@ -200,16 +318,6 @@
                     background-color: var(--color-surface-container-high);
                 }
 
-                /* Announced by screen readers while the button swaps its icon briefly. */
-                .status {
-                    position: absolute;
-                    inline-size: var(--border-width);
-                    block-size: var(--border-width);
-                    overflow: hidden;
-                    clip-path: inset(50%);
-                    white-space: nowrap;
-                }
-
                 .output {
                     margin: 0;
                     color: var(--color-on-surface);
@@ -244,6 +352,16 @@
                 .notices {
                     border-block-start: var(--border-width) solid var(--color-outline-variant);
                 }
+            }
+
+            /* Announced by screen readers for clipboard status and nested call state icons. */
+            .status {
+                position: absolute;
+                inline-size: var(--border-width);
+                block-size: var(--border-width);
+                overflow: hidden;
+                clip-path: inset(50%);
+                white-space: nowrap;
             }
 
             .errorNote {
@@ -303,6 +421,21 @@
     color: var(--color-error);
 }
 
+.nestedCallIcon {
+    flex: none;
+    inline-size: var(--space-16);
+    block-size: var(--space-16);
+    color: var(--color-on-surface-variant);
+
+    &[data-status="ok"] {
+        color: var(--color-success);
+    }
+
+    &[data-status="error"] {
+        color: var(--color-error);
+    }
+}
+
 .chevron {
     flex: none;
     color: var(--color-on-surface-variant);
@@ -330,6 +463,19 @@
 .viewport,
 .previewViewport {
     max-block-size: calc(var(--space-64) * 3.5);
+}
+
+.nestedCallsScroll,
+.nestedCallsViewport {
+    min-inline-size: 0;
+    max-block-size: calc(var(--space-64) * 2.5);
+}
+
+.nestedCallsContent {
+    box-sizing: border-box;
+    inline-size: 100%;
+    min-inline-size: 0 !important;
+    padding: var(--space-8) var(--space-12);
 }
 
 .viewport {

@@ -31,6 +31,7 @@ const bashStep: TranscriptToolCallStep = {
     images: [],
     preview: { kind: "none" },
     warnings: [],
+    nestedCalls: null,
     timing: { kind: "static", durationMs: 120 },
 };
 
@@ -47,6 +48,7 @@ const runningStep: TranscriptToolCallStep = {
     images: [],
     preview: { kind: "none" },
     warnings: [],
+    nestedCalls: null,
     timing: { kind: "since", startedAtMs: Date.now() - 1_500 },
 };
 
@@ -63,6 +65,7 @@ const errorStep: TranscriptToolCallStep = {
     images: [],
     preview: { kind: "none" },
     warnings: [],
+    nestedCalls: null,
     timing: { kind: "static", durationMs: 42 },
 };
 
@@ -220,6 +223,7 @@ export const EditDiff: Story = {
                 diff: "--- a/src/App.tsx\n+++ b/src/App.tsx\n@@ -10,3 +10,3 @@\n const title = 'old';\n-const count = 1;\n+const count = 2;\n export { title, count };",
             },
             warnings: [],
+            nestedCalls: null,
             timing: { kind: "static", durationMs: 80 },
         },
         defaultOpen: true,
@@ -266,6 +270,7 @@ export const WriteCodePreview: Story = {
                 startLine: 1,
             },
             warnings: [],
+            nestedCalls: null,
             timing: { kind: "static", durationMs: 65 },
         },
         defaultOpen: true,
@@ -301,6 +306,7 @@ export const ReadWithWarnings: Story = {
                 { kind: "fullOutput", path: "/tmp/pi-read-full.log" },
                 { kind: "notice", message: "Truncated: showing 3 of 2500 lines (2000 line limit)" },
             ],
+            nestedCalls: null,
             timing: { kind: "static", durationMs: 35 },
         },
         defaultOpen: true,
@@ -310,6 +316,78 @@ export const ReadWithWarnings: Story = {
         await expect(canvas.getByText("src/store.ts:15-17")).toBeVisible();
         await expect(canvas.getByText("/tmp/pi-read-full.log")).toBeVisible();
         await expect(canvas.getByText(/Truncated: showing 3 of 2500 lines/)).toBeVisible();
+    },
+};
+
+export const CodemodeScriptWithNestedCalls: Story = {
+    args: {
+        step: {
+            kind: "toolCall",
+            id: "tool-codemode",
+            toolKind: "codemode",
+            label: "Codemode",
+            summary: "const files = await tools.find({ pattern: '*.ts' });",
+            arguments: {
+                code: "const files = await tools.find({ pattern: '*.ts' });\nconsole.log(files.join('\\n'));",
+            },
+            argumentsError: null,
+            status: "done",
+            output: "src/index.ts\nsrc/app.ts",
+            images: [],
+            preview: {
+                kind: "script",
+                code: "const files = await tools.find({ pattern: '*.ts' });\nconsole.log(files.join('\\n'));",
+                language: "javascript",
+            },
+            warnings: [{ kind: "fullOutput", path: "/tmp/pi-codemode-full.log" }],
+            nestedCalls: {
+                calls: [
+                    {
+                        id: "cm/1",
+                        name: "find",
+                        args: '{"pattern":"*.ts"}',
+                        status: "ok",
+                        durationMs: 14,
+                        error: null,
+                        cost: null,
+                    },
+                    {
+                        id: "cm/2",
+                        name: "models.classify",
+                        args: '{"label":"frontend"}',
+                        status: "ok",
+                        durationMs: 420,
+                        error: null,
+                        cost: 0.0015,
+                    },
+                    {
+                        id: "cm/3",
+                        name: "models.classify",
+                        args: '{"label":"backend"}',
+                        status: "error",
+                        durationMs: 1200,
+                        error: "Timeout waiting for classifier response",
+                        cost: 0.0025,
+                    },
+                ],
+                complete: false,
+                totalCost: 0.004,
+            },
+            timing: { kind: "static", durationMs: 1650 },
+        },
+        defaultOpen: true,
+    },
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+        await expect(canvas.getByText("javascript")).toBeVisible();
+        await expect(canvas.getByText("find")).toBeVisible();
+        await expect(canvas.getByText("14ms")).toBeVisible();
+        await expect(canvas.getByText("1.2s")).toBeVisible();
+        await expect(canvas.getByText(/Timeout waiting for classifier response/)).toBeVisible();
+        await expect(canvas.getByText("Model calls: $0.0040")).toBeVisible();
+        await expect(canvas.getByText(/Nested call log truncated or incomplete/)).toBeVisible();
+        await expect(canvas.getByText(/src\/index\.ts/)).toBeVisible();
+        await expect(canvas.getByText("/tmp/pi-codemode-full.log")).toBeVisible();
     },
 };
 

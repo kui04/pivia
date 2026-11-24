@@ -1,7 +1,9 @@
 import { assertNever } from "@pivia/protocol";
 import {
+    Ban,
     Check,
     ChevronRight,
+    CircleDashed,
     Code,
     Copy,
     FilePen,
@@ -22,7 +24,11 @@ import { useId, useMemo, useState, type ReactElement } from "react";
 import { CodeBlock, Icon, IconButton, Image, ScrollArea } from "@components";
 import { cn } from "@/lib/cn";
 import {
+    formatNestedCallDuration,
     formatToolDuration,
+    formatUsdCost,
+    type TranscriptNestedCallStatus,
+    type TranscriptNestedCallsSummary,
     type TranscriptToolCallStep,
     type TranscriptToolKind,
     type TranscriptToolPreview,
@@ -86,6 +92,14 @@ function renderWarningItem(warning: TranscriptToolWarning, index: number): React
     }
 }
 
+const NESTED_STATUS_META: Record<TranscriptNestedCallStatus, { readonly icon: LucideIcon; readonly label: string }> = {
+    ok: { icon: Check, label: "Succeeded" },
+    error: { icon: X, label: "Failed" },
+    cancelled: { icon: Ban, label: "Cancelled" },
+    running: { icon: CircleDashed, label: "Running" },
+    unfinished: { icon: CircleDashed, label: "Unfinished" },
+};
+
 function renderPreviewCodeBlock(
     preview: Exclude<TranscriptToolPreview, { kind: "none" }>,
     streaming: boolean,
@@ -99,7 +113,7 @@ function renderPreviewCodeBlock(
                   code: preview.code,
                   language: preview.language,
                   lineNumbers: true,
-                  startLine: preview.startLine,
+                  startLine: preview.kind === "code" ? preview.startLine : 1,
               };
 
     return (
@@ -111,6 +125,66 @@ function renderPreviewCodeBlock(
             viewportClassName={styles.previewViewport}
             {...(onCopy !== undefined ? { onCopy } : {})}
         />
+    );
+}
+
+function renderNestedCallsSection(stepLabel: string, summary: TranscriptNestedCallsSummary): ReactElement {
+    return (
+        <div className={styles.nestedCalls}>
+            {summary.calls.length > 0 ? (
+                <ScrollArea
+                    label={`${stepLabel} nested calls`}
+                    className={styles.nestedCallsScroll}
+                    viewportClassName={styles.nestedCallsViewport}
+                    contentClassName={styles.nestedCallsContent}
+                >
+                    <ul className={styles.nestedCallList}>
+                        {summary.calls.map((call, index) => {
+                            const statusMeta = NESTED_STATUS_META[call.status];
+                            const StatusIcon = statusMeta.icon;
+                            const duration =
+                                call.durationMs !== null ? formatNestedCallDuration(call.durationMs) : null;
+                            const cost = call.cost !== null && call.cost > 0 ? formatUsdCost(call.cost) : null;
+                            return (
+                                <li key={`${call.id}-${index}`} className={styles.nestedCallItem}>
+                                    <div className={styles.nestedCallRow}>
+                                        <span className={styles.status}>{statusMeta.label}</span>
+                                        <Icon
+                                            size="no-container"
+                                            className={styles.nestedCallIcon}
+                                            data-status={call.status}
+                                        >
+                                            <StatusIcon strokeWidth={1.75} />
+                                        </Icon>
+                                        <span className={styles.nestedCallName}>{call.name}</span>
+                                        {call.args !== "" ? (
+                                            <span className={styles.nestedCallArgs}>{call.args}</span>
+                                        ) : null}
+                                        {duration !== null ? (
+                                            <span className={styles.nestedCallMeta}>{duration}</span>
+                                        ) : null}
+                                        {cost !== null ? <span className={styles.nestedCallMeta}>{cost}</span> : null}
+                                    </div>
+                                    {call.error !== null ? (
+                                        <p className={styles.nestedCallError}>{call.error}</p>
+                                    ) : null}
+                                </li>
+                            );
+                        })}
+                    </ul>
+                </ScrollArea>
+            ) : null}
+            {summary.totalCost !== null || !summary.complete ? (
+                <div className={styles.nestedCallsFooter}>
+                    {summary.totalCost !== null ? (
+                        <p className={styles.nestedCallsNote}>Model calls: {formatUsdCost(summary.totalCost)}</p>
+                    ) : null}
+                    {!summary.complete ? (
+                        <p className={styles.nestedCallsNote}>Nested call log truncated or incomplete.</p>
+                    ) : null}
+                </div>
+            ) : null}
+        </div>
     );
 }
 
@@ -141,10 +215,15 @@ export function ToolCallBlock({
     const open = controlledOpen ?? uncontrolledOpen;
     const isRunning = step.status === "running";
     const isError = step.status === "error";
-    const hasRichPreview = step.preview.kind !== "none";
+    const hasPreview = step.preview.kind !== "none";
+
+    const hasOutput = step.output.length > 0;
+    const hasArguments = Object.keys(step.arguments).length > 0;
+    const showScriptOutputCard = step.preview.kind === "script" && (hasOutput || step.images.length > 0);
+    const hasScrollableOutputCard = step.preview.kind === "none" || showScriptOutputCard;
 
     const { viewportRef, fadeTop, fadeBottom } = useAutoScroll({
-        enabled: open && !hasRichPreview,
+        enabled: open && hasScrollableOutputCard,
         streaming: isRunning,
     });
     const liveDurationMs = useLiveDuration(step.timing, 100);
@@ -158,15 +237,13 @@ export function ToolCallBlock({
     };
 
     const ToolIcon = TOOL_ICONS[step.toolKind];
-    const hasOutput = step.output.length > 0;
-    const hasArguments = Object.keys(step.arguments).length > 0;
     // A collapsed block or one with output never renders the argument JSON, and the running timer
     // re-renders every 100 ms, so serialize only when the expanded card actually shows it.
     const formattedArguments = useMemo(
-        () => (open && !hasRichPreview && !hasOutput && hasArguments ? JSON.stringify(step.arguments, null, 2) : ""),
-        [hasArguments, hasOutput, hasRichPreview, open, step.arguments],
+        () => (open && !hasPreview && !hasOutput && hasArguments ? JSON.stringify(step.arguments, null, 2) : ""),
+        [hasArguments, hasOutput, hasPreview, open, step.arguments],
     );
-    const hasCopyable = hasOutput || step.argumentsError !== null || hasArguments;
+    const hasCopyable = hasOutput || (!hasPreview && (step.argumentsError !== null || hasArguments));
     const formattedDuration = liveDurationMs !== null ? formatToolDuration(liveDurationMs) : null;
     const statusText = copyStatus === "copied" ? "Copied" : copyStatus === "failed" ? "Copy failed" : "";
 
@@ -176,7 +253,7 @@ export function ToolCallBlock({
      */
     const buildCopyableText = (): string => {
         if (hasOutput) {
-            return step.argumentsError !== null ? `${step.argumentsError}\n${step.output}` : step.output;
+            return step.argumentsError !== null && !hasPreview ? `${step.argumentsError}\n${step.output}` : step.output;
         }
         if (step.argumentsError !== null) {
             return step.argumentsError;
@@ -209,6 +286,68 @@ export function ToolCallBlock({
             </div>
         ) : null;
 
+    const nestedCallsSection =
+        step.nestedCalls !== null ? renderNestedCallsSection(step.label, step.nestedCalls) : null;
+
+    const renderOutputCard = (allowArgumentsFallback: boolean): ReactElement => (
+        <div
+            className={styles.card}
+            data-status={step.status}
+            data-fade-top={fadeTop ? "true" : undefined}
+            data-fade-bottom={fadeBottom ? "true" : undefined}
+        >
+            <div className={styles.toolbar}>
+                <IconButton label="Wrap lines" aria-pressed={wrapped} onClick={() => setWrapped((prev) => !prev)}>
+                    <WrapText strokeWidth={1.75} />
+                </IconButton>
+                <IconButton label="Copy output" disabled={!hasCopyable} onClick={handleCopy}>
+                    {copyStatus === "copied" ? (
+                        <Check strokeWidth={1.75} />
+                    ) : copyStatus === "failed" ? (
+                        <X strokeWidth={1.75} />
+                    ) : (
+                        <Copy strokeWidth={1.75} />
+                    )}
+                </IconButton>
+            </div>
+            <span className={styles.status} role="status">
+                {statusText}
+            </span>
+
+            <ScrollArea
+                label={`${step.label} output`}
+                viewportRef={viewportRef}
+                className={styles.scroll}
+                viewportClassName={cn(styles.viewport, fadeTop && styles.fadeTop, fadeBottom && styles.fadeBottom)}
+                contentClassName={cn(styles.content, wrapped && styles.contentWrapped)}
+            >
+                {allowArgumentsFallback && step.argumentsError !== null ? (
+                    <p className={styles.errorNote}>{step.argumentsError}</p>
+                ) : null}
+
+                {hasOutput ? (
+                    <pre className={styles.output} data-wrapped={wrapped ? "true" : undefined}>
+                        {step.output}
+                    </pre>
+                ) : allowArgumentsFallback && step.images.length === 0 && step.argumentsError === null ? (
+                    hasArguments ? (
+                        <pre className={styles.output} data-wrapped={wrapped ? "true" : undefined}>
+                            {formattedArguments}
+                        </pre>
+                    ) : (
+                        <p className={styles.output} data-muted="true">
+                            {isRunning ? "Running..." : "No output"}
+                        </p>
+                    )
+                ) : null}
+
+                {imagesSection}
+            </ScrollArea>
+
+            {warningsSection}
+        </div>
+    );
+
     const renderBodyContent = (preview: TranscriptToolPreview): ReactElement => {
         switch (preview.kind) {
             case "diff":
@@ -219,78 +358,36 @@ export function ToolCallBlock({
                             <p className={styles.errorNote}>{step.argumentsError}</p>
                         ) : null}
                         {renderPreviewCodeBlock(preview, isRunning, defaultWrapped, onCopy)}
+                        {nestedCallsSection}
                         {warningsSection !== null ? (
                             <div className={styles.previewNotices}>{warningsSection}</div>
                         ) : null}
                         {imagesSection}
                     </div>
                 );
-            case "none":
+            case "script":
                 return (
-                    <div
-                        className={styles.card}
-                        data-status={step.status}
-                        data-fade-top={fadeTop ? "true" : undefined}
-                        data-fade-bottom={fadeBottom ? "true" : undefined}
-                    >
-                        <div className={styles.toolbar}>
-                            <IconButton
-                                label="Wrap lines"
-                                aria-pressed={wrapped}
-                                onClick={() => setWrapped((prev) => !prev)}
-                            >
-                                <WrapText strokeWidth={1.75} />
-                            </IconButton>
-                            <IconButton label="Copy output" disabled={!hasCopyable} onClick={handleCopy}>
-                                {copyStatus === "copied" ? (
-                                    <Check strokeWidth={1.75} />
-                                ) : copyStatus === "failed" ? (
-                                    <X strokeWidth={1.75} />
-                                ) : (
-                                    <Copy strokeWidth={1.75} />
-                                )}
-                            </IconButton>
-                        </div>
-                        <span className={styles.status} role="status">
-                            {statusText}
-                        </span>
-
-                        <ScrollArea
-                            label={`${step.label} output`}
-                            viewportRef={viewportRef}
-                            className={styles.scroll}
-                            viewportClassName={cn(
-                                styles.viewport,
-                                fadeTop && styles.fadeTop,
-                                fadeBottom && styles.fadeBottom,
-                            )}
-                            contentClassName={cn(styles.content, wrapped && styles.contentWrapped)}
-                        >
-                            {step.argumentsError !== null ? (
-                                <p className={styles.errorNote}>{step.argumentsError}</p>
-                            ) : null}
-
-                            {hasOutput ? (
-                                <pre className={styles.output} data-wrapped={wrapped ? "true" : undefined}>
-                                    {step.output}
-                                </pre>
-                            ) : step.images.length === 0 && step.argumentsError === null ? (
-                                hasArguments ? (
-                                    <pre className={styles.output} data-wrapped={wrapped ? "true" : undefined}>
-                                        {formattedArguments}
-                                    </pre>
-                                ) : (
-                                    <p className={styles.output} data-muted="true">
-                                        {isRunning ? "Running..." : "No output"}
-                                    </p>
-                                )
-                            ) : null}
-
-                            {imagesSection}
-                        </ScrollArea>
-
-                        {warningsSection}
+                    <div className={styles.previewStack}>
+                        {step.argumentsError !== null ? (
+                            <p className={styles.errorNote}>{step.argumentsError}</p>
+                        ) : null}
+                        {renderPreviewCodeBlock(preview, isRunning, defaultWrapped, onCopy)}
+                        {nestedCallsSection}
+                        {showScriptOutputCard ? (
+                            renderOutputCard(false)
+                        ) : warningsSection !== null ? (
+                            <div className={styles.previewNotices}>{warningsSection}</div>
+                        ) : null}
                     </div>
+                );
+            case "none":
+                return nestedCallsSection !== null ? (
+                    <div className={styles.previewStack}>
+                        {nestedCallsSection}
+                        {renderOutputCard(true)}
+                    </div>
+                ) : (
+                    renderOutputCard(true)
                 );
             default:
                 return assertNever(preview);

@@ -8,9 +8,14 @@ import type { ProjectedTranscriptItem } from "./projection";
 import { parseSkillBlock } from "./skill-block";
 import {
     buildToolPresentation,
+    formatNestedCallDuration,
     formatReadLineRangeSummary,
+    formatUsdCost,
     readOptionalPositiveNumber,
     readToolFilePath,
+    type TranscriptNestedCallStatus,
+    type TranscriptNestedCallsSummary,
+    type TranscriptNestedToolCall,
     type TranscriptToolArguments,
     type TranscriptToolKind,
     type TranscriptToolPreview,
@@ -24,7 +29,12 @@ function ignoreUnknownVariant(value: never): void {
     void value;
 }
 
+export { formatNestedCallDuration, formatUsdCost };
+
 export type {
+    TranscriptNestedCallStatus,
+    TranscriptNestedCallsSummary,
+    TranscriptNestedToolCall,
     TranscriptToolArguments,
     TranscriptToolKind,
     TranscriptToolPreview,
@@ -84,6 +94,7 @@ export type TranscriptToolCallStep = TranscriptToolMeta & {
     readonly images: readonly ImageContent[];
     readonly preview: TranscriptToolPreview;
     readonly warnings: readonly TranscriptToolWarning[];
+    readonly nestedCalls: TranscriptNestedCallsSummary | null;
     readonly timing: TranscriptTiming;
 };
 
@@ -261,6 +272,7 @@ type ViewToolResultMessage = {
     readonly toolCallId: string;
     readonly content: readonly ToolResultBlock[];
     readonly details: unknown;
+    readonly nestedCalls: unknown;
     readonly isError: boolean;
     readonly timestamp: number;
     readonly durationMs: number | null;
@@ -544,6 +556,7 @@ function readToolResultMessage(
         toolCallId: typeof message.toolCallId === "string" ? message.toolCallId : "",
         content: toToolResultBlocks(editedContent ?? message.content),
         details: message.details,
+        nestedCalls: message.nestedCalls,
         isError: message.isError === true,
         timestamp: toTimestamp(message.timestamp),
         durationMs: toDuration(message.durationMs),
@@ -792,6 +805,7 @@ function buildTurnItem(
                     output,
                     hasImages: images.length > 0,
                     details: result?.details,
+                    nestedCalls: result?.nestedCalls,
                 });
 
                 steps.push({
@@ -801,10 +815,11 @@ function buildTurnItem(
                     arguments: block.arguments,
                     argumentsError: block.argumentsError,
                     status,
-                    output,
+                    output: presentation.output,
                     images,
                     preview: presentation.preview,
                     warnings: presentation.warnings,
+                    nestedCalls: presentation.nestedCalls,
                     timing:
                         status === "running"
                             ? { kind: "since", startedAtMs: assistant.timestamp }

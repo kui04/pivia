@@ -1,5 +1,7 @@
+import type { JsonObject, JsonValue, NestedToolCallRecord, NestedToolCalls } from "@earendil-works/pi-ai";
 import type {
     BashToolDetails,
+    CodemodeToolDetails,
     EditToolDetails,
     FindToolDetails,
     GrepToolDetails,
@@ -16,6 +18,16 @@ const DEFAULT_MAX_BYTES = 50 * 1024;
 const DEFAULT_MAX_LINES = 2000;
 const READ_CONTINUATION_FOOTER =
     /\n\n\[(Showing lines \d+-\d+ of \d+[^\]]*|\d+ more lines in file\. Use offset=\d+ to continue\.)\]$/;
+const CODEMODE_SCRIPT_HEADER = /^Script (?:completed|failed)\nWall time [\d.]+ seconds\nOutput:\n/;
+
+type CodemodeNestedCall = CodemodeToolDetails["calls"][number];
+const CODEMODE_CALL_STATUSES: ReadonlySet<CodemodeNestedCall["status"]> = new Set([
+    "running",
+    "ok",
+    "error",
+    "cancelled",
+]);
+const RECORD_CALL_STATUSES: ReadonlySet<NestedToolCallRecord["status"]> = new Set(["ok", "error", "unfinished"]);
 
 type LiteralToolName<TEvent> = TEvent extends { readonly toolName: infer TName extends string }
     ? string extends TName
@@ -45,12 +57,43 @@ export type TranscriptToolArguments = Readonly<Record<string, unknown>>;
 /** Terminal outcome of a single tool step, aligned with `TranscriptToolCallStep["status"]`. */
 export type TranscriptToolStatus = "running" | "done" | "error";
 
+/** Terminal status of one nested tool call, merging codemode and persisted records. */
+export type TranscriptNestedCallStatus =
+    CodemodeToolDetails["calls"][number]["status"] | NestedToolCallRecord["status"];
+
+/** Normalized view model for one nested tool call inside an outer tool invocation. */
+export interface TranscriptNestedToolCall {
+    readonly id: string;
+    readonly name: string;
+    readonly args: string;
+    readonly status: TranscriptNestedCallStatus;
+    readonly durationMs: number | null;
+    readonly error: string | null;
+    readonly cost: number | null;
+}
+
+/**
+ * Summary of nested tool calls executed within a single outer tool call.
+ *
+ * Invariant: constructed only when `calls.length > 0 || !complete` so an empty complete list stays
+ * represented as `null`.
+ */
+export interface TranscriptNestedCallsSummary {
+    readonly calls: readonly TranscriptNestedToolCall[];
+    /** False when the SDK dropped calls or omitted oversized arguments. */
+    readonly complete: boolean;
+    /** Summed USD cost when two or more nested calls reported positive usage cost, else `null`. */
+    readonly totalCost: number | null;
+}
+
 /**
  * Rich visual preview extracted for a tool invocation card.
  *
  * Invariants:
  * - `diff` is only produced when `diff.length > 0` and the tool did not fail.
- * - `code` is only produced when `code.length > 0`; `startLine` is a positive 1-based line number.
+ * - `code` is only produced when `code.length > 0` and replaces the raw result card; `startLine` is
+ *   a positive 1-based line number.
+ * - `script` represents an input script (`codemode`), rendered alongside any output card.
  */
 export type TranscriptToolPreview =
     | { readonly kind: "none" }
@@ -64,6 +107,11 @@ export type TranscriptToolPreview =
           readonly code: string;
           readonly language: string | undefined;
           readonly startLine: number;
+      }
+    | {
+          readonly kind: "script";
+          readonly code: string;
+          readonly language: "javascript";
       };
 
 /**
@@ -76,13 +124,15 @@ export type TranscriptToolWarning =
     | { readonly kind: "notice"; readonly message: string }
     | { readonly kind: "fullOutput"; readonly path: NonNullable<BashToolDetails["fullOutputPath"]> };
 
-/** Combined rich preview and warning metadata for one tool call step. */
+/** Combined rich preview, nested calls, warnings and normalized output for one tool call step. */
 export interface TranscriptToolPresentation {
     readonly preview: TranscriptToolPreview;
     readonly warnings: readonly TranscriptToolWarning[];
+    readonly nestedCalls: TranscriptNestedCallsSummary | null;
+    readonly output: string;
 }
 
-/** Input needed to derive a tool call's rich preview and truncation notices. */
+/** Input needed to derive a tool call's rich preview, nested calls and truncation notices. */
 export interface BuildToolPresentationInput {
     readonly toolKind: TranscriptToolKind;
     readonly args: TranscriptToolArguments;
@@ -91,6 +141,7 @@ export interface BuildToolPresentationInput {
     readonly output: string;
     readonly hasImages: boolean;
     readonly details: unknown;
+    readonly nestedCalls?: unknown;
 }
 
 const EXTENSION_LANGUAGE_ALIASES: Readonly<Record<string, string>> = {
@@ -331,6 +382,150 @@ export function parseLsToolDetails(raw: unknown): LsToolDetails | null {
     return parseSingleLimitDetails(raw, "entryLimitReached");
 }
 
+function parseAllowedStatus<T extends string>(raw: unknown, allowed: ReadonlySet<T>): T | undefined {
+    for (const candidate of allowed) {
+        if (raw === candidate) {
+            return candidate;
+        }
+    }
+    return undefined;
+}
+
+function toJsonValue(raw: unknown): JsonValue | undefined {
+    if (raw === null || typeof raw === "boolean" || typeof raw === "string") {
+        return raw;
+    }
+    if (typeof raw === "number") {
+        return Number.isFinite(raw) ? raw : undefined;
+    }
+    if (Array.isArray(raw)) {
+        return raw.map((item) => toJsonValue(item) ?? null);
+    }
+    if (isRecord(raw)) {
+        return toJsonObject(raw);
+    }
+    return undefined;
+}
+
+function toJsonObject(raw: unknown): JsonObject | undefined {
+    if (!isRecord(raw)) {
+        return undefined;
+    }
+    const obj: JsonObject = {};
+    for (const [key, value] of Object.entries(raw)) {
+        const converted = toJsonValue(value);
+        if (converted !== undefined) {
+            Object.defineProperty(obj, key, {
+                value: converted,
+                enumerable: true,
+                configurable: true,
+                writable: true,
+            });
+        }
+    }
+    return obj;
+}
+
+function parseCodemodeNestedCall(raw: unknown): CodemodeNestedCall | null {
+    if (!isRecord(raw)) {
+        return null;
+    }
+    const id = typeof raw.id === "string" ? raw.id : undefined;
+    const name = readOptionalNonEmptyString(raw.name);
+    const args = typeof raw.args === "string" ? raw.args : undefined;
+    const status = parseAllowedStatus(raw.status, CODEMODE_CALL_STATUSES);
+    if (id === undefined || name === undefined || args === undefined || status === undefined) {
+        return null;
+    }
+    const durationMs = isFiniteNumber(raw.durationMs) && raw.durationMs >= 0 ? raw.durationMs : undefined;
+    const error = typeof raw.error === "string" ? raw.error : undefined;
+    const cost = readOptionalPositiveNumber(raw.cost);
+    return {
+        id,
+        name,
+        args,
+        status,
+        ...(durationMs === undefined ? {} : { durationMs }),
+        ...(error === undefined ? {} : { error }),
+        ...(cost === undefined ? {} : { cost }),
+    };
+}
+
+/** Boundary parser for {@link CodemodeToolDetails}. */
+export function parseCodemodeToolDetails(raw: unknown): CodemodeToolDetails | null {
+    if (!isRecord(raw) || !Array.isArray(raw.calls)) {
+        return null;
+    }
+    const calls: CodemodeNestedCall[] = [];
+    for (const entry of raw.calls) {
+        const parsed = parseCodemodeNestedCall(entry);
+        if (parsed !== null) {
+            calls.push(parsed);
+        }
+    }
+    const fullOutputPath = readOptionalNonEmptyString(raw.fullOutputPath);
+    return {
+        calls,
+        ...(fullOutputPath === undefined ? {} : { fullOutputPath }),
+    };
+}
+
+function parseNestedToolCallRecord(raw: unknown): NestedToolCallRecord | null {
+    if (!isRecord(raw)) {
+        return null;
+    }
+    const id = typeof raw.id === "string" ? raw.id : undefined;
+    const name = readOptionalNonEmptyString(raw.name);
+    const status = parseAllowedStatus(raw.status, RECORD_CALL_STATUSES);
+    if (id === undefined || name === undefined || status === undefined) {
+        return null;
+    }
+    const argsObj = toJsonObject(raw.arguments);
+    const argumentsBytes =
+        isFiniteNumber(raw.argumentsBytes) && raw.argumentsBytes >= 0 ? raw.argumentsBytes : undefined;
+    const durationMs = isFiniteNumber(raw.durationMs) && raw.durationMs >= 0 ? raw.durationMs : undefined;
+    const error = typeof raw.error === "string" ? raw.error : undefined;
+    return {
+        id,
+        name,
+        ...(argsObj === undefined ? {} : { arguments: argsObj }),
+        ...(argumentsBytes === undefined ? {} : { argumentsBytes }),
+        status,
+        ...(durationMs === undefined ? {} : { durationMs }),
+        ...(error === undefined ? {} : { error }),
+    };
+}
+
+/** Boundary parser for {@link NestedToolCalls}. */
+export function parseNestedToolCalls(raw: unknown): NestedToolCalls | null {
+    if (!isRecord(raw) || !Array.isArray(raw.calls) || typeof raw.complete !== "boolean") {
+        return null;
+    }
+    const calls: NestedToolCallRecord[] = [];
+    for (const entry of raw.calls) {
+        const parsed = parseNestedToolCallRecord(entry);
+        if (parsed !== null) {
+            calls.push(parsed);
+        }
+    }
+    return {
+        calls,
+        complete: raw.complete,
+    };
+}
+
+/** Formats sub-second and multi-second durations (`12ms`, `1.4s`) matching `codemode` renderers. */
+export function formatNestedCallDuration(durationMs: number): string {
+    const roundedMs = Math.round(Math.max(0, Number.isFinite(durationMs) ? durationMs : 0));
+    return roundedMs < 1000 ? `${roundedMs}ms` : `${(roundedMs / 1000).toFixed(1)}s`;
+}
+
+/** Formats USD cost for nested `models.*` calls using two decimals or two significant digits. */
+export function formatUsdCost(cost: number): string {
+    const safe = Number.isFinite(cost) && cost >= 0 ? cost : 0;
+    return `$${safe >= 0.01 ? safe.toFixed(2) : safe.toPrecision(2)}`;
+}
+
 function formatTruncationNotice(truncation: TruncationResult, includeMaxLinesLimit: boolean): TranscriptToolWarning {
     if (truncation.firstLineExceedsLimit) {
         return {
@@ -405,7 +600,9 @@ function buildWritePreview(input: BuildToolPresentationInput): TranscriptToolPre
     return buildCodePreview(input.args, normalized, 1);
 }
 
-function buildReadPresentation(input: BuildToolPresentationInput): TranscriptToolPresentation {
+function buildReadPresentation(
+    input: BuildToolPresentationInput,
+): Pick<TranscriptToolPresentation, "preview" | "warnings" | "output"> {
     const readDetails = parseReadToolDetails(input.details);
     const truncation = readDetails?.truncation;
     const warnings = truncation?.truncated === true ? [formatTruncationNotice(truncation, true)] : [];
@@ -417,7 +614,7 @@ function buildReadPresentation(input: BuildToolPresentationInput): TranscriptToo
         input.output === "" ||
         truncation?.firstLineExceedsLimit === true
     ) {
-        return { preview: { kind: "none" }, warnings };
+        return { preview: { kind: "none" }, warnings, output: input.output };
     }
 
     const match = READ_CONTINUATION_FOOTER.exec(input.output);
@@ -429,14 +626,113 @@ function buildReadPresentation(input: BuildToolPresentationInput): TranscriptToo
     return {
         preview: buildCodePreview(input.args, code, parsePositiveInteger(input.args.offset) ?? 1),
         warnings,
+        output: input.output,
     };
 }
 
+function formatRecordArgs(record: NestedToolCallRecord): string {
+    if (record.arguments !== undefined) {
+        return JSON.stringify(record.arguments);
+    }
+    if (record.argumentsBytes !== undefined) {
+        return `(${formatByteSize(record.argumentsBytes)} args)`;
+    }
+    return "";
+}
+
+function normalizeCodemodeCall(call: CodemodeNestedCall): TranscriptNestedToolCall {
+    return {
+        id: call.id,
+        name: call.name,
+        args: call.args,
+        status: call.status,
+        durationMs: call.durationMs ?? null,
+        error: readOptionalNonEmptyString(call.error) ?? null,
+        cost: call.cost ?? null,
+    };
+}
+
+function normalizeRecordedCall(record: NestedToolCallRecord): TranscriptNestedToolCall {
+    return {
+        id: record.id,
+        name: record.name,
+        args: formatRecordArgs(record),
+        status: record.status,
+        durationMs: record.durationMs ?? null,
+        error: readOptionalNonEmptyString(record.error) ?? null,
+        cost: null,
+    };
+}
+
+function buildNestedCallsSummary(
+    codemodeDetails: CodemodeToolDetails | null,
+    rawNestedCalls: unknown,
+): TranscriptNestedCallsSummary | null {
+    const recorded = parseNestedToolCalls(rawNestedCalls);
+    let calls: readonly TranscriptNestedToolCall[];
+    let complete: boolean;
+
+    // Prefer `CodemodeToolDetails.calls` when populated (it carries compact `args` and `cost`),
+    // while keeping `ToolResultMessage.nestedCalls.complete` and falling back to recorded calls.
+    if (codemodeDetails !== null && codemodeDetails.calls.length > 0) {
+        calls = codemodeDetails.calls.map(normalizeCodemodeCall);
+        complete = recorded?.complete ?? true;
+    } else if (recorded !== null) {
+        calls = recorded.calls.map(normalizeRecordedCall);
+        complete = recorded.complete;
+    } else {
+        return null;
+    }
+
+    if (calls.length === 0 && complete) {
+        return null;
+    }
+
+    let pricedCount = 0;
+    let totalCostSum = 0;
+    for (const call of calls) {
+        if (call.cost !== null && call.cost > 0) {
+            pricedCount += 1;
+            totalCostSum += call.cost;
+        }
+    }
+
+    return {
+        calls,
+        complete,
+        totalCost: pricedCount > 1 ? totalCostSum : null,
+    };
+}
+
+function buildCodemodePresentation(
+    input: BuildToolPresentationInput,
+    codemodeDetails: CodemodeToolDetails | null,
+): Pick<TranscriptToolPresentation, "preview" | "warnings" | "output"> {
+    const rawCode = input.argumentsError === null && typeof input.args.code === "string" ? input.args.code : "";
+    const code = rawCode.replace(/\r\n?/g, "\n").trimEnd();
+    const preview: TranscriptToolPreview =
+        code === "" ? { kind: "none" } : { kind: "script", code, language: "javascript" };
+
+    const shellDetails = parseShellToolDetails(input.details);
+    const warnings = buildShellWarnings(
+        codemodeDetails?.fullOutputPath !== undefined && shellDetails?.fullOutputPath === undefined
+            ? { ...shellDetails, fullOutputPath: codemodeDetails.fullOutputPath }
+            : shellDetails,
+    );
+
+    const output = input.output.replace(CODEMODE_SCRIPT_HEADER, "").trim();
+    return { preview, warnings, output };
+}
+
 /**
- * Builds the rich preview (`diff` or highlighted `code`) and truncation/limit warnings for one
- * tool call step from its arguments, output, and SDK `details` payload.
+ * Builds the rich preview (`diff`, `code`, or `script`), nested call summary, warnings, and
+ * normalized output for one tool call step from its arguments, output, `details`, and `nestedCalls`.
  */
 export function buildToolPresentation(input: BuildToolPresentationInput): TranscriptToolPresentation {
+    const codemodeDetails = input.toolKind === "codemode" ? parseCodemodeToolDetails(input.details) : null;
+    const nestedCalls = buildNestedCallsSummary(codemodeDetails, input.nestedCalls);
+
+    let core: Pick<TranscriptToolPresentation, "preview" | "warnings" | "output">;
     switch (input.toolKind) {
         case "edit": {
             const editDetails = input.status === "error" ? null : parseEditToolDetails(input.details);
@@ -444,27 +740,34 @@ export function buildToolPresentation(input: BuildToolPresentationInput): Transc
             // only when reading legacy records without `patch`.
             const diffText =
                 editDetails === null ? "" : editDetails.patch !== "" ? editDetails.patch : editDetails.diff;
-            return {
+            core = {
                 preview: diffText === "" ? { kind: "none" } : { kind: "diff", diff: diffText },
                 warnings: [],
+                output: input.output,
             };
+            break;
         }
         case "write":
-            return {
+            core = {
                 preview: buildWritePreview(input),
                 warnings: [],
+                output: input.output,
             };
+            break;
         case "read":
-            return buildReadPresentation(input);
+            core = buildReadPresentation(input);
+            break;
         case "bash":
         case "powershell":
-            return {
+            core = {
                 preview: { kind: "none" },
                 warnings: buildShellWarnings(parseShellToolDetails(input.details)),
+                output: input.output,
             };
+            break;
         case "grep": {
             const grepDetails = parseGrepToolDetails(input.details);
-            return {
+            core = {
                 preview: { kind: "none" },
                 warnings:
                     grepDetails === null
@@ -476,11 +779,13 @@ export function buildToolPresentation(input: BuildToolPresentationInput): Transc
                               grepDetails.truncation,
                               grepDetails.linesTruncated ? "some lines truncated" : undefined,
                           ),
+                output: input.output,
             };
+            break;
         }
         case "find": {
             const findDetails = parseFindToolDetails(input.details);
-            return {
+            core = {
                 preview: { kind: "none" },
                 warnings:
                     findDetails === null
@@ -491,11 +796,13 @@ export function buildToolPresentation(input: BuildToolPresentationInput): Transc
                                   : null,
                               findDetails.truncation,
                           ),
+                output: input.output,
             };
+            break;
         }
         case "ls": {
             const lsDetails = parseLsToolDetails(input.details);
-            return {
+            core = {
                 preview: { kind: "none" },
                 warnings:
                     lsDetails === null
@@ -506,16 +813,24 @@ export function buildToolPresentation(input: BuildToolPresentationInput): Transc
                                   : null,
                               lsDetails.truncation,
                           ),
+                output: input.output,
             };
+            break;
         }
         case "codemode":
+            core = buildCodemodePresentation(input, codemodeDetails);
+            break;
         case "tool_search":
         case "generic":
-            return {
+            core = {
                 preview: { kind: "none" },
                 warnings: buildShellWarnings(parseShellToolDetails(input.details)),
+                output: input.output,
             };
+            break;
         default:
             return assertNever(input.toolKind);
     }
+
+    return { ...core, nestedCalls };
 }
