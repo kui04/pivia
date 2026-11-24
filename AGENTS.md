@@ -7,23 +7,30 @@
 - The repository is a pnpm workspace. Each package lives in `packages/<name>` and owns its `package.json` and
   TypeScript configs extending `tsconfig.base.json` (`tsconfig.json` directly in `protocol` and `server`; solution
   references in `packages/web/tsconfig.json` pointing to `tsconfig.app.json` and `tsconfig.node.json`):
-    - `packages/protocol`: shared HTTP and WebSocket protocol types.
+    - `packages/protocol`: shared HTTP/WebSocket endpoint descriptors, synchronization contracts, and domain codecs/types.
     - `packages/server`: Node server and CLI wrapping `@earendil-works/pi-coding-agent` in-process for a single host.
     - `packages/web`: React PWA frontend and component workshop.
 - `@earendil-works/pi-coding-agent` requires Node 22.19 or newer (its `engines` field). Keep the Node version in
   `devenv.nix` and the root `engines` field above that floor.
 - Keep `typescript` on the range that `typescript-eslint` accepts. Check with `pnpm peers check` before you raise it.
 
-## Server Layout
+## Package Layout and Boundaries
 
-- Organize `packages/server/src` by domain rather than as a flat list of files.
+- Organize `packages/protocol/src` and `packages/server/src` by domain rather than as flat lists of files.
 - Keep unit and route tests colocated next to their source file as `*.test.ts`.
+- Define HTTP and WebSocket paths, methods, auth visibility, and param/query codecs once in
+  `packages/protocol/src/endpoints/` (`HTTP_ENDPOINTS`, `WS_ENDPOINTS`), and consume them from `packages/server` and
+  `packages/web`.
+- Do not re-export raw `@earendil-works/pi-*` types from `@pivia/protocol`. Import SDK types directly in each package
+  and derive protocol wire types with checked helpers (`StrictOmit`, `PatchOf`).
 
-## Frontend
+## Guides
 
 - Before changing frontend code, read `docs/frontend.md`. It covers the frontend environment, styles, Storybook,
-  routing, state and checks.
+  routing, state, cache, and checks.
 - Before changing UI or a component, read `docs/components.md`.
+- Before changing real-time synchronization primitives or adding a synchronized stream, read
+  `docs/versioned_incremental_sync.md`.
 
 ## Logging
 

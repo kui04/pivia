@@ -15,7 +15,8 @@ Component conventions live in [components.md](components.md). Frontend code live
 - `--color-outline-control` is the 3:1 boundary for interactive controls (Input, Select, Checkbox and the secondary
   Button), meeting WCAG 1.4.11 in both themes. `--color-outline` stays the decorative editor separator.
 - `--color-tertiary` is the single purple accent: skill invocation headers, extension message headers and the border
-  of a `!!` command record use it. Keep it out of error and warning roles.
+  of a `!!` command record use it (a failed `!!` command keeps the error border instead). Keep it out of error and
+  warning roles.
 - `packages/web/src/styles/reset.css` is a trimmed Tailwind CSS Preflight. Load order in `packages/web/src/main.tsx` is
   fonts, token, reset, global; `global.css` holds only document-level rules.
 - Colors use `light-dark()` with `color-scheme`. Set `data-theme="light"` or `data-theme="dark"` on `<html>` to
@@ -125,10 +126,18 @@ in step with the file: a new nested rule updates the sketch in the same change.
 
 - Zustand stores and their models live in `packages/web/src/stores/<name>/`; each store module exports a pure factory
   (`createAuthStore`, `createSessionStore`, `createWorkspaceStore`) and its persisted/model types without cross-store
-  imports or module-load side effects. `packages/web/src/stores/index.ts` is the composition root that creates and
-  wires the app-wide singletons (`useAuthStore`, `useSessionStore`, `useWorkspaceStore`).
-- HTTP and WebSocket client wrappers stay in `packages/web/src/lib/transport/` (using shared wire types from
-  `packages/protocol`), because they are transport, not state.
+  imports or module-load side effects. `packages/web/src/stores/index.ts` is the composition root (`createAppStores`)
+  that creates and wires the app-wide singletons (`useAuthStore`, `useSessionStore`, `useWorkspaceStore`).
+- `packages/web/src/lib/cache/` owns client persistence (`IndexedDbAppCache` and the singleton `appCache` in `index.ts`,
+  shared connection/fallback coordinator `IndexedDbCoordinator` in `idb.ts`, and domain slices such as `session.ts`).
+  Stores receive narrow capability interfaces (`SessionCache`, `WorkspaceCatalogCache`, `ClearableCache`), and sign-out
+  or `401` responses trigger `clearAll()`.
+- HTTP and WebSocket client wrappers stay in `packages/web/src/lib/transport/`, consuming `HTTP_ENDPOINTS`,
+  `WS_ENDPOINTS`, and wire decoders from `@pivia/protocol`. `packages/web/src/lib/transport/websocket.ts` provides the
+  shared `WebSocketLike`, `WebSocketConstructor`, `defaultWebSocketConstructor`, and `buildWebSocketUrl` helpers for
+  `session-socket.ts` and `workspace-socket.ts`.
+- `packages/web/src/lib/sync/` provides the shared `SyncStreamClient`, `createCollectionSyncReducer`, and
+  `createReconnectController` used by real-time streams (see [versioned_incremental_sync.md](versioned_incremental_sync.md)).
 
 ## Workspace sync
 
@@ -140,6 +149,8 @@ in step with the file: a new nested rule updates the sketch in the same change.
 - `CatalogSyncPhase` is `idle`, `syncing`, `live`, `reconnecting`, or `failed`. While `syncing`, the sidebar shows the
   loading skeleton and disables the refresh button with `focusableWhenDisabled` so focus is preserved. While
   `reconnecting` or `failed`, the last known rows stay visible under a status banner.
+- `SessionRow` renders a trailing status dot (with a tooltip) when a runtime is `starting`, `attached`, `streaming`,
+  `compacting`, or `closing`, and shows relative age when idle (`sessionRowStatus`).
 
 ## Session view
 
@@ -154,7 +165,8 @@ in step with the file: a new nested rule updates the sketch in the same change.
   `Worked for Xs` turn groups. One `/skill:`
   user entry becomes a collapsed `[skill] name` row followed by the prompt bubble when the reader typed one. A `!`
   command record becomes its own block between turns, with its output, exit state, the truncation path and, for a `!!`
-  command, a visible `not in context` suffix next to its accent border. A displayed `custom_message` becomes a
+  command, a visible `not in context` suffix in its header (failed commands keep the error border over the `!!` accent
+  border). A displayed `custom_message` becomes a
   collapsible row labeled `[customType]` that shares the system-note shell and opens by default; it shows the message
   as Markdown and its images through the shared viewer, and an empty record shows a muted placeholder, so an extension
   message never reads as the reader's own words and never opens on a blank panel. `liveAssistantMessage` joins the
@@ -164,7 +176,8 @@ in step with the file: a new nested rule updates the sketch in the same change.
   and adds a status banner instead of replacing it.
 - `packages/web/src/pages/Workspace/components/Transcript/` holds the read-only view (user bubbles, skill invocation
   blocks, bash execution blocks, extension message blocks, turn groups, thinking and tool blocks, system notes,
-  auto-scroll) and the live-duration hook. The composer slot below it is still a placeholder.
+  auto-scroll), `useCopyFeedback` (shared across bash and tool call blocks), and `useLiveDuration`. The composer slot
+  below it is still a placeholder.
 - A transcript item's timing is a discriminated union: a settled turn or tool call carries its final duration, a
   running one carries its start time and the component samples the clock. The two shapes are exclusive so a caller
   cannot add a live elapsed time to a snapshot duration twice. Only the trailing turn of an active runtime may report
