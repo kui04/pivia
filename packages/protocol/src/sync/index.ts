@@ -14,12 +14,13 @@ export {
 } from "./clock.ts";
 export {
     createSyncFrameParser,
+    encodeSyncHandshakeQuery,
     parseDelivery,
     parseSyncCursor,
     parseSyncHandshakeQuery,
     type JsonDecoder,
     type SyncFrameParserOptions,
-} from "./parse.ts";
+} from "./codec.ts";
 export type {
     CollectionDelta,
     Delivery,

@@ -1,9 +1,8 @@
-import { isRecord } from "../parse/primitives.ts";
+import { isRecord, type JsonDecoder } from "../shared/primitives.ts";
 import { parsePositiveSyncSeq, parseSyncEpoch, parseSyncSeq, parseSyncSeqString, type SyncCursor } from "./clock.ts";
 import type { Delivery, SequencedDelta, SyncFrame, SyncHandshake, SyncServerResyncReason } from "./stream.ts";
 
-/** Decoder function for validating untrusted JSON payloads at a trust boundary. */
-export type JsonDecoder<T> = (raw: unknown) => T | null;
+export type { JsonDecoder };
 
 const SERVER_RESYNC_REASONS: Readonly<Record<SyncServerResyncReason, true>> = {
     gap: true,
@@ -166,4 +165,23 @@ export function parseSyncHandshakeQuery<D extends string, THint = undefined>(
         ...(cursor === undefined ? {} : { cursor }),
         ...(hint === undefined ? {} : { hint }),
     };
+}
+
+/** Encode a generic {@link SyncHandshake} into URL query parameters symmetric with {@link parseSyncHandshakeQuery}. */
+export function encodeSyncHandshakeQuery<D extends string, THint = undefined>(
+    handshake?: SyncHandshake<D, THint>,
+    encodeHint?: (hint: THint, params: URLSearchParams) => void,
+): URLSearchParams {
+    const params = new URLSearchParams();
+    if (handshake === undefined) {
+        return params;
+    }
+    if (handshake.cursor !== undefined) {
+        params.set("epoch", handshake.cursor.epoch);
+        params.set("afterSeq", String(handshake.cursor.seq));
+    }
+    if (handshake.hint !== undefined && encodeHint !== undefined) {
+        encodeHint(handshake.hint, params);
+    }
+    return params;
 }

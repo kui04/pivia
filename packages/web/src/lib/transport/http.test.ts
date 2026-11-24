@@ -237,7 +237,7 @@ describe("createApiClient", () => {
         const rootListing = await client.listDirectories();
         const nestedListing = await client.listDirectories("/home/u/my projects");
 
-        expect(seenUrls).toEqual(["/api/fs/directories", "/api/fs/directories?path=%2Fhome%2Fu%2Fmy%20projects"]);
+        expect(seenUrls).toEqual(["/api/fs/directories", "/api/fs/directories?path=%2Fhome%2Fu%2Fmy+projects"]);
         expect(rootListing).toEqual({
             path: "/home/u/projects",
             parent: "/home/u",

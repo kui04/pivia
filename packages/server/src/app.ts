@@ -3,7 +3,7 @@ import cookie from "@fastify/cookie";
 import websocket from "@fastify/websocket";
 import Fastify, { type FastifyBaseLogger, type FastifyInstance } from "fastify";
 
-import type { HealthResponse } from "@pivia/protocol";
+import { HTTP_ENDPOINTS, type HealthResponse } from "@pivia/protocol";
 
 import { registerAuthRoutes } from "./auth/routes.ts";
 import { AuthService, type AuthServiceOptions } from "./auth/service.ts";
@@ -99,7 +99,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         await sessionRegistry.disposeAll();
     });
 
-    app.get("/api/health", (): HealthResponse => {
+    app.get(HTTP_ENDPOINTS.health.pattern, (): HealthResponse => {
         return {
             status: "ok",
             version,

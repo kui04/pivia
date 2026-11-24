@@ -1,4 +1,5 @@
 import {
+    HTTP_ENDPOINTS,
     isRecord,
     parseAuthLoginResponse,
     parseAuthLogoutResponse,
@@ -9,7 +10,6 @@ import {
     parseHealthResponse,
     parseSessionDetailResponse,
     parseSessionListResponse,
-    PUBLIC_API_PATHS,
 } from "@pivia/protocol";
 import type {
     ApiErrorCode,
@@ -22,6 +22,8 @@ import type {
     CreateSessionResponse,
     DirectoryListResponse,
     HealthResponse,
+    HttpEndpointMeta,
+    HttpMethod,
     JsonDecoder,
     SessionDetailResponse,
     SessionId,
@@ -101,9 +103,6 @@ export interface ApiClient {
     /** Registers or clears the callback for `401` responses from protected endpoints and returns a disposer. */
     setUnauthorizedHandler(handler: (() => void) | null): () => void;
 }
-
-/** Endpoints that answer `401` as a normal result rather than an expired session. */
-const PUBLIC_PATHS: ReadonlySet<string> = new Set(PUBLIC_API_PATHS);
 
 const API_ERROR_CODES: ReadonlySet<string> = new Set<ApiErrorCode>([
     "invalid_request",
@@ -220,11 +219,17 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
         }
     };
 
-    const request = async <T>(path: string, init: RequestInit, decode: JsonDecoder<T>): Promise<T> => {
+    const request = async <T>(
+        endpoint: HttpEndpointMeta<HttpMethod, boolean>,
+        path: string,
+        init: Omit<RequestInit, "method">,
+        decode: JsonDecoder<T>,
+    ): Promise<T> => {
         let response: Response;
         try {
             response = await fetchImpl(joinUrl(baseUrl, path), {
                 ...init,
+                method: endpoint.method,
                 credentials: "same-origin",
             });
         } catch (cause) {
@@ -236,8 +241,7 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
             });
         }
 
-        const publicPath = PUBLIC_PATHS.has(pathnameOf(path));
-        if (response.status === 401 && !publicPath) {
+        if (response.status === 401 && !endpoint.public) {
             notifyUnauthorized();
         }
 
@@ -281,18 +285,24 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
 
     return {
         getHealth: () =>
-            request<HealthResponse>("/api/health", { method: "GET", headers: ACCEPT_HEADERS }, parseHealthResponse),
+            request<HealthResponse>(
+                HTTP_ENDPOINTS.health,
+                HTTP_ENDPOINTS.health.buildPath(),
+                { headers: ACCEPT_HEADERS },
+                parseHealthResponse,
+            ),
         getAuthStatus: () =>
             request<AuthStatusResponse>(
-                "/api/auth/status",
-                { method: "GET", headers: ACCEPT_HEADERS },
+                HTTP_ENDPOINTS.authStatus,
+                HTTP_ENDPOINTS.authStatus.buildPath(),
+                { headers: ACCEPT_HEADERS },
                 parseAuthStatusResponse,
             ),
         login: (password) =>
             request<AuthLoginResponse>(
-                "/api/auth",
+                HTTP_ENDPOINTS.authLogin,
+                HTTP_ENDPOINTS.authLogin.buildPath(),
                 {
-                    method: "POST",
                     headers: JSON_HEADERS,
                     body: JSON.stringify({ password }),
                 },
@@ -300,31 +310,30 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
             ),
         logout: () =>
             request<AuthLogoutResponse>(
-                "/api/auth/logout",
-                { method: "POST", headers: ACCEPT_HEADERS },
+                HTTP_ENDPOINTS.authLogout,
+                HTTP_ENDPOINTS.authLogout.buildPath(),
+                { headers: ACCEPT_HEADERS },
                 parseAuthLogoutResponse,
             ),
         listSessions: () =>
             request<SessionListResponse>(
-                "/api/sessions",
-                { method: "GET", headers: ACCEPT_HEADERS },
+                HTTP_ENDPOINTS.listSessions,
+                HTTP_ENDPOINTS.listSessions.buildPath(),
+                { headers: ACCEPT_HEADERS },
                 parseSessionListResponse,
             ),
-        listDirectories: (path) => {
-            const trimmed = path?.trim() ?? "";
-            const endpoint =
-                trimmed === "" ? "/api/fs/directories" : `/api/fs/directories?path=${encodeURIComponent(trimmed)}`;
-            return request<DirectoryListResponse>(
-                endpoint,
-                { method: "GET", headers: ACCEPT_HEADERS },
+        listDirectories: (path) =>
+            request<DirectoryListResponse>(
+                HTTP_ENDPOINTS.listDirectories,
+                HTTP_ENDPOINTS.listDirectories.buildPath(path === undefined ? undefined : { path }),
+                { headers: ACCEPT_HEADERS },
                 parseDirectoryListResponse,
-            );
-        },
+            ),
         createSession: (cwd, sessionOptions) =>
             request<CreateSessionResponse>(
-                "/api/sessions",
+                HTTP_ENDPOINTS.createSession,
+                HTTP_ENDPOINTS.createSession.buildPath(),
                 {
-                    method: "POST",
                     headers: JSON_HEADERS,
                     body: JSON.stringify({
                         cwd,
@@ -334,31 +343,18 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
                 parseCreateSessionResponse,
             ),
         getSession: (id, sessionOptions) => {
-            const params = new URLSearchParams();
-            const anchor = sessionOptions?.anchor;
-            if (anchor !== undefined) {
-                params.set("entriesVersion", anchor.entriesVersion);
-                params.set("afterCount", String(anchor.afterCount));
-                params.set("afterEntryId", anchor.afterEntryId);
-            }
-            const query = params.toString();
-            const path =
-                query === ""
-                    ? `/api/sessions/${encodeURIComponent(id)}`
-                    : `/api/sessions/${encodeURIComponent(id)}?${query}`;
-            const init: RequestInit = { method: "GET", headers: ACCEPT_HEADERS };
+            const path = HTTP_ENDPOINTS.sessionDetail.buildPath({ id }, sessionOptions?.anchor);
+            const init: Omit<RequestInit, "method"> = { headers: ACCEPT_HEADERS };
             if (sessionOptions?.signal !== undefined) {
                 init.signal = sessionOptions.signal;
             }
-            return request<SessionDetailResponse>(path, init, parseSessionDetailResponse);
+            return request<SessionDetailResponse>(HTTP_ENDPOINTS.sessionDetail, path, init, parseSessionDetailResponse);
         },
         closeSession: (id) =>
             request<CloseSessionResponse>(
-                `/api/sessions/${encodeURIComponent(id)}/close`,
-                {
-                    method: "POST",
-                    headers: ACCEPT_HEADERS,
-                },
+                HTTP_ENDPOINTS.closeSession,
+                HTTP_ENDPOINTS.closeSession.buildPath({ id }),
+                { headers: ACCEPT_HEADERS },
                 parseCloseSessionResponse,
             ),
         setUnauthorizedHandler: (handler) => {

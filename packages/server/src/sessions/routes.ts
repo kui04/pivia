@@ -1,6 +1,5 @@
 import {
-    parseSessionId,
-    parseSessionPrefixAnchor,
+    HTTP_ENDPOINTS,
     type CloseSessionResponse,
     type CreateSessionRequest,
     type CreateSessionResponse,
@@ -30,12 +29,12 @@ const CREATE_SESSION_BODY_SCHEMA = {
  */
 export function registerSessionRoutes(app: FastifyInstance, sessionRegistry: SessionRegistry): void {
     app.register((instance, _options, done) => {
-        instance.get("/api/sessions", { compress: {} }, async (): Promise<SessionListResponse> => {
+        instance.get(HTTP_ENDPOINTS.listSessions.pattern, { compress: {} }, async (): Promise<SessionListResponse> => {
             return sessionRegistry.list();
         });
 
         instance.post<{ Body: CreateSessionRequest }>(
-            "/api/sessions",
+            HTTP_ENDPOINTS.createSession.pattern,
             {
                 schema: {
                     body: CREATE_SESSION_BODY_SCHEMA,
@@ -60,16 +59,16 @@ export function registerSessionRoutes(app: FastifyInstance, sessionRegistry: Ses
             },
         );
 
-        instance.get<{ Params: { id: string } }>(
-            "/api/sessions/:id",
+        instance.get(
+            HTTP_ENDPOINTS.sessionDetail.pattern,
             { compress: {} },
             async (request, reply): Promise<SessionDetailResponse | FastifyReply> => {
-                const sessionId = parseSessionId(request.params.id);
-                if (sessionId === null) {
+                const params = HTTP_ENDPOINTS.sessionDetail.parseParams(request.params);
+                if (params === null) {
                     return sendApiError(reply, 400, "invalid_request", "Invalid session id.");
                 }
-                const sliceAnchor = parseSessionPrefixAnchor(request.query);
-                const detail = await sessionRegistry.getById(sessionId, sliceAnchor);
+                const sliceAnchor = HTTP_ENDPOINTS.sessionDetail.parseQuery(request.query);
+                const detail = await sessionRegistry.getById(params.id, sliceAnchor);
                 if (detail === null) {
                     return sendApiError(reply, 404, "not_found", "Session not found.");
                 }
@@ -77,14 +76,14 @@ export function registerSessionRoutes(app: FastifyInstance, sessionRegistry: Ses
             },
         );
 
-        instance.post<{ Params: { id: string } }>(
-            "/api/sessions/:id/close",
+        instance.post(
+            HTTP_ENDPOINTS.closeSession.pattern,
             async (request, reply): Promise<CloseSessionResponse | FastifyReply> => {
-                const sessionId = parseSessionId(request.params.id);
-                if (sessionId === null) {
+                const params = HTTP_ENDPOINTS.closeSession.parseParams(request.params);
+                if (params === null) {
                     return sendApiError(reply, 400, "invalid_request", "Invalid session id.");
                 }
-                const closed = await sessionRegistry.closeSession(sessionId);
+                const closed = await sessionRegistry.closeSession(params.id);
                 return { closed };
             },
         );

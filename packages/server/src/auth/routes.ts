@@ -1,5 +1,8 @@
 import {
+    API_PATH_PREFIX,
+    HTTP_ENDPOINTS,
     PUBLIC_API_PATHS,
+    WS_PATH_PREFIX,
     assertNever,
     type ApiErrorCode,
     type AuthLoginRequest,
@@ -36,7 +39,7 @@ function sendAuthError(
     error: ApiErrorCode,
     message: string,
 ): FastifyReply {
-    if (pathname.startsWith("/ws/")) {
+    if (pathname.startsWith(WS_PATH_PREFIX)) {
         return sendWsUpgradeError(reply, statusCode, error, message);
     }
     return sendApiError(reply, statusCode, error, message);
@@ -46,7 +49,7 @@ function sendAuthError(
 export function registerAuthRoutes(app: FastifyInstance, authService: AuthService): void {
     app.addHook("onRequest", async (request, reply) => {
         const pathname = stripQuery(request.url);
-        if (!pathname.startsWith("/api/") && !pathname.startsWith("/ws/")) {
+        if (!pathname.startsWith(API_PATH_PREFIX) && !pathname.startsWith(WS_PATH_PREFIX)) {
             return;
         }
         if (PUBLIC_PATHS.has(pathname)) {
@@ -79,7 +82,7 @@ export function registerAuthRoutes(app: FastifyInstance, authService: AuthServic
         }
     });
 
-    app.get("/api/auth/status", (request, reply): AuthStatusResponse | FastifyReply => {
+    app.get(HTTP_ENDPOINTS.authStatus.pattern, (request, reply): AuthStatusResponse | FastifyReply => {
         if (!authService.authRequired) {
             return { authRequired: false, authenticated: true };
         }
@@ -89,7 +92,10 @@ export function registerAuthRoutes(app: FastifyInstance, authService: AuthServic
         }
         switch (result.reason) {
             case "rate_limited":
-                request.log.warn({ clientIp: request.ip, pathname: "/api/auth/status" }, "authentication rate-limited");
+                request.log.warn(
+                    { clientIp: request.ip, pathname: HTTP_ENDPOINTS.authStatus.pattern },
+                    "authentication rate-limited",
+                );
                 reply.header("Retry-After", String(result.retryAfterSeconds));
                 return sendApiError(
                     reply,
@@ -98,7 +104,10 @@ export function registerAuthRoutes(app: FastifyInstance, authService: AuthServic
                     "Too many failed authentication attempts. Try again later.",
                 );
             case "invalid_bearer":
-                request.log.warn({ clientIp: request.ip, pathname: "/api/auth/status" }, "invalid bearer credential");
+                request.log.warn(
+                    { clientIp: request.ip, pathname: HTTP_ENDPOINTS.authStatus.pattern },
+                    "invalid bearer credential",
+                );
                 return { authRequired: true, authenticated: false };
             case "unauthenticated":
                 return { authRequired: true, authenticated: false };
@@ -108,7 +117,7 @@ export function registerAuthRoutes(app: FastifyInstance, authService: AuthServic
     });
 
     app.post<{ Body: AuthLoginRequest }>(
-        "/api/auth",
+        HTTP_ENDPOINTS.authLogin.pattern,
         {
             schema: {
                 body: LOGIN_BODY_SCHEMA,
@@ -137,7 +146,7 @@ export function registerAuthRoutes(app: FastifyInstance, authService: AuthServic
         },
     );
 
-    app.post("/api/auth/logout", (request, reply): AuthLogoutResponse => {
+    app.post(HTTP_ENDPOINTS.authLogout.pattern, (request, reply): AuthLogoutResponse => {
         authService.logout(request.cookies[SESSION_COOKIE_NAME]);
         authService.clearSessionCookie(reply);
         return { authenticated: false };

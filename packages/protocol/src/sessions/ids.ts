@@ -1,5 +1,4 @@
-import type { SessionPrefixAnchor } from "../index.ts";
-import { isRecord } from "./primitives.ts";
+import { isRecord } from "../shared/primitives.ts";
 
 declare const SessionIdBrand: unique symbol;
 
@@ -10,6 +9,21 @@ declare const EntriesVersionBrand: unique symbol;
 
 /** Composite `${sessionVersion}:${sdkVersion}` transcript version identifier. */
 export type EntriesVersion = string & { readonly [EntriesVersionBrand]: "EntriesVersion" };
+
+/** Path parameters shared by session-scoped HTTP and WebSocket endpoints (`:id`). */
+export interface SessionPathParams {
+    readonly id: SessionId;
+}
+
+/**
+ * Prefix anchor verified by both HTTP slice reads (`GET /api/sessions/:id`) and WS Tier 1/2
+ * handshakes. `afterCount` includes the session header (`entries[0]`).
+ */
+export interface SessionPrefixAnchor {
+    readonly entriesVersion: EntriesVersion;
+    readonly afterCount: number;
+    readonly afterEntryId: string;
+}
 
 /**
  * Session ids mirror the rule of the SDK session manager: non-empty, only alphanumeric
@@ -28,6 +42,15 @@ export function parseSessionId(raw: unknown): SessionId | null {
 /** Parse an untrusted `${sessionVersion}:${sdkVersion}` string into an {@link EntriesVersion}. */
 export function parseEntriesVersion(raw: unknown): EntriesVersion | null {
     return typeof raw === "string" && ENTRIES_VERSION_PATTERN.test(raw) ? (raw as EntriesVersion) : null;
+}
+
+/** Parse raw route parameters (`{ id }`) into validated {@link SessionPathParams}, or `null` when invalid. */
+export function parseSessionPathParams(raw: unknown): SessionPathParams | null {
+    if (!isRecord(raw)) {
+        return null;
+    }
+    const id = parseSessionId(raw.id);
+    return id === null ? null : { id };
 }
 
 /**
@@ -62,4 +85,20 @@ export function parseSessionPrefixAnchor(query: unknown): SessionPrefixAnchor | 
         afterCount: parsedCount,
         afterEntryId,
     };
+}
+
+/** Append a {@link SessionPrefixAnchor} onto an existing `URLSearchParams` instance. */
+export function appendSessionPrefixAnchor(anchor: SessionPrefixAnchor, params: URLSearchParams): void {
+    params.set("entriesVersion", anchor.entriesVersion);
+    params.set("afterCount", String(anchor.afterCount));
+    params.set("afterEntryId", anchor.afterEntryId);
+}
+
+/** Encode a {@link SessionPrefixAnchor} into URL query parameters symmetric with {@link parseSessionPrefixAnchor}. */
+export function encodeSessionPrefixAnchorQuery(anchor?: SessionPrefixAnchor): URLSearchParams {
+    const params = new URLSearchParams();
+    if (anchor !== undefined) {
+        appendSessionPrefixAnchor(anchor, params);
+    }
+    return params;
 }

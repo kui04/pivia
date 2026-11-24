@@ -1,4 +1,4 @@
-import { parseSyncHandshakeQuery } from "@pivia/protocol";
+import { WS_ENDPOINTS } from "@pivia/protocol";
 import type { FastifyInstance } from "fastify";
 
 import type { SessionRegistry } from "../sessions/runtime.ts";
@@ -33,8 +33,8 @@ export function registerWorkspaceSocketRoute(
     });
 
     app.register((instance, _options, done) => {
-        instance.get("/ws/workspace", { websocket: true }, (socket, request) => {
-            const handshake = parseSyncHandshakeQuery<"catalog">(request.query);
+        instance.get(WS_ENDPOINTS.workspace.pattern, { websocket: true }, (socket, request) => {
+            const handshake = WS_ENDPOINTS.workspace.parseQuery(request.query);
             let detach: () => void = () => {};
             const sender = createBackpressureSender(socket, request.log, {
                 onClose: () => {

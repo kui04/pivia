@@ -1,4 +1,9 @@
-import { parseWorkspaceWsServerMessage, type CatalogCursor, type WorkspaceWsServerMessage } from "@pivia/protocol";
+import {
+    parseWorkspaceWsServerMessage,
+    WS_ENDPOINTS,
+    type CatalogCursor,
+    type WorkspaceWsServerMessage,
+} from "@pivia/protocol";
 
 import { Log } from "@/lib/log";
 
@@ -31,14 +36,8 @@ export function buildWorkspaceSocketUrl(pageUrl?: string, cursor?: CatalogCursor
     if (source === undefined) {
         throw new Error("A WebSocket URL is required outside the browser.");
     }
-    const url = new URL(source);
+    const url = new URL(WS_ENDPOINTS.workspace.buildPath(cursor === undefined ? undefined : { cursor }), source);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-    url.pathname = "/ws/workspace";
-    url.search = "";
-    if (cursor !== undefined) {
-        url.searchParams.set("epoch", cursor.epoch);
-        url.searchParams.set("afterSeq", String(cursor.seq));
-    }
     url.hash = "";
     return url.toString();
 }

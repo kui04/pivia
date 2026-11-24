@@ -4,6 +4,7 @@ import {
     classifySessionClose,
     parseSessionWsServerMessage,
     SESSION_CLOSE_CODE,
+    WS_ENDPOINTS,
     type SessionCloseReason,
     type SessionHandshake,
     type SessionId,
@@ -100,21 +101,9 @@ export function buildSessionSocketUrl(sessionId: SessionId, handshake?: SessionH
     if (source === undefined) {
         throw new Error("A WebSocket URL is required outside the browser.");
     }
-    const url = new URL(source);
+    const url = new URL(WS_ENDPOINTS.session.buildPath({ id: sessionId }, handshake), source);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-    url.pathname = `/ws/sessions/${encodeURIComponent(sessionId)}`;
-    url.search = "";
     url.hash = "";
-    const params = handshake ?? {};
-    if (params.cursor !== undefined) {
-        url.searchParams.set("epoch", params.cursor.epoch);
-        url.searchParams.set("afterSeq", String(params.cursor.seq));
-    }
-    if (params.hint !== undefined) {
-        url.searchParams.set("entriesVersion", params.hint.entriesVersion);
-        url.searchParams.set("afterCount", String(params.hint.afterCount));
-        url.searchParams.set("afterEntryId", params.hint.afterEntryId);
-    }
     return url.toString();
 }
 

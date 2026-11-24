@@ -1,18 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
-    assertNever,
     commandIdOf,
-    isRecord,
-    parseAuthLoginResponse,
-    parseAuthLogoutResponse,
-    parseAuthStatusResponse,
     parseCloseSessionResponse,
     parseCreateSessionResponse,
-    parseDirectoryListResponse,
     parseEntriesVersion,
     parseExtensionUiResponse,
-    parseHealthResponse,
     parseSessionDetailResponse,
     parseSessionId,
     parseSessionListResponse,
@@ -24,23 +17,9 @@ import {
     parseSessionWsClientMessage,
     parseSessionWsHandshakeQuery,
     parseSessionWsServerMessage,
-    parseWorkspaceWsServerMessage,
 } from "./index.ts";
 
-describe("protocol parse helpers", () => {
-    it("isRecord accepts plain objects and rejects null, arrays, and primitives", () => {
-        expect(isRecord({})).toBe(true);
-        expect(isRecord({ a: 1 })).toBe(true);
-        expect(isRecord(null)).toBe(false);
-        expect(isRecord([])).toBe(false);
-        expect(isRecord("text")).toBe(false);
-        expect(isRecord(42)).toBe(false);
-    });
-
-    it("assertNever throws with the serialized value", () => {
-        expect(() => assertNever("unexpected" as never, "Bad variant")).toThrow('Bad variant: "unexpected"');
-    });
-
+describe("sessions codecs", () => {
     it("parseSessionId accepts safe SDK session ids and rejects path traversal or invalid edges", () => {
         expect(parseSessionId("session-1")).toBe("session-1");
         expect(parseSessionId("0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b")).toBe("0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b");
@@ -158,7 +137,7 @@ describe("protocol parse helpers", () => {
         expect(parseSessionWsClientMessage({ type: "unknown_command" })).toBeNull();
     });
 
-    it("parses HTTP response payloads and rejects malformed shapes", () => {
+    it("parses session HTTP responses and summary payloads", () => {
         const summary = {
             id: "session-1",
             cwd: "/tmp/project",
@@ -172,15 +151,6 @@ describe("protocol parse helpers", () => {
             attachedClients: 0,
         };
 
-        expect(parseHealthResponse({ status: "ok", version: "0.1.0" })).toEqual({ status: "ok", version: "0.1.0" });
-        expect(parseHealthResponse({ status: "down", version: "0.1.0" })).toBeNull();
-        expect(parseAuthStatusResponse({ authRequired: true, authenticated: false })).toEqual({
-            authRequired: true,
-            authenticated: false,
-        });
-        expect(parseAuthLoginResponse({ authenticated: true })).toEqual({ authenticated: true });
-        expect(parseAuthLoginResponse({ authenticated: false })).toBeNull();
-        expect(parseAuthLogoutResponse({ authenticated: false })).toEqual({ authenticated: false });
         expect(parseCloseSessionResponse({ closed: true })).toEqual({ closed: true });
         expect(parseSessionSummary(summary)).toEqual(summary);
         const longFirstMessage = "x".repeat(2_000);
@@ -188,6 +158,13 @@ describe("protocol parse helpers", () => {
             longFirstMessage,
         );
         expect(parseSessionSummary({ ...summary, id: "../bad" })).toBeNull();
+        expect(parseSessionSummaryPatch({ runtimeState: "idle" })).toEqual({ runtimeState: "idle" });
+        expect(parseSessionSummaryPatch({ messageCount: -1 })).toBeNull();
+        expect(parseSessionSummaryPatch({ attachedClients: 1.5 })).toBeNull();
+        expect(parseSessionSummaryPatch({ modifiedAtMs: Number.NaN })).toBeNull();
+        expect(parseSessionSummaryPatch({ name: 42 })).toBeNull();
+        expect(parseSessionSummaryPatch({ firstMessage: 42 })).toBeNull();
+
         expect(
             parseSessionListResponse({
                 sessions: [summary],
@@ -348,196 +325,5 @@ describe("protocol parse helpers", () => {
             message: "Bad JSON",
         });
         expect(parseSessionWsServerMessage({ type: "unknown_type" })).toBeNull();
-    });
-
-    it("parses directory list responses and rejects malformed payloads", () => {
-        expect(
-            parseDirectoryListResponse({
-                path: "/home/u",
-                parent: "/home",
-                directories: ["repo", "docs"],
-                truncated: false,
-            }),
-        ).toEqual({
-            path: "/home/u",
-            parent: "/home",
-            directories: ["repo", "docs"],
-            truncated: false,
-        });
-        expect(parseDirectoryListResponse({ path: "/", parent: null, directories: [], truncated: false })).toEqual({
-            path: "/",
-            parent: null,
-            directories: [],
-            truncated: false,
-        });
-        expect(parseDirectoryListResponse({ path: "", parent: null, directories: [], truncated: false })).toBeNull();
-        expect(parseDirectoryListResponse({ path: "/", parent: 123, directories: [], truncated: false })).toBeNull();
-        expect(
-            parseDirectoryListResponse({ path: "/", parent: null, directories: [123], truncated: false }),
-        ).toBeNull();
-        expect(parseDirectoryListResponse({ path: "/", parent: null, directories: [] })).toBeNull();
-    });
-
-    it("parses workspace SyncFrame messages and rejects malformed payloads", () => {
-        const sessionSummary = {
-            id: "session-1",
-            cwd: "/workspace/repo",
-            name: "First session",
-            firstMessage: "hi",
-            messageCount: 2,
-            createdAtMs: 1000,
-            modifiedAtMs: 2000,
-            hasParent: false,
-            runtimeState: "idle",
-            attachedClients: 1,
-        };
-
-        expect(
-            parseWorkspaceWsServerMessage({
-                type: "sync:snapshot",
-                cursor: { epoch: "epoch-1", seq: 0 },
-                snapshot: { sessions: [sessionSummary], updatedAtMs: 3000 },
-            }),
-        ).toEqual({
-            type: "sync:snapshot",
-            cursor: { epoch: "epoch-1", seq: 0 },
-            snapshot: { sessions: [sessionSummary], updatedAtMs: 3000 },
-        });
-
-        expect(
-            parseWorkspaceWsServerMessage({
-                type: "sync:delta",
-                cursor: { epoch: "epoch-1", seq: 1 },
-                delta: { op: "upsert", item: sessionSummary },
-            }),
-        ).toEqual({
-            type: "sync:delta",
-            cursor: { epoch: "epoch-1", seq: 1 },
-            delta: { op: "upsert", item: sessionSummary },
-        });
-
-        expect(
-            parseWorkspaceWsServerMessage({
-                type: "sync:delta",
-                cursor: { epoch: "epoch-1", seq: 2 },
-                delta: {
-                    op: "patch",
-                    id: "session-1",
-                    patch: {
-                        name: null,
-                        firstMessage: "full message",
-                        messageCount: 3,
-                        modifiedAtMs: 2500,
-                        runtimeState: "streaming",
-                        attachedClients: 2,
-                    },
-                },
-            }),
-        ).toEqual({
-            type: "sync:delta",
-            cursor: { epoch: "epoch-1", seq: 2 },
-            delta: {
-                op: "patch",
-                id: "session-1",
-                patch: {
-                    name: null,
-                    firstMessage: "full message",
-                    messageCount: 3,
-                    modifiedAtMs: 2500,
-                    runtimeState: "streaming",
-                    attachedClients: 2,
-                },
-            },
-        });
-        expect(parseSessionSummaryPatch({ runtimeState: "idle" })).toEqual({ runtimeState: "idle" });
-
-        expect(
-            parseWorkspaceWsServerMessage({
-                type: "sync:delta",
-                cursor: { epoch: "epoch-1", seq: 3 },
-                delta: { op: "remove", id: "session-1" },
-            }),
-        ).toEqual({
-            type: "sync:delta",
-            cursor: { epoch: "epoch-1", seq: 3 },
-            delta: { op: "remove", id: "session-1" },
-        });
-
-        expect(parseWorkspaceWsServerMessage(null)).toBeNull();
-        expect(parseWorkspaceWsServerMessage({ type: "unknown_type" })).toBeNull();
-        expect(
-            parseWorkspaceWsServerMessage({
-                type: "sync:snapshot",
-                snapshot: { sessions: [sessionSummary], updatedAtMs: 3000 },
-            }),
-        ).toBeNull();
-        expect(
-            parseWorkspaceWsServerMessage({
-                type: "sync:snapshot",
-                cursor: { epoch: "epoch-1", seq: 0 },
-                snapshot: { sessions: [{ ...sessionSummary, id: "../bad" }], updatedAtMs: 3000 },
-            }),
-        ).toBeNull();
-        expect(
-            parseWorkspaceWsServerMessage({
-                type: "sync:snapshot",
-                cursor: { epoch: "epoch-1", seq: 0 },
-                snapshot: { sessions: [sessionSummary], updatedAtMs: Number.NaN },
-            }),
-        ).toBeNull();
-        expect(
-            parseWorkspaceWsServerMessage({
-                type: "sync:delta",
-                cursor: { epoch: "epoch-1", seq: 1 },
-                delta: { op: "upsert", item: { ...sessionSummary, runtimeState: "bogus" } },
-            }),
-        ).toBeNull();
-        expect(
-            parseWorkspaceWsServerMessage({
-                type: "sync:delta",
-                cursor: { epoch: "", seq: 1 },
-                delta: { op: "upsert", item: sessionSummary },
-            }),
-        ).toBeNull();
-        expect(
-            parseWorkspaceWsServerMessage({
-                type: "sync:delta",
-                cursor: { epoch: "epoch-1", seq: 2 },
-                delta: { op: "patch", id: "../bad", patch: { runtimeState: "idle" } },
-            }),
-        ).toBeNull();
-        expect(
-            parseWorkspaceWsServerMessage({
-                type: "sync:delta",
-                cursor: { epoch: "epoch-1", seq: 2 },
-                delta: { op: "patch", id: "session-1", patch: {} },
-            }),
-        ).toBeNull();
-        expect(
-            parseWorkspaceWsServerMessage({
-                type: "sync:delta",
-                cursor: { epoch: "epoch-1", seq: 2 },
-                delta: { op: "patch", id: "session-1", patch: { runtimeState: "bogus" } },
-            }),
-        ).toBeNull();
-        expect(parseSessionSummaryPatch({ messageCount: -1 })).toBeNull();
-        expect(parseSessionSummaryPatch({ attachedClients: 1.5 })).toBeNull();
-        expect(parseSessionSummaryPatch({ modifiedAtMs: Number.NaN })).toBeNull();
-        expect(parseSessionSummaryPatch({ name: 42 })).toBeNull();
-        expect(parseSessionSummaryPatch({ firstMessage: 42 })).toBeNull();
-        expect(
-            parseWorkspaceWsServerMessage({
-                type: "sync:delta",
-                cursor: { epoch: "epoch-1", seq: -1 },
-                delta: { op: "remove", id: "session-1" },
-            }),
-        ).toBeNull();
-        expect(
-            parseWorkspaceWsServerMessage({
-                type: "sync:delta",
-                cursor: { epoch: "epoch-1", seq: 3 },
-                delta: { op: "remove", id: "../bad" },
-            }),
-        ).toBeNull();
     });
 });

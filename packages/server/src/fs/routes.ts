@@ -1,7 +1,7 @@
 import { readdir, realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 
-import type { DirectoryListResponse } from "@pivia/protocol";
+import { HTTP_ENDPOINTS, type DirectoryListResponse } from "@pivia/protocol";
 import type { FastifyInstance, FastifyReply } from "fastify";
 
 import { sendApiError } from "../http/errors.ts";
@@ -17,10 +17,6 @@ const MAX_LISTED_DIRECTORIES = 1000;
 
 /** Maximum number of symlinks whose targets are checked at once. */
 const SYMLINK_STAT_CONCURRENCY = 8;
-
-interface DirectoryQuery {
-    readonly path?: string | undefined;
-}
 
 function isEnoentError(error: unknown): boolean {
     return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
@@ -67,11 +63,11 @@ async function collectSubdirectories(realPath: string): Promise<string[]> {
  * Register `/api/fs/*` routes for browsing host directories when starting a new session.
  */
 export function registerFsRoutes(app: FastifyInstance, options: FsRoutesOptions = {}): void {
-    app.get<{ Querystring: DirectoryQuery }>(
-        "/api/fs/directories",
+    app.get(
+        HTTP_ENDPOINTS.listDirectories.pattern,
         async (request, reply): Promise<DirectoryListResponse | FastifyReply> => {
-            const requested = typeof request.query.path === "string" ? request.query.path.trim() : "";
-            const targetPath = requested !== "" ? requested : (options.defaultDir ?? process.cwd());
+            const query = HTTP_ENDPOINTS.listDirectories.parseQuery(request.query);
+            const targetPath = query.path ?? options.defaultDir ?? process.cwd();
 
             if (!isAbsolute(targetPath)) {
                 return sendApiError(reply, 400, "invalid_request", "Directory path must be absolute.");

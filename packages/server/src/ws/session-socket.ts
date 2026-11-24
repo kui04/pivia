@@ -1,9 +1,8 @@
 import {
     commandIdOf,
-    parseSessionId,
     parseSessionWsClientMessage,
-    parseSessionWsHandshakeQuery,
     SESSION_CLOSE_CODE,
+    WS_ENDPOINTS,
     type SessionHandshake,
     type SessionId,
     type SessionWsClientMessage,
@@ -36,18 +35,6 @@ export const DEFAULT_WS_HEARTBEAT_INTERVAL_MS = 30_000;
 export interface SessionSocketRouteOptions {
     /** Ping interval in milliseconds; `0` disables the heartbeat. */
     readonly heartbeatIntervalMs?: number | undefined;
-}
-
-interface WsSessionParams {
-    readonly id: string;
-}
-
-interface WsSessionQuery {
-    readonly epoch?: string;
-    readonly afterSeq?: string;
-    readonly entriesVersion?: string;
-    readonly afterCount?: string;
-    readonly afterEntryId?: string;
 }
 
 interface OpenedWsSession {
@@ -103,29 +90,29 @@ export function registerSessionSocketRoute(
         // avoids decorating every request for values only WebSocket routes read.
         const openedWsSessions = new WeakMap<FastifyRequest, OpenedWsSession>();
 
-        instance.get<{ Params: WsSessionParams; Querystring: WsSessionQuery }>(
-            "/ws/sessions/:id",
+        instance.get(
+            WS_ENDPOINTS.session.pattern,
             {
                 websocket: true,
                 preValidation: async (request, reply) => {
-                    const sessionId = parseSessionId(request.params.id);
-                    if (sessionId === null) {
+                    const params = WS_ENDPOINTS.session.parseParams(request.params);
+                    if (params === null) {
                         return sendWsUpgradeError(reply, 400, "invalid_request", "Invalid session id.");
                     }
-                    const handshake = parseSessionWsHandshakeQuery(request.query);
+                    const handshake = WS_ENDPOINTS.session.parseQuery(request.query);
                     // A plain HTTP request to a WebSocket route falls through to the plugin's 404 handler.
                     if (!request.ws) {
                         return;
                     }
                     try {
-                        const handle = await sessionRegistry.open(sessionId);
+                        const handle = await sessionRegistry.open(params.id);
                         openedWsSessions.set(request, { handle, handshake });
                     } catch (error) {
                         if (error instanceof SessionRegistryError) {
                             reply.header("Connection", "close");
                             return sendRegistryError(reply, error);
                         }
-                        request.log.error({ err: error, sessionId }, "failed to open session for websocket");
+                        request.log.error({ err: error, sessionId: params.id }, "failed to open session for websocket");
                         return sendWsUpgradeError(reply, 500, "internal_error", "Internal server error.");
                     }
                 },
