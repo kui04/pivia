@@ -23,7 +23,7 @@ import { useId, useMemo, useState, type ReactElement } from "react";
 
 import { CodeBlock, Icon, IconButton, Image, ScrollArea } from "@components";
 import { copyFeedbackText, useCopyFeedback } from "@/hooks";
-import { cn, formatDuration, formatUsdCost } from "@/lib";
+import { cn, Formatter } from "@/lib";
 import {
     type TranscriptNestedCallStatus,
     type TranscriptNestedCallsSummary,
@@ -139,8 +139,8 @@ function renderNestedCallsSection(stepLabel: string, summary: TranscriptNestedCa
                         {summary.calls.map((call, index) => {
                             const statusMeta = NESTED_STATUS_META[call.status];
                             const StatusIcon = statusMeta.icon;
-                            const duration = call.durationMs !== null ? formatDuration(call.durationMs) : null;
-                            const cost = call.cost !== null && call.cost > 0 ? formatUsdCost(call.cost) : null;
+                            const duration = call.durationMs !== null ? Formatter.duration(call.durationMs) : null;
+                            const cost = call.cost !== null && call.cost > 0 ? Formatter.usdCost(call.cost) : null;
                             return (
                                 <li key={`${call.id}-${index}`} className={styles.nestedCallItem}>
                                     <div className={styles.nestedCallRow}>
@@ -173,7 +173,7 @@ function renderNestedCallsSection(stepLabel: string, summary: TranscriptNestedCa
             {summary.totalCost !== null || !summary.complete ? (
                 <div className={styles.nestedCallsFooter}>
                     {summary.totalCost !== null ? (
-                        <p className={styles.nestedCallsNote}>Model calls: {formatUsdCost(summary.totalCost)}</p>
+                        <p className={styles.nestedCallsNote}>Model calls: {Formatter.usdCost(summary.totalCost)}</p>
                     ) : null}
                     {!summary.complete ? (
                         <p className={styles.nestedCallsNote}>Nested call log truncated or incomplete.</p>
@@ -240,7 +240,7 @@ export function ToolCallBlock({
         [hasArguments, hasOutput, hasPreview, open, step.arguments],
     );
     const hasCopyable = hasOutput || (!hasPreview && (step.argumentsError !== null || hasArguments));
-    const formattedDuration = liveDurationMs !== null ? formatDuration(liveDurationMs) : null;
+    const formattedDuration = liveDurationMs !== null ? Formatter.duration(liveDurationMs) : null;
     const statusText = copyFeedbackText(copyStatus);
 
     /**

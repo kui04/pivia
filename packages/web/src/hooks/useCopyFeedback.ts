@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { copyText } from "@/lib";
+import { Clipboard } from "@/lib";
 
 /** How long the copy control keeps its success or failure state. */
 const COPY_FEEDBACK_MS = 2000;
@@ -66,7 +66,7 @@ export function useCopyFeedback(onCopied?: (text: string) => void): CopyFeedback
             return;
         }
 
-        copyText(text).then(
+        Clipboard.copy(text).then(
             () => {
                 setFeedback((value) => ({ status: "copied", pulse: value.pulse + 1 }));
                 onCopied?.(text);

@@ -43,7 +43,7 @@ CSS Modules use native nesting (no preprocessor). Follow these rules:
 
 ## Formatting
 
-- Component-free display formatters live in `packages/web/src/lib/format.ts` and are re-exported from `packages/web/src/lib/index.ts`; import them via `@/lib`. They take plain values and return strings so components and stores share one output. Domain-specific message composition (for example a compaction note or a truncation warning) stays with the store that owns the data.
+- Component-free display helpers live in `packages/web/src/lib/` and are re-exported from `packages/web/src/lib/index.ts`; import them via `@/lib`. `Formatter` groups the duration, byte size, USD cost, token count and relative age formatters, and `Clipboard` owns clipboard writes. They take plain values and return strings so components and stores share one output. Domain-specific message composition (for example a compaction note or a truncation warning) stays with the store that owns the data.
 
 ## State, Cache, and Transport
 

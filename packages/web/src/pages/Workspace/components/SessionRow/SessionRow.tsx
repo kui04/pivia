@@ -4,7 +4,7 @@ import { memo, useEffect, useRef, useState, type PointerEvent, type ReactElement
 
 import { IconButton, Menu, MenuItem } from "@components";
 import { useMediaQuery } from "@/hooks";
-import { formatRelativeAge } from "@/lib";
+import { Formatter } from "@/lib";
 import { sessionRowStatus, type SessionRow as SessionRowModel } from "@/stores/workspace/model";
 
 import styles from "./SessionRow.module.css";
@@ -148,7 +148,7 @@ function SessionRowInner({
                 </span>
                 <span className={styles.age} data-state={status.kind === "active" ? status.state : undefined}>
                     {status.kind === "idle" ? (
-                        formatRelativeAge(status.modifiedAtMs, nowMs)
+                        Formatter.relativeAge(status.modifiedAtMs, nowMs)
                     ) : (
                         <span className={styles.indicator} role="img" aria-label={status.label} title={status.label} />
                     )}

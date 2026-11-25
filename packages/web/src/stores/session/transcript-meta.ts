@@ -1,7 +1,7 @@
 import type { AssistantMessageDiagnostic } from "@earendil-works/pi-ai";
 import { isFiniteNumber, isRecord } from "@pivia/protocol";
 
-import { formatCompactTokenCount } from "@/lib";
+import { Formatter } from "@/lib";
 
 /** Billed token and cost metadata extracted from compaction or branch-summary usage. */
 export type TranscriptSummaryBilling = {
@@ -70,7 +70,7 @@ export function formatSystemNoteMeta(note: {
     }
     if (note.billing !== undefined) {
         const costSuffix = note.billing.approxCostUsd !== null ? ` (~$${note.billing.approxCostUsd.toFixed(2)})` : "";
-        parts.push(`${formatCompactTokenCount(note.billing.billedTokens)} tokens billed${costSuffix}`);
+        parts.push(`${Formatter.compactTokenCount(note.billing.billedTokens)} tokens billed${costSuffix}`);
     }
     return parts.length > 0 ? parts.join(" · ") : null;
 }

@@ -6,7 +6,7 @@
  * own entry points because they are subsystems rather than helpers.
  */
 export { stripAnsi } from "./ansi";
-export { copyText } from "./clipboard";
+export { Clipboard } from "./clipboard";
 export { cn } from "./cn";
-export { formatByteSize, formatCompactTokenCount, formatDuration, formatRelativeAge, formatUsdCost } from "./format";
+export { Formatter } from "./format";
 export { createLog, Log, type LogLevel, type LogOptions } from "./log";

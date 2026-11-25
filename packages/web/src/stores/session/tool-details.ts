@@ -13,7 +13,7 @@ import type {
 import { assertNever, isFiniteNumber, isImageContent, isRecord } from "@pivia/protocol";
 
 import { resolveLanguage } from "@/components/CodeBlock/highlight";
-import { formatByteSize } from "@/lib";
+import { Formatter } from "@/lib";
 
 const DEFAULT_MAX_BYTES = 50 * 1024;
 const DEFAULT_MAX_LINES = 2000;
@@ -540,7 +540,7 @@ function formatTruncationNotice(truncation: TruncationResult, includeMaxLinesLim
     if (truncation.firstLineExceedsLimit) {
         return {
             kind: "notice",
-            message: `First line exceeds ${formatByteSize(truncation.maxBytes || DEFAULT_MAX_BYTES)} limit`,
+            message: `First line exceeds ${Formatter.byteSize(truncation.maxBytes || DEFAULT_MAX_BYTES)} limit`,
         };
     }
     if (truncation.truncatedBy === "lines") {
@@ -552,7 +552,7 @@ function formatTruncationNotice(truncation: TruncationResult, includeMaxLinesLim
     }
     return {
         kind: "notice",
-        message: `Truncated: ${truncation.outputLines} lines shown (${formatByteSize(truncation.maxBytes || DEFAULT_MAX_BYTES)} limit)`,
+        message: `Truncated: ${truncation.outputLines} lines shown (${Formatter.byteSize(truncation.maxBytes || DEFAULT_MAX_BYTES)} limit)`,
     };
 }
 
@@ -580,7 +580,7 @@ function buildLimitTruncationWarnings(
         parts.push(limitMessage);
     }
     if (truncation?.truncated === true) {
-        parts.push(`${formatByteSize(truncation.maxBytes || DEFAULT_MAX_BYTES)} limit`);
+        parts.push(`${Formatter.byteSize(truncation.maxBytes || DEFAULT_MAX_BYTES)} limit`);
     }
     if (extraNote !== undefined) {
         parts.push(extraNote);
@@ -645,7 +645,7 @@ function formatRecordArgs(record: NestedToolCallRecord): string {
         return JSON.stringify(record.arguments);
     }
     if (record.argumentsBytes !== undefined) {
-        return `(${formatByteSize(record.argumentsBytes)} args)`;
+        return `(${Formatter.byteSize(record.argumentsBytes)} args)`;
     }
     return "";
 }

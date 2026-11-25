@@ -1,3 +1,9 @@
+/** Clipboard action for application code. */
+export type Clipboard = {
+    /** Writes plain text; rejects with a plain Error when both paths fail. */
+    copy(text: string): Promise<void>;
+};
+
 /**
  * Writes plain text to the system clipboard.
  *
@@ -9,7 +15,7 @@
  *
  * Rejects with a plain Error when both paths fail.
  */
-export async function copyText(text: string): Promise<void> {
+async function copy(text: string): Promise<void> {
     if (typeof navigator.clipboard?.writeText === "function") {
         try {
             await navigator.clipboard.writeText(text);
@@ -23,6 +29,9 @@ export async function copyText(text: string): Promise<void> {
         throw new Error("The clipboard is not available");
     }
 }
+
+/** The app-wide clipboard action. */
+export const Clipboard: Clipboard = { copy };
 
 /**
  * The legacy copy path. It needs user activation. When the async API is absent it

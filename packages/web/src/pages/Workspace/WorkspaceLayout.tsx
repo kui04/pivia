@@ -4,7 +4,7 @@ import { Outlet, useNavigate, useParams } from "react-router";
 
 import { Drawer } from "@components";
 import { useMediaQuery, useNow } from "@/hooks";
-import { copyText, Log } from "@/lib";
+import { Clipboard, Log } from "@/lib";
 import { showError, showWarning } from "@/lib/toast";
 import { ApiClientError, apiClient as defaultApiClient, type ApiClient } from "@/lib/transport/http";
 import type { WebSocketConstructor } from "@/lib/transport/websocket";
@@ -121,7 +121,7 @@ export function WorkspaceLayout(props: WorkspaceLayoutProps = {}): ReactElement 
     const knownCwds = useMemo(() => collectKnownCwds(sessions), [sessions]);
 
     const handleCopySessionId = useCallback((id: SessionId) => {
-        void copyText(id).catch((cause: unknown) => {
+        void Clipboard.copy(id).catch((cause: unknown) => {
             const message = cause instanceof Error ? cause.message : String(cause);
             Log.warn(`Cannot copy session ID: ${message}`);
             showError({

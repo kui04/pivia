@@ -14,7 +14,7 @@ function readNonNegativeFinite(value: number): number | null {
  *
  * Negative and non-finite input reads as zero so a broken clock never prints NaN into the view.
  */
-export function formatDuration(durationMs: number): string {
+function formatDuration(durationMs: number): string {
     const safeMs = Math.max(0, Number.isFinite(durationMs) ? durationMs : 0);
     const roundedMs = Math.round(safeMs);
     if (roundedMs < 1_000) {
@@ -33,7 +33,7 @@ export function formatDuration(durationMs: number): string {
 }
 
 /** Formats a byte count using the same IEC units as `pi-coding-agent` (`B`, `KB`, `MB`). */
-export function formatByteSize(bytes: number): string {
+function formatByteSize(bytes: number): string {
     if (!Number.isFinite(bytes) || bytes < 0) {
         return "0B";
     }
@@ -47,13 +47,13 @@ export function formatByteSize(bytes: number): string {
 }
 
 /** Formats USD cost using two decimals, or two significant digits for fractions of a cent. */
-export function formatUsdCost(cost: number): string {
+function formatUsdCost(cost: number): string {
     const safe = readNonNegativeFinite(cost) ?? 0;
     return `$${safe >= 0.01 ? safe.toFixed(2) : safe.toPrecision(2)}`;
 }
 
 /** Formats a token count with compact `k`/`M` suffixes matching `pi-coding-agent` footer output. */
-export function formatCompactTokenCount(count: number): string {
+function formatCompactTokenCount(count: number): string {
     const safeCount = readNonNegativeFinite(count) ?? 0;
     if (safeCount < 1_000) {
         return Math.round(safeCount).toString();
@@ -71,7 +71,7 @@ export function formatCompactTokenCount(count: number): string {
 }
 
 /** Formats a compact relative age (`now`, `5m`, `2h`, `3d`, `2w`, `1y`). */
-export function formatRelativeAge(timestampMs: number, nowMs: number): string {
+function formatRelativeAge(timestampMs: number, nowMs: number): string {
     const deltaMs = Math.max(0, nowMs - timestampMs);
     if (deltaMs < MINUTE_MS) {
         return "now";
@@ -90,3 +90,26 @@ export function formatRelativeAge(timestampMs: number, nowMs: number): string {
     }
     return `${String(Math.floor(deltaMs / YEAR_MS))}y`;
 }
+
+/** Display formatters shared by components and stores. */
+export type Formatter = {
+    /** Formats an elapsed time from milliseconds; see the private implementation for the tiers. */
+    duration(durationMs: number): string;
+    /** Formats a byte count with IEC units. */
+    byteSize(bytes: number): string;
+    /** Formats a USD cost with cents or two significant digits. */
+    usdCost(cost: number): string;
+    /** Formats a token count with compact `k`/`M` suffixes. */
+    compactTokenCount(count: number): string;
+    /** Formats a compact relative age. */
+    relativeAge(timestampMs: number, nowMs: number): string;
+};
+
+/** The app-wide display formatters. */
+export const Formatter: Formatter = {
+    duration: formatDuration,
+    byteSize: formatByteSize,
+    usdCost: formatUsdCost,
+    compactTokenCount: formatCompactTokenCount,
+    relativeAge: formatRelativeAge,
+};

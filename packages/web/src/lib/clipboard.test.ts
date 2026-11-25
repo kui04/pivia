@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { copyText } from "./clipboard";
+import { Clipboard } from "./clipboard";
 
 class FakeHTMLElement {
     focus = vi.fn();
@@ -44,12 +44,12 @@ afterEach(() => {
     vi.restoreAllMocks();
 });
 
-describe("copyText", () => {
+describe("Clipboard.copy", () => {
     it("writes through the async clipboard API when it is available", async () => {
         const writeText = vi.fn().mockResolvedValue(undefined);
         vi.stubGlobal("navigator", { clipboard: { writeText } });
 
-        await copyText("hello");
+        await Clipboard.copy("hello");
 
         expect(writeText).toHaveBeenCalledExactlyOnceWith("hello");
     });
@@ -58,7 +58,7 @@ describe("copyText", () => {
         vi.stubGlobal("navigator", {});
         const { fakeDocument, textarea } = installLegacyClipboard({ copied: true });
 
-        await copyText("hello");
+        await Clipboard.copy("hello");
 
         expect(fakeDocument.createElement).toHaveBeenCalledExactlyOnceWith("textarea");
         expect(fakeDocument.body.append).toHaveBeenCalledExactlyOnceWith(textarea);
@@ -75,7 +75,7 @@ describe("copyText", () => {
         const previousFocus = new FakeHTMLElement();
         installLegacyClipboard({ copied: true, activeElement: previousFocus });
 
-        await copyText("hello");
+        await Clipboard.copy("hello");
 
         expect(previousFocus.focus).toHaveBeenCalledExactlyOnceWith({ preventScroll: true });
     });
@@ -85,7 +85,7 @@ describe("copyText", () => {
         vi.stubGlobal("navigator", { clipboard: { writeText } });
         const { fakeDocument } = installLegacyClipboard({ copied: true });
 
-        await copyText("hello");
+        await Clipboard.copy("hello");
 
         expect(writeText).toHaveBeenCalledOnce();
         expect(fakeDocument.execCommand).toHaveBeenCalledExactlyOnceWith("copy");
@@ -96,7 +96,7 @@ describe("copyText", () => {
         vi.stubGlobal("navigator", { clipboard: { writeText } });
         const { fakeDocument, textarea } = installLegacyClipboard({ copied: false });
 
-        await expect(copyText("hello")).rejects.toThrow("The clipboard is not available");
+        await expect(Clipboard.copy("hello")).rejects.toThrow("The clipboard is not available");
 
         expect(fakeDocument.execCommand).toHaveBeenCalledOnce();
         expect(textarea.remove).toHaveBeenCalledOnce();

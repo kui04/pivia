@@ -11,7 +11,7 @@ import {
 import { Fragment, useId, useState, type ReactElement } from "react";
 
 import { Icon, Markdown } from "@components";
-import { cn, formatDuration } from "@/lib";
+import { cn, Formatter } from "@/lib";
 import { type TranscriptStep, type TranscriptTurnItem, type TranscriptTurnOutcome } from "@/stores/session/transcript";
 
 import { useLiveDuration } from "../../useLiveDuration";
@@ -42,10 +42,10 @@ function formatHeaderLabel(streaming: boolean, durationMs: number | null): strin
     if (streaming) {
         // The first sample of a running turn arrives on the next frame; until then the header names
         // the state without a misleading zero.
-        return durationMs === null ? "Working" : `Working for ${formatDuration(durationMs)}`;
+        return durationMs === null ? "Working" : `Working for ${Formatter.duration(durationMs)}`;
     }
 
-    return durationMs !== null ? `Worked for ${formatDuration(durationMs)}` : "Worked";
+    return durationMs !== null ? `Worked for ${Formatter.duration(durationMs)}` : "Worked";
 }
 
 type TurnFooterNotice = {
