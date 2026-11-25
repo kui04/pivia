@@ -121,7 +121,7 @@ export const BashCollapsed: Story = {
         const trigger = canvas.getByRole("button", { name: /Bash/ });
 
         await expect(trigger).toHaveAttribute("aria-expanded", "false");
-        await expect(canvas.getByText("0.1s")).toBeVisible();
+        await expect(canvas.getByText("120ms")).toBeVisible();
 
         await userEvent.click(trigger);
         await expect(trigger).toHaveAttribute("aria-expanded", "true");
@@ -184,9 +184,9 @@ export const Running: Story = {
             "the running viewport",
         );
 
-        await expect(timer).toHaveTextContent(/^\d+\.\ds$/);
+        await expect(timer).toHaveTextContent(/^\d+ms$|^\d+\.\ds$/);
         await waitFor(async () => {
-            await expect(timer.textContent).not.toBe("0.0s");
+            await expect(timer.textContent).not.toBe("0ms");
             await expect(viewport.scrollHeight - (viewport.scrollTop + viewport.clientHeight)).toBeLessThanOrEqual(4);
         });
     },

@@ -1,6 +1,8 @@
 import type { AssistantMessageDiagnostic } from "@earendil-works/pi-ai";
 import { isFiniteNumber, isRecord } from "@pivia/protocol";
 
+import { formatCompactTokenCount } from "@/lib";
+
 /** Billed token and cost metadata extracted from compaction or branch-summary usage. */
 export type TranscriptSummaryBilling = {
     /** Total billed tokens (`input + output + cacheRead + cacheWrite`), non-negative. */
@@ -20,26 +22,6 @@ const COMPACTION_COST_NOTICE_MIN_USD = 0.01;
 
 function readNonNegativeFinite(value: unknown): number | null {
     return isFiniteNumber(value) && value >= 0 ? value : null;
-}
-
-/**
- * Formats a token count with compact `k`/`M` suffixes matching `pi-coding-agent` footer output.
- */
-export function formatCompactTokenCount(count: number): string {
-    const safeCount = readNonNegativeFinite(count) ?? 0;
-    if (safeCount < 1_000) {
-        return Math.round(safeCount).toString();
-    }
-    if (safeCount < 10_000) {
-        return `${(safeCount / 1_000).toFixed(1)}k`;
-    }
-    if (safeCount < 1_000_000) {
-        return `${Math.round(safeCount / 1_000)}k`;
-    }
-    if (safeCount < 10_000_000) {
-        return `${(safeCount / 1_000_000).toFixed(1)}M`;
-    }
-    return `${Math.round(safeCount / 1_000_000)}M`;
 }
 
 /**

@@ -531,7 +531,7 @@ export const Transcript: Story = {
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
         await expect(await canvas.findByText("Show the transcript view for this session.")).toBeVisible();
-        await expect(canvas.getByRole("button", { name: "Worked for 4s" })).toBeVisible();
+        await expect(canvas.getByRole("button", { name: "Worked for 4.0s" })).toBeVisible();
         await expect(canvas.getByText("The transcript view is connected to the session store.")).toBeVisible();
         await expect(canvas.getByRole("region", { name: "Transcript" })).toBeVisible();
     },
@@ -586,7 +586,7 @@ export const StreamingAssistant: Story = {
         await expect(canvas.getByRole("button", { name: /Bash/ })).toBeVisible();
 
         const runningTimer = canvasElement.querySelector("[data-running='true']");
-        await expect(runningTimer).toHaveTextContent(/^\d+\.\ds$/);
+        await expect(runningTimer).toHaveTextContent(/^\d+ms$|^\d+\.\ds$/);
     },
 };
 

@@ -322,33 +322,6 @@ export function sessionRowStatus(
     }
 }
 
-const MINUTE_MS = 60_000;
-const HOUR_MS = 60 * MINUTE_MS;
-const DAY_MS = 24 * HOUR_MS;
-const WEEK_MS = 7 * DAY_MS;
-const YEAR_MS = 365 * DAY_MS;
-
-/** Formats a compact relative age (`now`, `5m`, `2h`, `3d`, `2w`, `1y`). */
-export function formatRelativeAge(timestampMs: number, nowMs: number): string {
-    const deltaMs = Math.max(0, nowMs - timestampMs);
-    if (deltaMs < MINUTE_MS) {
-        return "now";
-    }
-    if (deltaMs < HOUR_MS) {
-        return `${String(Math.floor(deltaMs / MINUTE_MS))}m`;
-    }
-    if (deltaMs < DAY_MS) {
-        return `${String(Math.floor(deltaMs / HOUR_MS))}h`;
-    }
-    if (deltaMs < WEEK_MS) {
-        return `${String(Math.floor(deltaMs / DAY_MS))}d`;
-    }
-    if (deltaMs < YEAR_MS) {
-        return `${String(Math.floor(deltaMs / WEEK_MS))}w`;
-    }
-    return `${String(Math.floor(deltaMs / YEAR_MS))}y`;
-}
-
 /** Collects unique non-empty working directories ordered by most recently active session first. */
 export function collectKnownCwds(sessions: readonly SessionSummary[]): readonly string[] {
     const seen = new Set<string>();

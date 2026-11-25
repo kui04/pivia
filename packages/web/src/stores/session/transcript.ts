@@ -9,9 +9,7 @@ import type { LiveToolExecutionState } from "./reducer";
 import { parseSkillBlock } from "./skill-block";
 import {
     buildToolPresentation,
-    formatNestedCallDuration,
     formatReadLineRangeSummary,
-    formatUsdCost,
     readOptionalPositiveNumber,
     readToolFilePath,
     toNonNegativeDuration,
@@ -46,7 +44,7 @@ function ignoreUnknownVariant(value: never): void {
     void value;
 }
 
-export { formatNestedCallDuration, formatSystemNoteMeta, formatUsdCost };
+export { formatSystemNoteMeta };
 
 export type {
     TranscriptNestedCallStatus,
@@ -1171,31 +1169,4 @@ export function buildTranscript(
     flushTurn(true);
 
     return transcript;
-}
-
-/**
- * Formats a turn's total duration for the `Worked for ...` header (`0s`..`59s`, `1m`, `2m 5s`).
- */
-export function formatTurnDuration(durationMs: number): string {
-    const totalSeconds = Math.max(0, Math.round(durationMs / 1000));
-    if (totalSeconds < 60) {
-        return `${totalSeconds}s`;
-    }
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = totalSeconds % 60;
-    return seconds === 0 ? `${minutes}m` : `${minutes}m ${seconds}s`;
-}
-
-/**
- * Formats a single tool call's duration (`0.0s`..`59.9s`, `1m`, `2m 5s`).
- */
-export function formatToolDuration(durationMs: number): string {
-    const tenths = Math.max(0, Math.round(durationMs / 100));
-    if (tenths < 600) {
-        return `${(tenths / 10).toFixed(1)}s`;
-    }
-    const totalSeconds = Math.round(tenths / 10);
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = totalSeconds % 60;
-    return seconds === 0 ? `${minutes}m` : `${minutes}m ${seconds}s`;
 }

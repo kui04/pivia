@@ -3,7 +3,7 @@ import type { FileEntry } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 
 import { projectSessionTranscript } from "./projection";
-import { buildTranscript, describeToolCall, formatToolDuration, formatTurnDuration } from "./transcript";
+import { buildTranscript, describeToolCall } from "./transcript";
 
 const EMPTY_USAGE = {
     input: 0,
@@ -1431,26 +1431,6 @@ describe("describeToolCall", () => {
             describeToolCall("mcp__github__get_issue", { nested: { ignored: true }, issue_number: 42, repo: "pivia" }),
         ).toEqual({ toolKind: "generic", label: "mcp__github__get_issue", summary: "42" });
         expect(describeToolCall("custom_ping", {})).toEqual({ toolKind: "generic", label: "custom_ping", summary: "" });
-    });
-});
-
-describe("formatTurnDuration and formatToolDuration", () => {
-    it("formats turn durations across second and minute boundaries", () => {
-        expect(formatTurnDuration(0)).toBe("0s");
-        expect(formatTurnDuration(100)).toBe("0s");
-        expect(formatTurnDuration(2_740)).toBe("3s");
-        expect(formatTurnDuration(11_200)).toBe("11s");
-        expect(formatTurnDuration(60_000)).toBe("1m");
-        expect(formatTurnDuration(125_000)).toBe("2m 5s");
-    });
-
-    it("formats tool durations with tenths under one minute and minutes above", () => {
-        expect(formatToolDuration(0)).toBe("0.0s");
-        expect(formatToolDuration(100)).toBe("0.1s");
-        expect(formatToolDuration(2_740)).toBe("2.7s");
-        expect(formatToolDuration(11_200)).toBe("11.2s");
-        expect(formatToolDuration(60_000)).toBe("1m");
-        expect(formatToolDuration(125_000)).toBe("2m 5s");
     });
 });
 

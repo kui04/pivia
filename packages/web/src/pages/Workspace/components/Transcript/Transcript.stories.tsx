@@ -526,7 +526,7 @@ export const MixedItemKinds: Story = {
 
         await expect(canvas.getByText("Review the change and run the checks.")).toBeVisible();
         await expect(canvas.getByRole("button", { name: "[skill] tydd" })).toBeVisible();
-        await expect(canvas.getByRole("button", { name: "Worked for 6s" })).toBeVisible();
+        await expect(canvas.getByRole("button", { name: "Worked for 6.4s" })).toBeVisible();
         await expect(canvas.getByText("Every check passed.")).toBeVisible();
         await expect(canvas.getByRole("group", { name: "git status output" })).toBeVisible();
         await expect(canvas.getByRole("button", { name: "[task]" })).toBeVisible();

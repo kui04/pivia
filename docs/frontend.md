@@ -41,6 +41,10 @@ CSS Modules use native nesting (no preprocessor). Follow these rules:
 - `/workspace` (`WorkspaceLayout`) owns the workspace shell (sidebar/drawer, topbar, settings, new-session dialog, catalog sync) and renders the active chat column via `<Outlet />` so switching sessions never remounts the shell.
 - Reusable component-free hooks live in `packages/web/src/hooks/<name>.ts` and are re-exported from `packages/web/src/hooks/index.ts`; import them via `@/hooks`. Component-scoped hooks stay in `components/<Name>/`; page-scoped hooks stay in `pages/<Name>/`.
 
+## Formatting
+
+- Component-free display formatters live in `packages/web/src/lib/format.ts` and are re-exported from `packages/web/src/lib/index.ts`; import them via `@/lib`. They take plain values and return strings so components and stores share one output. Domain-specific message composition (for example a compaction note or a truncation warning) stays with the store that owns the data.
+
 ## State, Cache, and Transport
 
 - Store factories (`createAuthStore`, `createSessionStore`, `createWorkspaceStore`) live in `packages/web/src/stores/<name>/` with no cross-store imports or module-load side effects. `packages/web/src/stores/index.ts` (`createAppStores`) wires the singletons (`useAuthStore`, `useSessionStore`, `useWorkspaceStore`).

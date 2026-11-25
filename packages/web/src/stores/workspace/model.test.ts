@@ -7,7 +7,6 @@ import {
     compareSessions,
     createCatalogSyncReducer,
     folderLabel,
-    formatRelativeAge,
     selectedSession,
     sessionRowStatus,
     sessionTitle,
@@ -313,20 +312,6 @@ describe("sessionRowStatus", () => {
             state: "closing",
             label: "Closing",
         });
-    });
-});
-
-describe("formatRelativeAge", () => {
-    it("formats compact ages across thresholds and clamps future timestamps to now", () => {
-        const now = 1_000_000_000_000;
-        expect(formatRelativeAge(now + 10_000, now)).toBe("now");
-        expect(formatRelativeAge(now - 59_999, now)).toBe("now");
-        expect(formatRelativeAge(now - 60_000, now)).toBe("1m");
-        expect(formatRelativeAge(now - 3_599_999, now)).toBe("59m");
-        expect(formatRelativeAge(now - 3_600_000, now)).toBe("1h");
-        expect(formatRelativeAge(now - 86_400_000, now)).toBe("1d");
-        expect(formatRelativeAge(now - 7 * 86_400_000, now)).toBe("1w");
-        expect(formatRelativeAge(now - 365 * 86_400_000, now)).toBe("1y");
     });
 });
 

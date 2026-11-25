@@ -2,10 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
     buildToolPresentation,
-    formatByteSize,
-    formatNestedCallDuration,
     formatReadLineRangeSummary,
-    formatUsdCost,
     inferLanguageFromPath,
     parseCodemodeToolDetails,
     parseEditToolDetails,
@@ -35,14 +32,6 @@ function makeTruncation(overrides: Partial<NonNullable<ReturnType<typeof parseTr
         ...overrides,
     };
 }
-
-describe("formatByteSize", () => {
-    it("formats bytes, kilobytes and megabytes matching pi-coding-agent", () => {
-        expect(formatByteSize(512)).toBe("512B");
-        expect(formatByteSize(50 * 1024)).toBe("50.0KB");
-        expect(formatByteSize(2 * 1024 * 1024)).toBe("2.0MB");
-    });
-});
 
 describe("readToolFilePath", () => {
     it("falls back to file_path when path is blank or absent", () => {
@@ -482,12 +471,6 @@ describe("buildToolPresentation", () => {
             complete: false,
         });
         expect(parseNestedToolCalls({ calls: [], complete: "no" })).toBeNull();
-
-        expect(formatNestedCallDuration(12.4)).toBe("12ms");
-        expect(formatNestedCallDuration(999.6)).toBe("1.0s");
-        expect(formatNestedCallDuration(1420)).toBe("1.4s");
-        expect(formatUsdCost(0.000456)).toBe("$0.00046");
-        expect(formatUsdCost(0.025)).toBe("$0.03");
     });
 
     it("builds javascript script preview, strips header, and summarizes nested calls without duplication", () => {

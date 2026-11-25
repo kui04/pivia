@@ -4,7 +4,6 @@ import { describe, expect, it } from "vitest";
 import {
     countDroppedThinkingBlocks,
     formatCacheWarmingText,
-    formatCompactTokenCount,
     formatSystemNoteMeta,
     formatThinkingDropNotice,
     readNonNegativeTokenCount,
@@ -12,16 +11,7 @@ import {
     readUsageTotalCostUsd,
 } from "./transcript-meta";
 
-describe("formatCompactTokenCount and readNonNegativeTokenCount", () => {
-    it("formats token counts across unit, k, and M thresholds", () => {
-        expect(formatCompactTokenCount(0)).toBe("0");
-        expect(formatCompactTokenCount(999)).toBe("999");
-        expect(formatCompactTokenCount(1_250)).toBe("1.3k");
-        expect(formatCompactTokenCount(12_400)).toBe("12k");
-        expect(formatCompactTokenCount(1_500_000)).toBe("1.5M");
-        expect(formatCompactTokenCount(12_000_000)).toBe("12M");
-    });
-
+describe("readNonNegativeTokenCount", () => {
     it("rejects negative, NaN, and non-numeric token counts", () => {
         expect(readNonNegativeTokenCount(42_100)).toBe(42_100);
         expect(readNonNegativeTokenCount(0)).toBe(0);

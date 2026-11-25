@@ -13,6 +13,7 @@ import type {
 import { assertNever, isFiniteNumber, isImageContent, isRecord } from "@pivia/protocol";
 
 import { resolveLanguage } from "@/components/CodeBlock/highlight";
+import { formatByteSize } from "@/lib";
 
 const DEFAULT_MAX_BYTES = 50 * 1024;
 const DEFAULT_MAX_LINES = 2000;
@@ -224,20 +225,6 @@ export function readToolFilePath(args: TranscriptToolArguments): string | null {
         }
     }
     return null;
-}
-
-/** Formats a byte count using the same IEC units as `pi-coding-agent` (`B`, `KB`, `MB`). */
-export function formatByteSize(bytes: number): string {
-    if (!Number.isFinite(bytes) || bytes < 0) {
-        return "0B";
-    }
-    if (bytes < 1024) {
-        return `${bytes}B`;
-    }
-    if (bytes < 1024 * 1024) {
-        return `${(bytes / 1024).toFixed(1)}KB`;
-    }
-    return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
 }
 
 /**
@@ -547,18 +534,6 @@ export function parseNestedToolCalls(raw: unknown): NestedToolCalls | null {
         calls,
         complete: raw.complete,
     };
-}
-
-/** Formats sub-second and multi-second durations (`12ms`, `1.4s`) matching `codemode` renderers. */
-export function formatNestedCallDuration(durationMs: number): string {
-    const roundedMs = Math.round(Math.max(0, Number.isFinite(durationMs) ? durationMs : 0));
-    return roundedMs < 1000 ? `${roundedMs}ms` : `${(roundedMs / 1000).toFixed(1)}s`;
-}
-
-/** Formats USD cost for nested `models.*` calls using two decimals or two significant digits. */
-export function formatUsdCost(cost: number): string {
-    const safe = Number.isFinite(cost) && cost >= 0 ? cost : 0;
-    return `$${safe >= 0.01 ? safe.toFixed(2) : safe.toPrecision(2)}`;
 }
 
 function formatTruncationNotice(truncation: TruncationResult, includeMaxLinesLimit: boolean): TranscriptToolWarning {

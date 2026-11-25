@@ -257,7 +257,7 @@ type Story = StoryObj<typeof meta>;
 export const CollapsedWithFinalReply: Story = {
     play: async ({ canvasElement, args }) => {
         const canvas = within(canvasElement);
-        const trigger = canvas.getByRole("button", { name: "Worked for 11s" });
+        const trigger = canvas.getByRole("button", { name: "Worked for 11.0s" });
 
         await expect(trigger).toHaveAttribute("aria-expanded", "false");
         await expect(canvas.getByText(/Covers three files/)).toBeVisible();
@@ -275,9 +275,9 @@ export const ExpandedMultiStepTimeline: Story = {
     },
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
-        await expect(canvas.getByRole("button", { name: "Worked for 11s" })).toHaveAttribute("aria-expanded", "true");
+        await expect(canvas.getByRole("button", { name: "Worked for 11.0s" })).toHaveAttribute("aria-expanded", "true");
         await expect(canvas.getAllByRole("button", { name: "Thoughts" })).toHaveLength(2);
-        await expect(canvas.getByText("0.1s")).toBeVisible();
+        await expect(canvas.getByText("120ms")).toBeVisible();
         await expect(canvas.getByText(/Covers three files/)).toBeVisible();
     },
 };
@@ -325,12 +325,12 @@ export const StreamingTurn: Story = {
         const canvas = within(canvasElement);
         // The first wall-clock sample arrives on the next frame, so the header gains its duration
         // asynchronously.
-        const trigger = await canvas.findByRole("button", { name: /^Working for \d+s$/ });
+        const trigger = await canvas.findByRole("button", { name: /^Working for \d+ms$|^Working for \d+\.\ds$/ });
         await expect(trigger).toBeVisible();
         const timer = await waitFor(() =>
             requireElement(canvasElement.querySelector<HTMLElement>("[data-running='true']"), "running timer"),
         );
-        await expect(timer).toHaveTextContent(/^\d+\.\ds$/);
+        await expect(timer).toHaveTextContent(/^\d+ms$|^\d+\.\ds$/);
         await expect(canvas.getByText("Working...")).toBeVisible();
         await expect(canvas.queryByRole("progressbar")).not.toBeInTheDocument();
     },
