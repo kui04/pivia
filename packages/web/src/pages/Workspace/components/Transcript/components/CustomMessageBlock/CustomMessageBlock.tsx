@@ -57,7 +57,7 @@ export function CustomMessageBlock({
             onOpenChange={onOpenChange}
             className={className}
         >
-            {hasText ? <Markdown {...(onOpenLink !== undefined ? { onOpenLink } : {})}>{item.text}</Markdown> : null}
+            {hasText ? <Markdown onOpenLink={onOpenLink}>{item.text}</Markdown> : null}
 
             {!hasText && item.images.length === 0 ? <p className={styles.placeholder}>Empty message</p> : null}
 

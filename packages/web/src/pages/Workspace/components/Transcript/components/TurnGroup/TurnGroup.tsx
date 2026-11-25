@@ -33,8 +33,8 @@ export type TurnGroupProps = {
     onOpenChange?: ((open: boolean) => void) | undefined;
     /** Forwarded to Markdown links inside intermediate and final replies. */
     onOpenLink?: ((href: string) => void) | undefined;
-    /** Dynamic label for the trailing working indicator while streaming (`Compacting context...`, etc.). */
-    activityLabel?: string | null | undefined;
+    /** Visible label for the trailing working indicator while streaming (`Compacting context...`, etc.). */
+    activityLabel?: string | undefined;
     /** Optional class name on the outer container. */
     className?: string | undefined;
 };
@@ -103,7 +103,7 @@ function renderStep(
 ): ReactElement | null {
     switch (step.kind) {
         case "thinking":
-            return <ThinkingBlock step={step} {...(onOpenLink !== undefined ? { onOpenLink } : {})} />;
+            return <ThinkingBlock step={step} onOpenLink={onOpenLink} />;
         case "toolCall":
             return <ToolCallBlock step={step} />;
         case "reply":
@@ -113,11 +113,7 @@ function renderStep(
                 }
                 return (
                     <div className={styles.finalReply}>
-                        <Markdown
-                            streaming={step.streaming}
-                            className={styles.markdown}
-                            {...(onOpenLink !== undefined ? { onOpenLink } : {})}
-                        >
+                        <Markdown streaming={step.streaming} className={styles.markdown} onOpenLink={onOpenLink}>
                             {step.text}
                         </Markdown>
                     </div>
@@ -133,11 +129,7 @@ function renderStep(
                         <div className={styles.rail} />
                     </div>
                     <div className={styles.replyBody}>
-                        <Markdown
-                            streaming={step.streaming}
-                            className={styles.markdown}
-                            {...(onOpenLink !== undefined ? { onOpenLink } : {})}
-                        >
+                        <Markdown streaming={step.streaming} className={styles.markdown} onOpenLink={onOpenLink}>
                             {step.text}
                         </Markdown>
                     </div>
@@ -248,11 +240,7 @@ export function TurnGroup({
 
             {hasFinalReply && turn.finalReply !== null ? (
                 <div className={styles.finalReply}>
-                    <Markdown
-                        streaming={turn.streaming}
-                        className={styles.markdown}
-                        {...(onOpenLink !== undefined ? { onOpenLink } : {})}
-                    >
+                    <Markdown streaming={turn.streaming} className={styles.markdown} onOpenLink={onOpenLink}>
                         {turn.finalReply}
                     </Markdown>
                 </div>
@@ -275,9 +263,7 @@ export function TurnGroup({
                 );
             })}
 
-            {turn.streaming && activityLabel !== null ? (
-                <WorkingIndicator label={activityLabel ?? WORKING_LABEL} />
-            ) : null}
+            {turn.streaming ? <WorkingIndicator label={activityLabel ?? WORKING_LABEL} /> : null}
         </div>
     );
 }

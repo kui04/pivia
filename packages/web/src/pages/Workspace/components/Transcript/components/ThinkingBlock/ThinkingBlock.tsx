@@ -54,7 +54,7 @@ export function ThinkingBlock({
         >
             {hasContent ? (
                 <>
-                    <Markdown streaming={step.streaming} {...(onOpenLink !== undefined ? { onOpenLink } : {})}>
+                    <Markdown streaming={step.streaming} onOpenLink={onOpenLink}>
                         {step.thinking}
                     </Markdown>
                     {step.redacted ? <p className={styles.placeholder}>Additional reasoning was redacted.</p> : null}

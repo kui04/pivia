@@ -139,48 +139,33 @@ export function Transcript({
                             case "user":
                                 return <UserMessage key={item.id} item={item} />;
                             case "skill":
-                                return (
-                                    <SkillInvocationBlock
-                                        key={item.id}
-                                        item={item}
-                                        {...(onOpenLink !== undefined ? { onOpenLink } : {})}
-                                    />
-                                );
+                                return <SkillInvocationBlock key={item.id} item={item} onOpenLink={onOpenLink} />;
                             case "bash":
                                 return <BashExecutionBlock key={item.id} item={item} />;
                             case "custom":
-                                return (
-                                    <CustomMessageBlock
-                                        key={item.id}
-                                        item={item}
-                                        {...(onOpenLink !== undefined ? { onOpenLink } : {})}
-                                    />
-                                );
+                                return <CustomMessageBlock key={item.id} item={item} onOpenLink={onOpenLink} />;
                             case "note":
-                                return (
-                                    <SystemNote
-                                        key={item.id}
-                                        item={item}
-                                        {...(onOpenLink !== undefined ? { onOpenLink } : {})}
-                                    />
-                                );
+                                return <SystemNote key={item.id} item={item} onOpenLink={onOpenLink} />;
                             case "notice":
                                 return (
                                     <p key={item.id} className={styles.inlineNotice}>
                                         {item.text}
                                     </p>
                                 );
-                            case "turn":
+                            case "turn": {
+                                // An idle runtime has no label; the turn falls back to WORKING_LABEL
+                                // while it still streams.
+                                const turnActivityLabel =
+                                    item.id === lastStreamingTurnId ? (activityLabel ?? undefined) : undefined;
                                 return (
                                     <TurnGroup
                                         key={item.id}
                                         turn={item}
-                                        {...(item.id === lastStreamingTurnId && activityLabel !== null
-                                            ? { activityLabel }
-                                            : {})}
-                                        {...(onOpenLink !== undefined ? { onOpenLink } : {})}
+                                        activityLabel={turnActivityLabel}
+                                        onOpenLink={onOpenLink}
                                     />
                                 );
+                            }
                             default:
                                 return assertNever(item);
                         }

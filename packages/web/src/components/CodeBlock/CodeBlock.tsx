@@ -33,7 +33,7 @@ export type CodeBlockProps = {
     /** Hide the copy button. */
     copyable?: boolean;
     /** Called after the clipboard write succeeds. */
-    onCopy?: (code: string) => void;
+    onCopy?: ((code: string) => void) | undefined;
     /** Optional class name passed to the inner ScrollArea root (for vertical sizing). */
     scrollClassName?: string | undefined;
     /** Optional class name passed to the inner ScrollArea viewport. */

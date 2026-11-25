@@ -120,7 +120,7 @@ function renderPreviewCodeBlock(
             defaultWrap={defaultWrap}
             scrollClassName={styles.previewScroll}
             viewportClassName={styles.previewViewport}
-            {...(onCopy !== undefined ? { onCopy } : {})}
+            onCopy={onCopy}
         />
     );
 }

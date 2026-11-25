@@ -6,6 +6,7 @@
 - Base UI owns modal focus trapping, scroll lock, `Escape` handling, focus return, and overlay keyboard navigation across `Menu`, `Dialog`, `AlertDialog`, `Drawer`, `Select`, and `Toast`. Do not re-implement those mechanics in wrappers.
 - Compose class names with `cn` from `packages/web/src/lib/cn.ts`. The app does not use Tailwind, so do not add `tailwind-merge`.
 - Write to the clipboard only through `packages/web/src/lib/clipboard.ts`. It tries `navigator.clipboard.writeText` first and falls back to `execCommand("copy")` in denied or non-secure contexts.
+- **Optional props**: A prop a parent forwards unchanged declares `| undefined` (`onOpenLink?: ((href: string) => void) | undefined`) so the parent passes the value directly. A prop with a destructuring default may omit `| undefined`. Do not spread a prop conditionally to satisfy `exactOptionalPropertyTypes`; an absent key stays meaningful for wire patches and option objects.
 
 ## Primitives and Layout
 

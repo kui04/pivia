@@ -1,3 +1,10 @@
+/**
+ * Tool detail parsers and the presentation builder for one tool call.
+ *
+ * Production code calls `buildToolPresentation` only. The `parse*` helpers stay exported for the
+ * colocated boundary tests; importing them elsewhere would create a second path around the
+ * presentation rules.
+ */
 import type { ImageContent, JsonObject, JsonValue, NestedToolCallRecord, NestedToolCalls } from "@earendil-works/pi-ai";
 import type {
     BashToolDetails,
@@ -39,7 +46,7 @@ type LiteralToolName<TEvent> = TEvent extends { readonly toolName: infer TName e
     : never;
 
 /** Core tool names derived from the SDK {@link ToolCallEvent} union. */
-export type SdkBuiltinToolName = LiteralToolName<ToolCallEvent>;
+type SdkBuiltinToolName = LiteralToolName<ToolCallEvent>;
 
 /**
  * The Pi built-in tools that receive dedicated icons and argument summaries in the transcript.

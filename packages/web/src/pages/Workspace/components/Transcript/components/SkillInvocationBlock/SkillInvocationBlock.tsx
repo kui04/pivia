@@ -50,7 +50,7 @@ export function SkillInvocationBlock({
             onOpenChange={onOpenChange}
             className={className}
         >
-            <Markdown {...(onOpenLink !== undefined ? { onOpenLink } : {})}>{item.content}</Markdown>
+            <Markdown onOpenLink={onOpenLink}>{item.content}</Markdown>
             <p className={styles.location}>{item.location}</p>
         </CollapsibleBlock>
     );

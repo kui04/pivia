@@ -17,7 +17,6 @@ import {
     type NormalizedToolResultBlock,
     type TranscriptNestedCallStatus,
     type TranscriptNestedCallsSummary,
-    type TranscriptNestedToolCall,
     type TranscriptToolArguments,
     type TranscriptToolKind,
     type TranscriptToolPreview,
@@ -48,13 +47,8 @@ export { formatSystemNoteMeta };
 export type {
     TranscriptNestedCallStatus,
     TranscriptNestedCallsSummary,
-    TranscriptNestedToolCall,
-    TranscriptNoticeItem,
-    TranscriptSummaryBilling,
-    TranscriptToolArguments,
     TranscriptToolKind,
     TranscriptToolPreview,
-    TranscriptToolStatus,
     TranscriptToolWarning,
 };
 
@@ -67,6 +61,7 @@ type AssistantEntryMessage = MessageOf<"assistant">;
 type ToolResultEntryMessage = MessageOf<"toolResult">;
 type BashExecutionRecord = MessageOf<"bashExecution">;
 type CustomMessageEntry = EntryOf<"custom_message">;
+type SummaryEntry = EntryOf<"compaction"> | EntryOf<"branch_summary">;
 type EditableContent = NonNullable<ProjectedEntryItem["editedContent"]>;
 
 /** Display metadata extracted for one tool call header row. */
@@ -150,7 +145,12 @@ export type TranscriptBashStatus =
     | { readonly kind: "cancelled" }
     | { readonly kind: "noExitCode" };
 
-/** Truncation of one `!` record; only these records carry the path of the full output file. */
+/**
+ * Truncation of one persisted `!` record.
+ *
+ * The record stores only a boolean and an optional full-output path, not a `TruncationResult`, so
+ * this model cannot report line or byte counts the way {@link TranscriptToolWarning} does.
+ */
 export type TranscriptBashTruncation =
     | { readonly kind: "none" }
     | {
@@ -585,6 +585,18 @@ function readCustomItem(entry: CustomMessageEntry, editedContent: EditableConten
     };
 }
 
+/** Build the display note shared by a compaction checkpoint and a branch summary. */
+function buildNoteItem(entry: SummaryEntry): TranscriptNoteItem {
+    return {
+        kind: "note",
+        id: `note-${entry.id}`,
+        title: entry.type === "compaction" ? "Session compacted" : "Branch summary",
+        text: entry.summary,
+        tokensBefore: entry.type === "compaction" ? readNonNegativeTokenCount(entry.tokensBefore) : undefined,
+        billing: readSummaryBilling(entry.usage),
+    };
+}
+
 function readToolResultContent(content: readonly ToolResultBlock[]): { output: string; images: ImageContent[] } {
     const { texts, images } = splitContentBlocks(content);
     return { output: texts.join("\n"), images };
@@ -765,26 +777,17 @@ function buildTurnItem(
                         : block.arguments;
                 const meta = describeToolCall(block.name, effectiveArgs);
 
-                const activeBlocks =
-                    persistedResult !== undefined
-                        ? persistedResult.content
-                        : liveExecution?.kind === "running"
-                          ? (liveExecution.partialResult?.content ?? [])
-                          : liveExecution?.kind === "settled"
-                            ? liveExecution.result.content
-                            : [];
-                const activeDetails =
-                    persistedResult !== undefined
-                        ? persistedResult.details
-                        : liveExecution?.kind === "running"
-                          ? liveExecution.partialResult?.details
-                          : liveExecution?.kind === "settled"
-                            ? liveExecution.result.details
-                            : undefined;
+                const activeResult =
+                    persistedResult ??
+                    (liveExecution?.kind === "running"
+                        ? liveExecution.partialResult
+                        : liveExecution?.kind === "settled"
+                          ? liveExecution.result
+                          : null);
 
-                const { output, images } = readToolResultContent(activeBlocks);
+                const { output, images } = readToolResultContent(activeResult?.content ?? []);
 
-                let status: "running" | "done" | "error";
+                let status: TranscriptToolStatus;
                 let timing: TranscriptTiming;
                 if (persistedResult !== undefined) {
                     status = persistedResult.isError ? "error" : "done";
@@ -816,7 +819,7 @@ function buildTurnItem(
                     status,
                     output,
                     hasImages: images.length > 0,
-                    details: activeDetails,
+                    details: activeResult?.details,
                     nestedCalls: persistedResult?.nestedCalls,
                 });
 
@@ -882,7 +885,7 @@ function buildTurnItem(
                 ? { kind: "since", startedAtMs: startMs }
                 : { kind: "static", durationMs: settledDurationMs },
             streaming,
-            ...(diagnosticsNotice !== undefined ? { diagnosticsNotice } : {}),
+            diagnosticsNotice,
         },
         nextDroppedThinking: runningDroppedThinking,
     };
@@ -987,16 +990,7 @@ export function buildTranscript(
     for (const item of items) {
         if (item.kind === "compaction") {
             flushTurn(false);
-            const tokensBefore = readNonNegativeTokenCount(item.entry.tokensBefore);
-            const billing = readSummaryBilling(item.entry.usage);
-            transcript.push({
-                kind: "note",
-                id: `note-${item.entry.id}`,
-                title: "Session compacted",
-                text: item.entry.summary,
-                ...(tokensBefore !== undefined ? { tokensBefore } : {}),
-                ...(billing !== undefined ? { billing } : {}),
-            });
+            transcript.push(buildNoteItem(item.entry));
             continue;
         }
 
@@ -1087,14 +1081,7 @@ export function buildTranscript(
             }
             case "branch_summary": {
                 flushTurn(false);
-                const billing = readSummaryBilling(entry.usage);
-                transcript.push({
-                    kind: "note",
-                    id: `note-${entry.id}`,
-                    title: "Branch summary",
-                    text: entry.summary,
-                    ...(billing !== undefined ? { billing } : {}),
-                });
+                transcript.push(buildNoteItem(entry));
                 break;
             }
             case "usage": {
