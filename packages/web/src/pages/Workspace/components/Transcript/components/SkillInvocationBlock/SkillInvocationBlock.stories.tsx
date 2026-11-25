@@ -2,9 +2,9 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, within } from "storybook/test";
 
 import type { TranscriptSkillItem } from "@/stores/session/transcript";
+import storyFrame from "@/storybook/storyFrame.module.css";
 
 import { SkillInvocationBlock } from "./SkillInvocationBlock";
-import styles from "./SkillInvocationBlock.stories.module.css";
 
 const skillItem: TranscriptSkillItem = {
     kind: "skill",
@@ -36,7 +36,7 @@ const meta = {
     },
     decorators: [
         (Story) => (
-            <div className={styles.frame}>
+            <div className={storyFrame.frame}>
                 <Story />
             </div>
         ),

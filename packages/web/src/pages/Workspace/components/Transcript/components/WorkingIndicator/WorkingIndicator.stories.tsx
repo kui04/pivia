@@ -1,8 +1,9 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, within } from "storybook/test";
 
+import storyFrame from "@/storybook/storyFrame.module.css";
+
 import { WorkingIndicator } from "./WorkingIndicator";
-import styles from "./WorkingIndicator.stories.module.css";
 
 const meta = {
     title: "Pages/Workspace/Transcript/WorkingIndicator",
@@ -15,7 +16,7 @@ const meta = {
     },
     decorators: [
         (Story) => (
-            <div className={styles.frame}>
+            <div className={storyFrame.frame}>
                 <Story />
             </div>
         ),

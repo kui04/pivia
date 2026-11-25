@@ -1,0 +1,20 @@
+/*
+ * Text kept for assistive technology while hidden from sight.
+ *
+ * The 1px box and negative margin keep the text out of the layout without `display: none`,
+ * which would remove it from the accessibility tree.
+ * See https://webaim.org/techniques/css/invisiblecontent/
+ *
+ *   .root
+ */
+.root {
+    position: absolute;
+    inline-size: var(--border-width);
+    block-size: var(--border-width);
+    padding: 0;
+    margin: calc(-1 * var(--border-width));
+    overflow: hidden;
+    border: 0;
+    clip-path: inset(50%);
+    white-space: nowrap;
+}

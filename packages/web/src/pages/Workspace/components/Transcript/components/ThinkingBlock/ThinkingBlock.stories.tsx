@@ -4,16 +4,11 @@ import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 
 import { Button } from "@components";
 import type { TranscriptThinkingStep } from "@/stores/session/transcript";
+import { requireElement } from "@/storybook/dom";
+import storyFrame from "@/storybook/storyFrame.module.css";
 
 import { ThinkingBlock } from "./ThinkingBlock";
 import styles from "./ThinkingBlock.stories.module.css";
-
-function requireElement<T extends Element>(element: T | null, name: string): T {
-    if (element === null) {
-        throw new Error(`The story did not render ${name}`);
-    }
-    return element;
-}
 
 const shortThinking: TranscriptThinkingStep = {
     kind: "thinking",
@@ -54,7 +49,7 @@ const meta = {
     },
     decorators: [
         (Story) => (
-            <div className={styles.frame}>
+            <div className={storyFrame.frame}>
                 <Story />
             </div>
         ),

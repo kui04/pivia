@@ -2,6 +2,8 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { Brain } from "lucide-react";
 import { expect, fn, userEvent, within } from "storybook/test";
 
+import storyFrame from "@/storybook/storyFrame.module.css";
+
 import { CollapsibleBlock } from "./CollapsibleBlock";
 import styles from "./CollapsibleBlock.stories.module.css";
 
@@ -22,7 +24,7 @@ const meta = {
     },
     decorators: [
         (Story) => (
-            <div className={styles.frame}>
+            <div className={storyFrame.frame}>
                 <Story />
             </div>
         ),

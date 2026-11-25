@@ -3,6 +3,8 @@ import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { expect, userEvent, waitFor, within } from "storybook/test";
 
+import { requireElement, requireViewport } from "@/storybook/dom";
+
 import { ScrollArea } from "./ScrollArea";
 import styles from "./ScrollArea.stories.module.css";
 
@@ -22,21 +24,6 @@ const meta = {
 export default meta;
 
 type Story = StoryObj<typeof meta>;
-
-function requireElement<T extends Element>(element: T | null, name: string): T {
-    if (element === null) {
-        throw new Error(`The story did not render ${name}`);
-    }
-
-    return element;
-}
-
-function getViewport(canvasElement: HTMLElement): HTMLElement {
-    return requireElement(
-        canvasElement.querySelector<HTMLElement>("[data-slot='scroll-area-viewport']"),
-        "the viewport",
-    );
-}
 
 function queryScrollbar(element: HTMLElement, orientation: "vertical" | "horizontal"): HTMLElement | null {
     return element.querySelector<HTMLElement>(`[data-slot="scroll-area-scrollbar"][data-orientation="${orientation}"]`);
@@ -123,7 +110,7 @@ export const BothAxes: Story = {
         </Demo>
     ),
     play: async ({ canvasElement }) => {
-        const viewport = getViewport(canvasElement);
+        const viewport = requireViewport(canvasElement, "the viewport");
 
         await userEvent.unhover(viewport);
         await waitFor(() => expect(queryScrollbar(canvasElement, "vertical")).not.toBeNull());
@@ -208,7 +195,7 @@ export const Vertical: Story = {
         </Demo>
     ),
     play: async ({ canvasElement }) => {
-        const viewport = getViewport(canvasElement);
+        const viewport = requireViewport(canvasElement, "the viewport");
 
         await userEvent.unhover(viewport);
         await waitFor(() => expect(queryScrollbar(canvasElement, "vertical")).not.toBeNull());
@@ -243,7 +230,7 @@ export const Horizontal: Story = {
         </Demo>
     ),
     play: async ({ canvasElement }) => {
-        const viewport = getViewport(canvasElement);
+        const viewport = requireViewport(canvasElement, "the viewport");
 
         await userEvent.unhover(viewport);
         await waitFor(() => expect(queryScrollbar(canvasElement, "horizontal")).not.toBeNull());
@@ -300,7 +287,7 @@ export const Dynamic: Story = {
     render: () => <DynamicScrollArea />,
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
-        const viewport = getViewport(canvasElement);
+        const viewport = requireViewport(canvasElement, "the viewport");
         const toggle = canvas.getByRole("button", { name: "Toggle content" });
         const width = viewport.clientWidth;
 
@@ -329,7 +316,7 @@ export const Fits: Story = {
         </Demo>
     ),
     play: async ({ canvasElement }) => {
-        const viewport = getViewport(canvasElement);
+        const viewport = requireViewport(canvasElement, "the viewport");
 
         await expect(viewport.scrollWidth).toBe(viewport.clientWidth);
         await expect(viewport.scrollHeight).toBe(viewport.clientHeight);
@@ -353,7 +340,7 @@ export const Landmark: Story = {
         </ScrollArea>
     ),
     play: async ({ canvasElement }) => {
-        const viewport = getViewport(canvasElement);
+        const viewport = requireViewport(canvasElement, "the viewport");
 
         await expect(viewport).toHaveAttribute("role", "region");
         await expect(viewport).toHaveAttribute("aria-label", "Landmark region");
@@ -371,7 +358,7 @@ export const ViewportOverride: Story = {
         </ScrollArea>
     ),
     play: async ({ canvasElement }) => {
-        const viewport = getViewport(canvasElement);
+        const viewport = requireViewport(canvasElement, "the viewport");
         const root = viewport.parentElement;
 
         if (root === null) {
@@ -414,7 +401,7 @@ export const Dark: Story = {
         await waitFor(() => expect(getComputedStyle(document.documentElement).colorScheme).toBe("dark"));
         await waitFor(() => expect(queryScrollbar(canvasElement, "horizontal")).not.toBeNull());
 
-        const viewport = getViewport(canvasElement);
+        const viewport = requireViewport(canvasElement, "the viewport");
         const horizontal = requireElement(queryScrollbar(canvasElement, "horizontal"), "the horizontal scrollbar");
         const thumb = requireElement(
             horizontal.querySelector<HTMLElement>("[data-slot='scroll-area-thumb']"),

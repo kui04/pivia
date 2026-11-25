@@ -35,3 +35,4 @@ export { ScrollArea, type ScrollAreaProps } from "./ScrollArea/ScrollArea";
 export { Select, type SelectOption, type SelectProps } from "./Select/Select";
 export { ToastProvider, type ToastPosition, type ToastProviderProps } from "./Toast/Toast";
 export { createToastManager, useToast } from "./Toast/useToast";
+export { VisuallyHidden, type VisuallyHiddenProps, type VisuallyHiddenTag } from "./VisuallyHidden/VisuallyHidden";

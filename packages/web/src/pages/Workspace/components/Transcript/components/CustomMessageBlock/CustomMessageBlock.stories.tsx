@@ -2,9 +2,9 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 
 import type { TranscriptCustomItem } from "@/stores/session/transcript";
+import storyFrame from "@/storybook/storyFrame.module.css";
 
 import { CustomMessageBlock } from "./CustomMessageBlock";
-import styles from "./CustomMessageBlock.stories.module.css";
 
 const SAMPLE_SVG = [
     '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="100" viewBox="0 0 160 100">',
@@ -75,7 +75,7 @@ const meta = {
     },
     decorators: [
         (Story) => (
-            <div className={styles.frame}>
+            <div className={storyFrame.frame}>
                 <Story />
             </div>
         ),

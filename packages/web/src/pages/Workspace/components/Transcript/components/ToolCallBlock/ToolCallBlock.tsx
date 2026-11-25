@@ -1,31 +1,14 @@
 import { assertNever } from "@pivia/protocol";
-import {
-    Ban,
-    Check,
-    CircleDashed,
-    Code,
-    FilePen,
-    FilePlus,
-    FileText,
-    FolderOpen,
-    FolderSearch,
-    Search,
-    SearchCode,
-    Terminal,
-    Wrench,
-    X,
-    type LucideIcon,
-} from "lucide-react";
+import { Ban, Check, CircleDashed, X, type LucideIcon } from "lucide-react";
 import { useMemo, useState, type ReactElement } from "react";
 
-import { CodeBlock, Icon, Image, ScrollArea } from "@components";
+import { CodeBlock, Icon, Image, ScrollArea, VisuallyHidden } from "@components";
 import { useCopyFeedback } from "@/hooks";
 import { Formatter } from "@/lib";
 import {
     type TranscriptNestedCallStatus,
     type TranscriptNestedCallsSummary,
     type TranscriptToolCallStep,
-    type TranscriptToolKind,
     type TranscriptToolPreview,
     type TranscriptToolWarning,
 } from "@/stores/session/transcript";
@@ -38,21 +21,7 @@ import { Notice } from "../Notice/Notice";
 import { OutputScroller } from "../OutputCard/OutputScroller";
 import { OutputToolbar } from "../OutputCard/OutputToolbar";
 import styles from "./ToolCallBlock.module.css";
-
-/** Maps Pi built-in tools to dedicated icons and groups all custom tools under Wrench. */
-const TOOL_ICONS: Record<TranscriptToolKind, LucideIcon> = {
-    bash: Terminal,
-    powershell: Terminal,
-    read: FileText,
-    write: FilePlus,
-    edit: FilePen,
-    grep: Search,
-    find: FolderSearch,
-    ls: FolderOpen,
-    codemode: Code,
-    tool_search: SearchCode,
-    generic: Wrench,
-};
+import { toolDisplay } from "./toolDisplay";
 
 /** Props of {@link ToolCallBlock}. */
 export type ToolCallBlockProps = {
@@ -138,7 +107,7 @@ function renderNestedCallsSection(stepLabel: string, summary: TranscriptNestedCa
                             return (
                                 <li key={`${call.id}-${index}`} className={styles.nestedCallItem}>
                                     <div className={styles.nestedCallRow}>
-                                        <span className={styles.status}>{statusMeta.label}</span>
+                                        <VisuallyHidden>{statusMeta.label}</VisuallyHidden>
                                         <Icon
                                             size="no-container"
                                             className={styles.nestedCallIcon}
@@ -217,7 +186,7 @@ export function ToolCallBlock({
     });
     const liveDurationMs = useLiveDuration(step.timing, 100);
 
-    const ToolIcon = TOOL_ICONS[step.toolKind];
+    const { label, icon: ToolIcon } = toolDisplay(step.toolKind, step.toolName);
     // A collapsed block or one with output never renders the argument JSON, and the running timer
     // re-renders every 100 ms, so serialize only when the expanded card actually shows it.
     const formattedArguments = useMemo(
@@ -252,7 +221,7 @@ export function ToolCallBlock({
                     <Image
                         key={`${step.id}-image-${index}`}
                         src={`data:${image.mimeType};base64,${image.data}`}
-                        alt={`${step.label} output image ${index + 1}`}
+                        alt={`${label} output image ${index + 1}`}
                         className={styles.image}
                     />
                 ))}
@@ -266,8 +235,7 @@ export function ToolCallBlock({
             </div>
         ) : null;
 
-    const nestedCallsSection =
-        step.nestedCalls !== null ? renderNestedCallsSection(step.label, step.nestedCalls) : null;
+    const nestedCallsSection = step.nestedCalls !== null ? renderNestedCallsSection(label, step.nestedCalls) : null;
 
     const renderOutputCard = (allowArgumentsFallback: boolean): ReactElement => {
         const showArguments = allowArgumentsFallback && step.images.length === 0 && step.argumentsError === null;
@@ -292,7 +260,7 @@ export function ToolCallBlock({
                 </div>
 
                 <OutputScroller
-                    label={`${step.label} output`}
+                    label={`${label} output`}
                     text={text}
                     placeholder={placeholder}
                     before={
@@ -364,7 +332,7 @@ export function ToolCallBlock({
         <Disclosure
             control={control}
             icon={ToolIcon}
-            label={step.label}
+            label={label}
             summary={step.summary}
             meta={formattedDuration ?? undefined}
             metaRunning={isRunning}

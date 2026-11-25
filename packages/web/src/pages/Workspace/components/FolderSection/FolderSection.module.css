@@ -5,15 +5,14 @@
  *
  *   .section
  *   ├─ .heading                        h2, sticky; the DOM parent of .toggle
- *   ├─ .toggle                         button inside .heading; holds .folder, .label and .visuallyHidden
+ *   ├─ .toggle                         button inside .heading; holds .folder and .label
  *   │   ├─ &                           pointer: coarse, 48px tall
  *   │   └─ &:hover                     hover-capable pointers only
  *   ├─ .folder                         the folder Icon, inside .toggle
  *   ├─ .label                          inside .toggle
  *   ├─ .collapse                       div; the DOM parent of .list
  *   │   └─ &[data-collapsed="true"]    folds its row to 0 height
- *   ├─ .list                           ul inside .collapse; SessionRow (li) children
- *   └─ .visuallyHidden                 the full path, inside .toggle
+ *   └─ .list                           ul inside .collapse; SessionRow (li) children
  */
 .section {
     display: flex;
@@ -103,16 +102,6 @@
         gap: var(--space-4);
         min-block-size: 0;
         overflow: hidden;
-    }
-
-    /* Hidden from sight but kept in the accessible name, so a screen reader hears the whole path. */
-    .visuallyHidden {
-        position: absolute;
-        overflow: hidden;
-        inline-size: 1px;
-        block-size: 1px;
-        clip-path: inset(50%);
-        white-space: nowrap;
     }
 
     @media (prefers-reduced-motion: reduce) {

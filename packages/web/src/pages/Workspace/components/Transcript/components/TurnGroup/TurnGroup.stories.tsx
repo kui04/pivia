@@ -2,16 +2,10 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 
 import type { TranscriptTurnItem } from "@/stores/session/transcript";
+import { requireElement } from "@/storybook/dom";
+import storyFrame from "@/storybook/storyFrame.module.css";
 
 import { TurnGroup } from "./TurnGroup";
-import styles from "./TurnGroup.stories.module.css";
-
-function requireElement<T extends Element>(element: T | null, name: string): T {
-    if (element === null) {
-        throw new Error(`The story did not render ${name}`);
-    }
-    return element;
-}
 
 function rowBounds(rows: readonly Element[], index: number): { readonly top: number; readonly bottom: number } {
     const row = rows[index];
@@ -40,7 +34,7 @@ const completedTurn: TranscriptTurnItem = {
             kind: "toolCall",
             id: "step-tool-1",
             toolKind: "bash",
-            label: "Bash",
+            toolName: "bash",
             summary: "git log --oneline -20",
             arguments: { command: "git log --oneline -20" },
             argumentsError: null,
@@ -92,7 +86,7 @@ const intermediateReplyTurn: TranscriptTurnItem = {
             kind: "toolCall",
             id: "step-mid-tool",
             toolKind: "bash",
-            label: "Bash",
+            toolName: "bash",
             summary: "pnpm test:unit",
             arguments: { command: "pnpm test:unit" },
             argumentsError: null,
@@ -126,7 +120,7 @@ const streamingTurn: TranscriptTurnItem = {
             kind: "toolCall",
             id: "step-stream-tool",
             toolKind: "bash",
-            label: "Bash",
+            toolName: "bash",
             summary: "pnpm test:storybook",
             arguments: { command: "pnpm test:storybook" },
             argumentsError: null,
@@ -181,7 +175,7 @@ const errorTurn: TranscriptTurnItem = {
             kind: "toolCall",
             id: "step-err-tool",
             toolKind: "read",
-            label: "Read",
+            toolName: "read",
             summary: "src/pages/Workspace/WorkspacePage.tsx",
             arguments: { path: "src/pages/Workspace/WorkspacePage.tsx" },
             argumentsError: null,
@@ -243,7 +237,7 @@ const meta = {
     },
     decorators: [
         (Story) => (
-            <div className={styles.frame}>
+            <div className={storyFrame.frame}>
                 <Story />
             </div>
         ),

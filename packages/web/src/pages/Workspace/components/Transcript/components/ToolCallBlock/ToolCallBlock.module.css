@@ -24,7 +24,6 @@
  *   │   ├─ .errorNote          argument parse error inside the output scroller
  *   │   ├─ .images             image thumbnails inside the output scroller
  *   │   └─ .notices            truncation and full-output path Notice rows
- *   ├─ .status                 visually hidden nested-call status label
  *   ├─ .errorNote              inline argument parse error text
  *   ├─ .images                 image thumbnails emitted by the tool
  *   └─ .notices                truncation and full-output path Notice rows
@@ -225,16 +224,6 @@
         .notices {
             border-block-start: var(--border-width) solid var(--color-outline-variant);
         }
-    }
-
-    /* Announced by screen readers for nested call state. */
-    .status {
-        position: absolute;
-        inline-size: var(--border-width);
-        block-size: var(--border-width);
-        overflow: hidden;
-        clip-path: inset(50%);
-        white-space: nowrap;
     }
 
     .errorNote {

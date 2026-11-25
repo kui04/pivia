@@ -32,6 +32,7 @@ CSS Modules use native nesting (no preprocessor). Follow these rules:
 ## Storybook and Testing
 
 - Stories live beside components as `*.stories.tsx`. `packages/web/.storybook/main.ts` enables `@storybook/addon-docs`, `@storybook/addon-a11y` (`test: "error"` in `preview.ts`, opt-out via `parameters: { a11y: { test: "todo" } }`), and `@storybook/addon-vitest`.
+- Story-only helpers live in `packages/web/src/storybook/`: `requireElement` and `requireViewport` throw with the missing node's name, and `storyFrame.module.css` provides the shared transcript column frame.
 - `packages/web/vitest.config.ts` defines the `unit` (`*.test.ts` in Node) and `storybook` (Chromium via Playwright) projects. Run Storybook browser tests inside `devenv shell` and stop the Storybook dev server first so workers do not contend for memory.
 
 ## Routing and Hooks
@@ -57,6 +58,7 @@ CSS Modules use native nesting (no preprocessor). Follow these rules:
 - **Session binding (`useWorkspaceSession`)**: Parses `:sessionId` with `parseSessionId`, calls `connect(parsedId)` on change, and calls `disconnect()` for missing/invalid ids or unmount. `WorkspacePage` accepts an optional `sessionStore` prop for isolated tests and stories.
 - **Transcript projection invariants**: Components never walk the entry tree directly. `projectSessionTranscript` (`packages/web/src/stores/session/projection.ts`) resolves active branch, compaction boundary, and `context_edit` replacements; `buildTranscript` (`packages/web/src/stores/session/transcript.ts`) folds entries plus `liveAssistantMessage` into user, skill, bash (`!` / `!!`), extension (`custom_message` via `CollapsibleBlock` with `tone="accent"`), note, and turn items.
 - **Transcript module boundary**: Pages take the active branch from `projection.ts` and read the view model plus display helpers from `transcript.ts`. `tool-details.ts`, `transcript-meta.ts`, `readers.ts`, and `skill-block.ts` are internal collaborators; only their colocated tests import them directly.
+- **Tool display split**: `transcript.ts` classifies each call (`toolKind`) and derives its argument summary; display labels and icons live with the view in `ToolCallBlock/toolDisplay.ts`, while the model carries only the raw `toolName`.
 - **Timing exclusivity**: `TranscriptTiming` is a discriminated union (`static` final duration vs `since` start timestamp) so callers cannot add live elapsed time to a snapshot duration twice. Only the trailing turn of an active runtime may show an unmatched tool call as `running`; historical unmatched calls are `error` (interrupted).
 - **Page state order**: `selectWorkspaceView` (`packages/web/src/pages/Workspace/workspaceView.ts`) resolves `loading` -> `terminalError` (or cached `transcript` when closed with rows) -> `syncError` (or cached `transcript` with a retry banner) -> `empty` -> `transcript`.
 

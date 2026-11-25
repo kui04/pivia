@@ -294,8 +294,8 @@
     }
 
     /*
-     * remark-gfm hides the footnotes heading with the sr-only class, which this
-     * project does not define; hide it here so the list starts the section.
+     * remark-gfm emits the footnotes heading without a class, so the shared
+     * VisuallyHidden style cannot apply; hide it here so the list starts the section.
      */
     :global([data-footnotes]) > h2 {
         position: absolute;

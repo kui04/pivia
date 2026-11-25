@@ -22,8 +22,7 @@
  *   │   ├─ &[data-kind="session"]  the row indent
  *   │   └─ &                       pointer: coarse, 48px tall
  *   ├─ .skeletonIcon               inside .skeletonRow
- *   ├─ .skeletonBar                inside .skeletonRow
- *   └─ .visuallyHidden             the skeleton's status text
+ *   └─ .skeletonBar                inside .skeletonRow
  *
  * Handed to another component; each stays one class deep unless a contextual rule must outrank it:
  *
@@ -247,16 +246,6 @@
         border-radius: var(--shape-corner-extra-small);
         background-color: var(--color-secondary-container);
         animation: skeleton-pulse 1.6s var(--motion-easing-standard) infinite;
-    }
-
-    /* Hidden from sight but kept in the accessible name, so the list still announces itself. */
-    .visuallyHidden {
-        position: absolute;
-        overflow: hidden;
-        inline-size: 1px;
-        block-size: 1px;
-        clip-path: inset(50%);
-        white-space: nowrap;
     }
 
     @media (prefers-reduced-motion: reduce) {

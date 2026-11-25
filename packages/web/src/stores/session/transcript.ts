@@ -64,13 +64,11 @@ type CustomMessageEntry = EntryOf<"custom_message">;
 type SummaryEntry = EntryOf<"compaction"> | EntryOf<"branch_summary">;
 type EditableContent = NonNullable<ProjectedEntryItem["editedContent"]>;
 
-/** Display metadata extracted for one tool call header row. */
+/** Classification and argument digest extracted for one tool call. */
 export type TranscriptToolMeta = {
     /** Built-in tool category, or `generic` for extension and MCP tools. */
     readonly toolKind: TranscriptToolKind;
-    /** Display label rendered on the tool header row. */
-    readonly label: string;
-    /** Single-line primary argument summary rendered beside the label. */
+    /** Single-line primary argument summary rendered beside the tool's display label. */
     readonly summary: string;
 };
 
@@ -98,6 +96,8 @@ export type TranscriptThinkingStep = {
 export type TranscriptToolCallStep = TranscriptToolMeta & {
     readonly kind: "toolCall";
     readonly id: string;
+    /** Raw SDK tool name; the view derives the display label and icon from `toolKind`. */
+    readonly toolName: string;
     readonly arguments: TranscriptToolArguments;
     readonly argumentsError: string | null;
     readonly status: TranscriptToolStatus;
@@ -351,23 +351,6 @@ function firstScalarValue(args: TranscriptToolArguments): string {
     return "";
 }
 
-const BUILTIN_TOOL_LABELS: Record<Exclude<TranscriptToolKind, "generic">, string> = {
-    bash: "Bash",
-    powershell: "PowerShell",
-    read: "Read",
-    write: "Write",
-    edit: "Edit",
-    grep: "Grep",
-    find: "Find",
-    ls: "Ls",
-    codemode: "Codemode",
-    tool_search: "Tool search",
-};
-
-function isBuiltinTool(name: string): name is Exclude<TranscriptToolKind, "generic"> {
-    return Object.prototype.hasOwnProperty.call(BUILTIN_TOOL_LABELS, name);
-}
-
 function formatSearchSummary(args: TranscriptToolArguments, extraQualifier?: string): string {
     const pattern = stringArg(args, "pattern");
     const path = stringArg(args, "path");
@@ -385,55 +368,43 @@ function formatSearchSummary(args: TranscriptToolArguments, extraQualifier?: str
  * Classifies one tool call and extracts a single-line primary argument summary for its header row.
  *
  * Only Pi's built-in tools map to dedicated kinds; all extension and MCP tools share `generic`.
+ * Display labels and icons belong to the view (`ToolCallBlock/toolDisplay.ts`), so this function
+ * stays a data projection.
  */
 export function describeToolCall(name: string, args: TranscriptToolArguments): TranscriptToolMeta {
-    if (!isBuiltinTool(name)) {
-        return { toolKind: "generic", label: name, summary: firstScalarValue(args) };
-    }
-
-    const label = BUILTIN_TOOL_LABELS[name];
-    let summary = "";
-
     switch (name) {
         case "bash":
         case "powershell": {
             const command = stringArg(args, "command");
             const timeout = readPositiveNumber(args.timeout);
-            summary = timeout !== undefined && command !== "" ? `${command} (timeout ${timeout}s)` : command;
-            break;
+            const summary = timeout !== undefined && command !== "" ? `${command} (timeout ${timeout}s)` : command;
+            return { toolKind: name, summary };
         }
         case "read": {
             const path = readToolFilePath(args) ?? "";
             const range = formatReadLineRangeSummary(args.offset, args.limit);
-            summary = path !== "" ? `${path}${range}` : "";
-            break;
+            return { toolKind: name, summary: path !== "" ? `${path}${range}` : "" };
         }
         case "write":
         case "edit":
-            summary = readToolFilePath(args) ?? "";
-            break;
+            return { toolKind: name, summary: readToolFilePath(args) ?? "" };
         case "grep":
-            summary = formatSearchSummary(args, stringArg(args, "glob"));
-            break;
+            return { toolKind: name, summary: formatSearchSummary(args, stringArg(args, "glob")) };
         case "find":
-            summary = formatSearchSummary(args);
-            break;
+            return { toolKind: name, summary: formatSearchSummary(args) };
         case "ls": {
             const path = stringArg(args, "path");
             const limit = readPositiveNumber(args.limit);
             const base = path !== "" ? path : ".";
-            summary = limit !== undefined ? `${base} (limit ${limit})` : base;
-            break;
+            return { toolKind: name, summary: limit !== undefined ? `${base} (limit ${limit})` : base };
         }
         case "codemode":
-            summary = firstCodeLine(args);
-            break;
+            return { toolKind: name, summary: firstCodeLine(args) };
         case "tool_search":
-            summary = stringArg(args, "query");
-            break;
+            return { toolKind: name, summary: stringArg(args, "query") };
+        default:
+            return { toolKind: "generic", summary: firstScalarValue(args) };
     }
-
-    return { toolKind: name, label, summary };
 }
 
 function parseIsoTimestamp(iso: string): number {
@@ -826,6 +797,7 @@ function buildTurnItem(
                 steps.push({
                     kind: "toolCall",
                     id: stepId,
+                    toolName: block.name,
                     ...meta,
                     arguments: effectiveArgs,
                     argumentsError: block.argumentsError,

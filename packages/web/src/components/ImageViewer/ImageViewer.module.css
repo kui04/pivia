@@ -5,7 +5,6 @@
  *
  *   .backdrop                   the scrim; Base UI renders it beside the popup
  *   .popup                      merged with the caller `className`
- *   ├─ .srOnly                  the dialog title and description
  *   ├─ .topbar
  *   │   └─ .closeSurface        the close IconButton
  *   └─ .stage
@@ -63,18 +62,6 @@
     &[data-ending-style] {
         opacity: 0;
         scale: 0.98;
-    }
-
-    .srOnly {
-        position: absolute;
-        width: var(--border-width);
-        height: var(--border-width);
-        padding: 0;
-        margin: calc(-1 * var(--border-width));
-        border: 0;
-        overflow: hidden;
-        clip-path: inset(50%);
-        white-space: nowrap;
     }
 
     .topbar {

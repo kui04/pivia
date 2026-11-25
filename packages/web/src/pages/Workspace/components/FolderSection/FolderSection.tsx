@@ -2,7 +2,7 @@ import type { SessionId } from "@pivia/protocol";
 import { FolderClosed, FolderOpen } from "lucide-react";
 import type { ReactElement } from "react";
 
-import { Icon } from "@components";
+import { Icon, VisuallyHidden } from "@components";
 import type { FolderSection as FolderSectionModel } from "@/stores/workspace/model";
 
 import { SessionRow } from "../SessionRow/SessionRow";
@@ -47,7 +47,7 @@ export function FolderSection({
                 >
                     <Icon className={styles.folder}>{folder.collapsed ? <FolderClosed /> : <FolderOpen />}</Icon>
                     <span className={styles.label}>{folder.label}</span>
-                    {folder.cwd === "" ? null : <span className={styles.visuallyHidden}>, {folder.cwd}</span>}
+                    {folder.cwd === "" ? null : <VisuallyHidden>, {folder.cwd}</VisuallyHidden>}
                 </button>
             </h2>
             <div className={styles.collapse} data-collapsed={folder.collapsed}>

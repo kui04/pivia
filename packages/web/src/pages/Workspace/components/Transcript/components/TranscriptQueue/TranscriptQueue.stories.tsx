@@ -1,9 +1,10 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, within } from "storybook/test";
 
+import storyFrame from "@/storybook/storyFrame.module.css";
+
 import { TranscriptQueue } from "./TranscriptQueue";
 import { collectQueuedEntries } from "./queue";
-import styles from "./TranscriptQueue.stories.module.css";
 
 const meta = {
     title: "Pages/Workspace/Transcript/TranscriptQueue",
@@ -18,7 +19,7 @@ const meta = {
     },
     decorators: [
         (Story) => (
-            <div className={styles.frame}>
+            <div className={storyFrame.frame}>
                 <Story />
             </div>
         ),

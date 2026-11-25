@@ -2,9 +2,9 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, spyOn, userEvent, waitFor, within } from "storybook/test";
 
 import type { TranscriptBashItem } from "@/stores/session/transcript";
+import storyFrame from "@/storybook/storyFrame.module.css";
 
 import { BashExecutionBlock } from "./BashExecutionBlock";
-import styles from "./BashExecutionBlock.stories.module.css";
 
 const longOutput = Array.from(
     { length: 40 },
@@ -87,7 +87,7 @@ const meta = {
     },
     decorators: [
         (Story) => (
-            <div className={styles.frame}>
+            <div className={storyFrame.frame}>
                 <Story />
             </div>
         ),

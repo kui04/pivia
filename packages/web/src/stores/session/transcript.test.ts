@@ -300,7 +300,7 @@ describe("buildTranscript", () => {
         expect(toolStepOf(items, 1, 2)).toMatchObject({
             id: "call-1",
             toolKind: "bash",
-            label: "Bash",
+            toolName: "bash",
             summary: "git status",
             status: "done",
             output: "clean",
@@ -1349,51 +1349,42 @@ describe("buildTranscript boundary handling", () => {
 });
 
 describe("describeToolCall", () => {
-    it("classifies built-in tools with labels and single-line summaries", () => {
+    it("classifies built-in tools with single-line summaries", () => {
         expect(describeToolCall("bash", { command: "git status\n  --short" })).toEqual({
             toolKind: "bash",
-            label: "Bash",
             summary: "git status --short",
         });
         expect(describeToolCall("powershell", { command: "Get-ChildItem   -Force" })).toEqual({
             toolKind: "powershell",
-            label: "PowerShell",
             summary: "Get-ChildItem -Force",
         });
         expect(describeToolCall("read", { path: "src/main.tsx" })).toEqual({
             toolKind: "read",
-            label: "Read",
             summary: "src/main.tsx",
         });
         expect(describeToolCall("write", { path: "plan.md" })).toEqual({
             toolKind: "write",
-            label: "Write",
             summary: "plan.md",
         });
         expect(describeToolCall("edit", { path: "src/App.tsx" })).toEqual({
             toolKind: "edit",
-            label: "Edit",
             summary: "src/App.tsx",
         });
         expect(describeToolCall("grep", { pattern: "useSessionStore", path: "src" })).toEqual({
             toolKind: "grep",
-            label: "Grep",
             summary: "useSessionStore in src",
         });
         expect(describeToolCall("find", { pattern: "*.stories.tsx" })).toEqual({
             toolKind: "find",
-            label: "Find",
             summary: "*.stories.tsx",
         });
-        expect(describeToolCall("ls", {})).toEqual({ toolKind: "ls", label: "Ls", summary: "." });
+        expect(describeToolCall("ls", {})).toEqual({ toolKind: "ls", summary: "." });
         expect(describeToolCall("codemode", { code: "\n  // run checks\n  return 1;" })).toEqual({
             toolKind: "codemode",
-            label: "Codemode",
             summary: "// run checks",
         });
         expect(describeToolCall("tool_search", { query: "github pull request" })).toEqual({
             toolKind: "tool_search",
-            label: "Tool search",
             summary: "github pull request",
         });
     });
@@ -1401,36 +1392,31 @@ describe("describeToolCall", () => {
     it("includes line ranges, timeouts, globs, limits and legacy file_path in summaries", () => {
         expect(describeToolCall("read", { file_path: "src/App.tsx", offset: 10, limit: 25 })).toEqual({
             toolKind: "read",
-            label: "Read",
             summary: "src/App.tsx:10-34",
         });
         expect(describeToolCall("bash", { command: "pnpm test", timeout: 30 })).toEqual({
             toolKind: "bash",
-            label: "Bash",
             summary: "pnpm test (timeout 30s)",
         });
         expect(describeToolCall("grep", { pattern: "foo", path: "src", glob: "*.ts", limit: 20 })).toEqual({
             toolKind: "grep",
-            label: "Grep",
             summary: "foo in src (*.ts) (limit 20)",
         });
         expect(describeToolCall("find", { pattern: "*.css", path: "src", limit: 50 })).toEqual({
             toolKind: "find",
-            label: "Find",
             summary: "*.css in src (limit 50)",
         });
         expect(describeToolCall("ls", { path: "packages", limit: 10 })).toEqual({
             toolKind: "ls",
-            label: "Ls",
             summary: "packages (limit 10)",
         });
     });
 
-    it("falls back to generic with the original name and first scalar argument", () => {
+    it("falls back to generic with the first scalar argument", () => {
         expect(
             describeToolCall("mcp__github__get_issue", { nested: { ignored: true }, issue_number: 42, repo: "pivia" }),
-        ).toEqual({ toolKind: "generic", label: "mcp__github__get_issue", summary: "42" });
-        expect(describeToolCall("custom_ping", {})).toEqual({ toolKind: "generic", label: "custom_ping", summary: "" });
+        ).toEqual({ toolKind: "generic", summary: "42" });
+        expect(describeToolCall("custom_ping", {})).toEqual({ toolKind: "generic", summary: "" });
     });
 });
 

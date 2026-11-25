@@ -7,6 +7,7 @@ import { cn } from "@/lib";
 
 import { Icon } from "../Icon/Icon";
 import { IconButton } from "../IconButton/IconButton";
+import visuallyHidden from "../VisuallyHidden/VisuallyHidden.module.css";
 import styles from "./ImageViewer.module.css";
 
 export type ImageViewerProps = {
@@ -56,8 +57,8 @@ export function ImageViewer({ open, onOpenChange, src, alt, caption, className }
                     initialFocus={popupRef}
                     tabIndex={-1}
                 >
-                    <Dialog.Title className={styles.srOnly}>Image viewer</Dialog.Title>
-                    <Dialog.Description className={styles.srOnly}>{description}</Dialog.Description>
+                    <Dialog.Title className={visuallyHidden.root}>Image viewer</Dialog.Title>
+                    <Dialog.Description className={visuallyHidden.root}>{description}</Dialog.Description>
 
                     <div className={styles.topbar}>
                         <div className={styles.closeSurface}>

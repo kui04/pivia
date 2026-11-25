@@ -8,6 +8,7 @@ import { cn } from "@/lib";
 
 import { IconButton } from "../IconButton/IconButton";
 import { ScrollArea } from "../ScrollArea/ScrollArea";
+import { VisuallyHidden } from "../VisuallyHidden/VisuallyHidden";
 import { parseDiffLines } from "./diff";
 import { highlight, resolveLanguage } from "./highlight";
 import styles from "./CodeBlock.module.css";
@@ -189,9 +190,7 @@ export function CodeBlock({
                     </code>
                 </pre>
             </ScrollArea>
-            <span className={styles.status} role="status">
-                {statusText}
-            </span>
+            <VisuallyHidden role="status">{statusText}</VisuallyHidden>
         </div>
     );
 }

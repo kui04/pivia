@@ -4,24 +4,11 @@ import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 
 import { Button } from "@components";
 import type { TranscriptItem, TranscriptTurnItem } from "@/stores/session/transcript";
+import { requireElement, requireViewport } from "@/storybook/dom";
 
 import { Transcript } from "./Transcript";
 import { collectQueuedEntries } from "./components/TranscriptQueue/queue";
 import styles from "./Transcript.stories.module.css";
-
-function requireElement<T extends Element>(element: T | null, name: string): T {
-    if (element === null) {
-        throw new Error(`The story did not render ${name}`);
-    }
-    return element;
-}
-
-function getViewport(canvasElement: HTMLElement): HTMLElement {
-    return requireElement(
-        canvasElement.querySelector<HTMLElement>("[data-slot='scroll-area-viewport']"),
-        "the transcript scroll viewport",
-    );
-}
 
 function hasMaskFade(viewport: HTMLElement): boolean {
     const mask = getComputedStyle(viewport).maskImage || getComputedStyle(viewport).webkitMaskImage;
@@ -60,7 +47,7 @@ function buildLongConversation(turnCount: number): TranscriptItem[] {
                     kind: "toolCall",
                     id: `tool-${index}`,
                     toolKind: "bash",
-                    label: "Bash",
+                    toolName: "bash",
                     summary: `pnpm test:unit -- --run step-${index}`,
                     arguments: { command: `pnpm test:unit -- --run step-${index}` },
                     argumentsError: null,
@@ -117,7 +104,7 @@ const mixedItems: TranscriptItem[] = [
                 kind: "toolCall",
                 id: "tool-mixed",
                 toolKind: "bash",
-                label: "Bash",
+                toolName: "bash",
                 summary: "pnpm test",
                 arguments: { command: "pnpm test" },
                 argumentsError: null,
@@ -195,7 +182,7 @@ const shortItems: TranscriptItem[] = [
                 kind: "toolCall",
                 id: "tool-single",
                 toolKind: "read",
-                label: "Read",
+                toolName: "read",
                 summary: "src/styles/token.css",
                 arguments: { path: "src/styles/token.css" },
                 argumentsError: null,
@@ -242,7 +229,7 @@ export const LongConversationInitialBottom: Story = {
     ],
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
-        const viewport = getViewport(canvasElement);
+        const viewport = requireViewport(canvasElement, "the transcript scroll viewport");
         const content = requireElement(
             canvasElement.querySelector<HTMLElement>("[data-slot='scroll-area-content']"),
             "the scroll content container",
@@ -272,7 +259,7 @@ export const ScrollUpAndToBottom: Story = {
     ],
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
-        const viewport = getViewport(canvasElement);
+        const viewport = requireViewport(canvasElement, "the transcript scroll viewport");
 
         await waitFor(async () => {
             await expect(viewport.scrollTop).toBeGreaterThan(100);
@@ -362,7 +349,7 @@ export const StreamingAutoFollow: Story = {
     render: () => <StreamingTranscriptDemo />,
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
-        const viewport = getViewport(canvasElement);
+        const viewport = requireViewport(canvasElement, "the transcript scroll viewport");
         const appendButton = canvas.getByRole("button", { name: "Append chunk" });
 
         await waitFor(async () => {
@@ -431,7 +418,7 @@ export const FitsWithoutScroll: Story = {
     ],
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
-        const viewport = getViewport(canvasElement);
+        const viewport = requireViewport(canvasElement, "the transcript scroll viewport");
 
         await expect(viewport.scrollHeight).toBeLessThanOrEqual(viewport.clientHeight);
         await expect(canvas.getByText(/is set to/)).toBeVisible();
@@ -570,7 +557,7 @@ export const EdgeFadeEnabled: Story = {
         ),
     ],
     play: async ({ canvasElement }) => {
-        const viewport = getViewport(canvasElement);
+        const viewport = requireViewport(canvasElement, "the transcript scroll viewport");
         await waitFor(async () => {
             await expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight);
             await expect(hasMaskFade(viewport)).toBe(true);
@@ -696,7 +683,7 @@ export const QueuedAutoFollow: Story = {
     render: () => <QueuedAutoFollowDemo />,
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
-        const viewport = getViewport(canvasElement);
+        const viewport = requireViewport(canvasElement, "the transcript scroll viewport");
         const appendButton = canvas.getByRole("button", { name: "Append queued" });
 
         await waitFor(async () => {

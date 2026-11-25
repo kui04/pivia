@@ -1,10 +1,8 @@
 import { Check, Copy, WrapText, X } from "lucide-react";
 import type { ReactElement } from "react";
 
-import { IconButton } from "@components";
+import { IconButton, VisuallyHidden } from "@components";
 import { copyFeedbackText, type CopyFeedbackStatus } from "@/hooks";
-
-import styles from "./OutputToolbar.module.css";
 
 /** Props of {@link OutputToolbar}. */
 export type OutputToolbarProps = {
@@ -51,9 +49,7 @@ export function OutputToolbar({
                     <Copy strokeWidth={1.75} />
                 )}
             </IconButton>
-            <span className={styles.status} role="status">
-                {copyFeedbackText(copyStatus)}
-            </span>
+            <VisuallyHidden role="status">{copyFeedbackText(copyStatus)}</VisuallyHidden>
         </>
     );
 }

@@ -2,7 +2,7 @@ import type { SessionId } from "@pivia/protocol";
 import { Pin, Plus, RefreshCw, Search, Settings, X } from "lucide-react";
 import { useId, useRef, useState, type ReactElement } from "react";
 
-import { Button, Icon, IconButton, Input, ScrollArea } from "@components";
+import { Button, Icon, IconButton, Input, ScrollArea, VisuallyHidden } from "@components";
 import { cn } from "@/lib";
 import type { CatalogSyncPhase, WorkspaceModel } from "@/stores/workspace/model";
 
@@ -252,9 +252,9 @@ export function Sidebar({
 function LoadingRows({ label }: { label: string }): ReactElement {
     return (
         <>
-            <p role="status" className={styles.visuallyHidden}>
+            <VisuallyHidden as="p" role="status">
                 {label}
-            </p>
+            </VisuallyHidden>
             <div className={styles.skeleton} aria-hidden="true">
                 {SKELETON_GROUPS.map(({ id, widths }) => (
                     <div key={id} className={styles.skeletonGroup}>

@@ -3,6 +3,7 @@ import { useState, type ReactElement } from "react";
 import { expect, userEvent, waitFor, within } from "storybook/test";
 
 import { Button } from "@components";
+import storyFrame from "@/storybook/storyFrame.module.css";
 
 import { useAutoScroll } from "./useAutoScroll";
 import styles from "./useAutoScroll.stories.module.css";
@@ -43,7 +44,7 @@ const meta = {
     component: AutoScrollProbe,
     decorators: [
         (Story) => (
-            <div className={styles.frame}>
+            <div className={storyFrame.frame}>
                 <Story />
             </div>
         ),

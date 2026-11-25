@@ -1,17 +1,13 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, spyOn, userEvent, waitFor, within } from "storybook/test";
 
+import { cn } from "@/lib";
 import type { TranscriptToolCallStep } from "@/stores/session/transcript";
+import { requireElement } from "@/storybook/dom";
+import storyFrame from "@/storybook/storyFrame.module.css";
 
 import { ToolCallBlock } from "./ToolCallBlock";
 import styles from "./ToolCallBlock.stories.module.css";
-
-function requireElement<T extends Element>(element: T | null, name: string): T {
-    if (element === null) {
-        throw new Error(`The story did not render ${name}`);
-    }
-    return element;
-}
 
 const longBashOutput = Array.from(
     { length: 24 },
@@ -22,7 +18,7 @@ const bashStep: TranscriptToolCallStep = {
     kind: "toolCall",
     id: "tool-bash",
     toolKind: "bash",
-    label: "Bash",
+    toolName: "bash",
     summary: "git log --oneline -20",
     arguments: { command: "git log --oneline -20" },
     argumentsError: null,
@@ -39,7 +35,7 @@ const runningStep: TranscriptToolCallStep = {
     kind: "toolCall",
     id: "tool-running",
     toolKind: "bash",
-    label: "Bash",
+    toolName: "bash",
     summary: "pnpm test:unit",
     arguments: { command: "pnpm test:unit" },
     argumentsError: null,
@@ -56,7 +52,7 @@ const errorStep: TranscriptToolCallStep = {
     kind: "toolCall",
     id: "tool-error",
     toolKind: "edit",
-    label: "Edit",
+    toolName: "edit",
     summary: "src/App.tsx",
     arguments: { path: "src/App.tsx" },
     argumentsError: null,
@@ -70,23 +66,41 @@ const errorStep: TranscriptToolCallStep = {
 };
 
 const builtinAndGenericSteps: readonly TranscriptToolCallStep[] = [
-    { ...bashStep, id: "kind-bash", toolKind: "bash", label: "Bash", summary: "git status -s" },
-    { ...bashStep, id: "kind-ps", toolKind: "powershell", label: "PowerShell", summary: "Get-ChildItem src" },
-    { ...bashStep, id: "kind-read", toolKind: "read", label: "Read", summary: "src/pages/Workspace/WorkspacePage.tsx" },
+    { ...bashStep, id: "kind-bash", toolKind: "bash", toolName: "bash", summary: "git status -s" },
+    { ...bashStep, id: "kind-ps", toolKind: "powershell", toolName: "powershell", summary: "Get-ChildItem src" },
+    {
+        ...bashStep,
+        id: "kind-read",
+        toolKind: "read",
+        toolName: "read",
+        summary: "src/pages/Workspace/WorkspacePage.tsx",
+    },
     {
         ...bashStep,
         id: "kind-write",
         toolKind: "write",
-        label: "Write",
+        toolName: "write",
         summary: "src/pages/Workspace/useWorkspaceSession.ts",
     },
-    { ...bashStep, id: "kind-edit", toolKind: "edit", label: "Edit", summary: "package.json" },
-    { ...bashStep, id: "kind-grep", toolKind: "grep", label: "Grep", summary: '"ScrollArea" in src' },
-    { ...bashStep, id: "kind-find", toolKind: "find", label: "Find", summary: "**/*.stories.tsx in src" },
-    { ...bashStep, id: "kind-ls", toolKind: "ls", label: "Ls", summary: "src/pages/Workspace" },
-    { ...bashStep, id: "kind-code", toolKind: "codemode", label: "Codemode", summary: "return 1;" },
-    { ...bashStep, id: "kind-search", toolKind: "tool_search", label: "Tool search", summary: "github pull request" },
-    { ...bashStep, id: "kind-generic", toolKind: "generic", label: "github_search_code", summary: "query=TurnGroup" },
+    { ...bashStep, id: "kind-edit", toolKind: "edit", toolName: "edit", summary: "package.json" },
+    { ...bashStep, id: "kind-grep", toolKind: "grep", toolName: "grep", summary: '"ScrollArea" in src' },
+    { ...bashStep, id: "kind-find", toolKind: "find", toolName: "find", summary: "**/*.stories.tsx in src" },
+    { ...bashStep, id: "kind-ls", toolKind: "ls", toolName: "ls", summary: "src/pages/Workspace" },
+    { ...bashStep, id: "kind-code", toolKind: "codemode", toolName: "codemode", summary: "return 1;" },
+    {
+        ...bashStep,
+        id: "kind-search",
+        toolKind: "tool_search",
+        toolName: "tool_search",
+        summary: "github pull request",
+    },
+    {
+        ...bashStep,
+        id: "kind-generic",
+        toolKind: "generic",
+        toolName: "github_search_code",
+        summary: "query=TurnGroup",
+    },
 ];
 
 const meta = {
@@ -104,7 +118,7 @@ const meta = {
     },
     decorators: [
         (Story) => (
-            <div className={styles.frame}>
+            <div className={storyFrame.frame}>
                 <Story />
             </div>
         ),
@@ -212,7 +226,7 @@ export const EditDiff: Story = {
             kind: "toolCall",
             id: "tool-edit-diff",
             toolKind: "edit",
-            label: "Edit",
+            toolName: "edit",
             summary: "src/App.tsx",
             arguments: { path: "src/App.tsx" },
             argumentsError: null,
@@ -254,7 +268,7 @@ export const WriteCodePreview: Story = {
             kind: "toolCall",
             id: "tool-write-code",
             toolKind: "write",
-            label: "Write",
+            toolName: "write",
             summary: "src/helper.ts",
             arguments: {
                 path: "src/helper.ts",
@@ -290,7 +304,7 @@ export const ReadWithWarnings: Story = {
             kind: "toolCall",
             id: "tool-read-warn",
             toolKind: "read",
-            label: "Read",
+            toolName: "read",
             summary: "src/store.ts:15-17",
             arguments: { path: "src/store.ts", offset: 15, limit: 3 },
             argumentsError: null,
@@ -326,7 +340,7 @@ export const CodemodeScriptWithNestedCalls: Story = {
             kind: "toolCall",
             id: "tool-codemode",
             toolKind: "codemode",
-            label: "Codemode",
+            toolName: "codemode",
             summary: "const files = await tools.find({ pattern: '*.ts' });",
             arguments: {
                 code: "const files = await tools.find({ pattern: '*.ts' });\nconsole.log(files.join('\\n'));",
@@ -394,7 +408,7 @@ export const CodemodeScriptWithNestedCalls: Story = {
 
 export const BuiltinAndGenericIcons: Story = {
     render: () => (
-        <div className={styles.stack}>
+        <div className={cn(storyFrame.frame, styles.stack)}>
             {builtinAndGenericSteps.map((step) => (
                 <ToolCallBlock key={step.id} step={step} />
             ))}
@@ -403,6 +417,20 @@ export const BuiltinAndGenericIcons: Story = {
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
         await expect(canvas.getAllByRole("button")).toHaveLength(builtinAndGenericSteps.length);
-        await expect(canvas.getByText("github_search_code")).toBeVisible();
+        for (const label of [
+            "Bash",
+            "PowerShell",
+            "Read",
+            "Write",
+            "Edit",
+            "Grep",
+            "Find",
+            "Ls",
+            "Codemode",
+            "Tool search",
+            "github_search_code",
+        ]) {
+            await expect(canvas.getByText(label)).toBeVisible();
+        }
     },
 };
