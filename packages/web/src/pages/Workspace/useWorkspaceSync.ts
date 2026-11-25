@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef } from "react";
 
 import { assertNever, WS_CLOSE_CODE, type CatalogDelta, type CatalogSnapshot } from "@pivia/protocol";
 
-import { Log } from "@/lib/log";
+import { Log } from "@/lib";
 import {
     createReconnectController,
     DEFAULT_AUTH_PROBE_THRESHOLD,

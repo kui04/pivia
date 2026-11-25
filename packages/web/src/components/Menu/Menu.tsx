@@ -1,7 +1,7 @@
 import { Menu as BaseMenu } from "@base-ui/react/menu";
 import type { ComponentProps, ReactElement, ReactNode } from "react";
 
-import { cn } from "../../lib/cn";
+import { cn } from "@/lib";
 
 import { Icon } from "../Icon/Icon";
 import styles from "./Menu.module.css";

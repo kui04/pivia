@@ -2,7 +2,7 @@ import { useState, type ReactElement } from "react";
 
 import type { ImageContent } from "@earendil-works/pi-ai";
 import { Image, ImageViewer } from "@components";
-import { cn } from "@/lib/cn";
+import { cn } from "@/lib";
 
 import styles from "./ImageAttachments.module.css";
 

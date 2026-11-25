@@ -19,7 +19,7 @@ import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 
-import { cn } from "../../lib/cn";
+import { cn } from "@/lib";
 
 import { CodeBlock } from "../CodeBlock/CodeBlock";
 import { Image } from "../Image/Image";

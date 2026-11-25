@@ -1,7 +1,7 @@
 import { Form as BaseForm } from "@base-ui/react/form";
 import type { ComponentProps } from "react";
 
-import { cn } from "../../lib/cn";
+import { cn } from "@/lib";
 
 import styles from "./Form.module.css";
 

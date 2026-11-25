@@ -31,7 +31,7 @@ import type {
     SessionPrefixAnchor,
 } from "@pivia/protocol";
 
-import { Log } from "@/lib/log";
+import { Log } from "../log";
 
 /** A `fetch` implementation; injectable so unit tests do not open a network. */
 export type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;

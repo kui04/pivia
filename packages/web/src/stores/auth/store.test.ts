@@ -1,7 +1,7 @@
 import type { AuthStatusResponse } from "@pivia/protocol";
 import { describe, expect, it, vi } from "vitest";
 
-import { Log } from "@/lib/log";
+import { Log } from "@/lib";
 import { ApiClientError } from "@/lib/transport/http";
 
 import { createAuthStore, formatRateLimitMessage, initialAuthState, type AuthClient } from "./store";

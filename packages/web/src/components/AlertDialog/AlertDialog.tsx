@@ -1,7 +1,7 @@
 import { AlertDialog as BaseAlertDialog } from "@base-ui/react/alert-dialog";
 import type { ComponentProps, MouseEventHandler, ReactElement, ReactNode } from "react";
 
-import { cn } from "../../lib/cn";
+import { cn } from "@/lib";
 
 import surface from "../Dialog/DialogSurface.module.css";
 import styles from "./AlertDialog.module.css";

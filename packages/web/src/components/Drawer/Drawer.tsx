@@ -1,7 +1,7 @@
 import { Drawer as BaseDrawer } from "@base-ui/react/drawer";
 import type { ReactElement, ReactNode } from "react";
 
-import { cn } from "../../lib/cn";
+import { cn } from "@/lib";
 
 import { DrawerContentContext } from "./useInsideDrawer";
 import styles from "./Drawer.module.css";

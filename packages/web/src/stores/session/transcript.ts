@@ -2,7 +2,7 @@ import type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
 import type { ParsedSkillBlock } from "@earendil-works/pi-coding-agent";
 import { isFiniteNumber, isImageContent, isRecord, type StrictOmit } from "@pivia/protocol";
 
-import { stripAnsi } from "@/lib/ansi";
+import { stripAnsi } from "@/lib";
 
 import type { ProjectedTranscriptItem } from "./projection";
 import type { LiveToolExecutionState } from "./reducer";

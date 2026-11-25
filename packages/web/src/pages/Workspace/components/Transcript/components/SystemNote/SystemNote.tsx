@@ -2,7 +2,7 @@ import { Layers } from "lucide-react";
 import type { ReactElement } from "react";
 
 import { Markdown } from "@components";
-import { cn } from "@/lib/cn";
+import { cn } from "@/lib";
 import { formatSystemNoteMeta, type TranscriptNoteItem } from "@/stores/session/transcript";
 
 import { CollapsibleBlock } from "../CollapsibleBlock/CollapsibleBlock";

@@ -4,7 +4,7 @@ import type { ThemedToken } from "shiki";
 
 import { copyFeedbackText, useCopyFeedback } from "@/hooks";
 
-import { cn } from "../../lib/cn";
+import { cn } from "@/lib";
 
 import { IconButton } from "../IconButton/IconButton";
 import { ScrollArea } from "../ScrollArea/ScrollArea";

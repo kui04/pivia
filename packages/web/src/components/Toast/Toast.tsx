@@ -2,7 +2,7 @@ import { Toast as BaseToast } from "@base-ui/react/toast";
 import { CircleAlert, CircleCheck, Info, TriangleAlert, X } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
 
-import { cn } from "../../lib/cn";
+import { cn } from "@/lib";
 
 import { Icon } from "../Icon/Icon";
 import styles from "./Toast.module.css";

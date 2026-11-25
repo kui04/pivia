@@ -1,6 +1,6 @@
 import type { ReactElement } from "react";
 
-import { cn } from "@/lib/cn";
+import { cn } from "@/lib";
 import type { TranscriptUserItem } from "@/stores/session/transcript";
 
 import { ImageAttachments } from "../ImageAttachments/ImageAttachments";

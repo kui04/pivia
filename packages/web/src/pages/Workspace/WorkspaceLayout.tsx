@@ -4,8 +4,7 @@ import { Outlet, useNavigate, useParams } from "react-router";
 
 import { Drawer } from "@components";
 import { useMediaQuery, useNow } from "@/hooks";
-import { copyText } from "@/lib/clipboard";
-import { Log } from "@/lib/log";
+import { copyText, Log } from "@/lib";
 import { showError, showWarning } from "@/lib/toast";
 import { ApiClientError, apiClient as defaultApiClient, type ApiClient } from "@/lib/transport/http";
 import type { WebSocketConstructor } from "@/lib/transport/websocket";

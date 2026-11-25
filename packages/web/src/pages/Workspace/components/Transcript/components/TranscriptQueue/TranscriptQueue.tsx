@@ -2,7 +2,7 @@ import { Clock } from "lucide-react";
 import type { ReactElement } from "react";
 
 import { Icon } from "@components";
-import { cn } from "@/lib/cn";
+import { cn } from "@/lib";
 
 import { collectQueuedEntries, type TranscriptQueuedMessages } from "./queue";
 import styles from "./TranscriptQueue.module.css";

@@ -1,7 +1,7 @@
 import { Progress as BaseProgress } from "@base-ui/react/progress";
 import type { ComponentProps } from "react";
 
-import { cn } from "../../lib/cn";
+import { cn } from "@/lib";
 
 import { Icon, type IconSize } from "../Icon/Icon";
 import styles from "./LoadingIndicator.module.css";

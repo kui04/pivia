@@ -2,7 +2,7 @@ import { ChevronRight, type LucideIcon } from "lucide-react";
 import { useId, useState, type ReactElement, type ReactNode } from "react";
 
 import { Icon, ScrollArea } from "@components";
-import { cn } from "@/lib/cn";
+import { cn } from "@/lib";
 
 import { useAutoScroll } from "../../useAutoScroll";
 import styles from "./CollapsibleBlock.module.css";

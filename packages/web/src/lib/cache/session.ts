@@ -8,7 +8,7 @@ import {
     type SessionId,
 } from "@pivia/protocol";
 
-import { Log } from "@/lib/log";
+import { Log } from "../log";
 
 import {
     isQuotaExceededError,

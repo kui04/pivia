@@ -3,7 +3,7 @@ import { ImageOff, Minus, Plus, RotateCcw, X } from "lucide-react";
 import { useRef, useState } from "react";
 import { TransformComponent, TransformWrapper, useControls, useTransformComponent } from "react-zoom-pan-pinch";
 
-import { cn } from "../../lib/cn";
+import { cn } from "@/lib";
 
 import { Icon } from "../Icon/Icon";
 import { IconButton } from "../IconButton/IconButton";

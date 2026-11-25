@@ -1,7 +1,7 @@
 import { Fieldset as BaseFieldset } from "@base-ui/react/fieldset";
 import type { ComponentProps, ReactNode } from "react";
 
-import { cn } from "../../lib/cn";
+import { cn } from "@/lib";
 
 import styles from "./Fieldset.module.css";
 

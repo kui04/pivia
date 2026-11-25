@@ -4,7 +4,7 @@ import { useState, type ReactElement } from "react";
 
 import { Icon, IconButton, ScrollArea } from "@components";
 import { copyFeedbackText, useCopyFeedback } from "@/hooks";
-import { cn } from "@/lib/cn";
+import { cn } from "@/lib";
 import type { TranscriptBashItem, TranscriptBashStatus } from "@/stores/session/transcript";
 
 import { useAutoScroll } from "../../useAutoScroll";

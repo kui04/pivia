@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { copyText } from "../lib/clipboard";
+import { copyText } from "@/lib";
 
 /** How long the copy control keeps its success or failure state. */
 const COPY_FEEDBACK_MS = 2000;

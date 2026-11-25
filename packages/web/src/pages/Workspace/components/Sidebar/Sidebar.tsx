@@ -3,7 +3,7 @@ import { Pin, Plus, RefreshCw, Search, Settings, X } from "lucide-react";
 import { useId, useRef, useState, type ReactElement } from "react";
 
 import { Button, Icon, IconButton, Input, ScrollArea } from "@components";
-import { cn } from "@/lib/cn";
+import { cn } from "@/lib";
 import type { CatalogSyncPhase, WorkspaceModel } from "@/stores/workspace/model";
 
 import { FolderSection } from "../FolderSection/FolderSection";

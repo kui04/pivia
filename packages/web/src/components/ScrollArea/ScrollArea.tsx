@@ -1,7 +1,7 @@
 import { ScrollArea as BaseScrollArea } from "@base-ui/react/scroll-area";
 import type { CSSProperties, ReactNode, Ref } from "react";
 
-import { cn } from "../../lib/cn";
+import { cn } from "@/lib";
 
 import styles from "./ScrollArea.module.css";
 

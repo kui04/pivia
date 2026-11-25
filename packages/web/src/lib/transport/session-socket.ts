@@ -14,7 +14,7 @@ import {
     type SessionWsClientMessage,
 } from "@pivia/protocol";
 
-import { Log } from "@/lib/log";
+import { Log } from "../log";
 
 import {
     buildWebSocketUrl,

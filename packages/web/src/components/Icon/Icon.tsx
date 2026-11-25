@@ -1,6 +1,6 @@
 import type { ComponentProps, CSSProperties } from "react";
 
-import { cn } from "../../lib/cn";
+import { cn } from "@/lib";
 
 import styles from "./Icon.module.css";
 

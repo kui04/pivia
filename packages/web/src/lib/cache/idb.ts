@@ -1,6 +1,6 @@
 import { isRecord } from "@pivia/protocol";
 
-import { Log } from "@/lib/log";
+import { Log } from "../log";
 
 import type { IndexedDbCoordinatorOptions, SnapshotCache } from "./types";
 

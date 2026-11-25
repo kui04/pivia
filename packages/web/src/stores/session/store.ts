@@ -14,7 +14,7 @@ import {
 import { create } from "zustand";
 
 import type { SessionCache } from "@/lib/cache";
-import { Log } from "@/lib/log";
+import { Log } from "@/lib";
 import { createReconnectController, type ReconnectController, SyncStreamClient } from "@/lib/sync";
 import { ApiClientError, type ApiClient } from "@/lib/transport/http";
 import {

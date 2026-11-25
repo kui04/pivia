@@ -2,7 +2,7 @@ import { Button } from "@base-ui/react/button";
 import { Tooltip } from "@base-ui/react/tooltip";
 import type { ComponentProps, ReactNode } from "react";
 
-import { cn } from "../../lib/cn";
+import { cn } from "@/lib";
 
 import { Icon, type IconSize } from "../Icon/Icon";
 import styles from "./IconButton.module.css";

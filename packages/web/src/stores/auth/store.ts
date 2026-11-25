@@ -2,7 +2,7 @@ import type { AuthLoginResponse, AuthLogoutResponse, AuthStatusResponse } from "
 import { create } from "zustand";
 
 import type { ClearableCache } from "@/lib/cache";
-import { Log } from "@/lib/log";
+import { Log } from "@/lib";
 import { ApiClientError } from "@/lib/transport/http";
 
 /** Authentication states of the single host. */

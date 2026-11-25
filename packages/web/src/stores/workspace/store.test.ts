@@ -47,7 +47,7 @@ const storageBacking = vi.hoisted(() => {
     return entries;
 });
 
-import { Log } from "@/lib/log";
+import { Log } from "@/lib";
 
 import { createWorkspaceStore, type WorkspaceCatalogCache } from "./store";
 

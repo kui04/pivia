@@ -9,7 +9,7 @@ import {
     type SyncResyncReason,
 } from "@pivia/protocol";
 
-import { Log } from "@/lib/log";
+import { Log } from "../log";
 
 /** Default maximum deltas buffered while an HTTP hydration request is in flight. */
 export const DEFAULT_MAX_PENDING_DELTAS = 512;

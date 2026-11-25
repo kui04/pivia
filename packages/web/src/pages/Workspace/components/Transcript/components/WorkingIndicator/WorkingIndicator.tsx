@@ -1,7 +1,7 @@
 import type { ReactElement } from "react";
 
 import { LoadingIndicator, type IconSize } from "@components";
-import { cn } from "@/lib/cn";
+import { cn } from "@/lib";
 
 import styles from "./WorkingIndicator.module.css";
 

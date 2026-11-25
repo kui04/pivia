@@ -3,7 +3,7 @@ import { ArrowDown } from "lucide-react";
 import { useCallback, useEffect, useRef, type FocusEvent, type ReactElement } from "react";
 
 import { Button, Icon, ScrollArea } from "@components";
-import { cn } from "@/lib/cn";
+import { cn } from "@/lib";
 import type { SessionActivityNotice, SessionLiveActivity } from "@/stores/session/store";
 import type { TranscriptItem } from "@/stores/session/transcript";
 

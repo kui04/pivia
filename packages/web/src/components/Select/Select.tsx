@@ -2,7 +2,7 @@ import { Select as BaseSelect } from "@base-ui/react/select";
 import { Check, ChevronDown } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 
-import { cn } from "../../lib/cn";
+import { cn } from "@/lib";
 
 import { Icon } from "../Icon/Icon";
 import styles from "./Select.module.css";
