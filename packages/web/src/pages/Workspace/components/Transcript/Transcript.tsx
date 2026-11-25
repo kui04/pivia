@@ -171,6 +171,12 @@ export function Transcript({
                                         {...(onOpenLink !== undefined ? { onOpenLink } : {})}
                                     />
                                 );
+                            case "notice":
+                                return (
+                                    <p key={item.id} className={styles.inlineNotice}>
+                                        {item.text}
+                                    </p>
+                                );
                             case "turn":
                                 return (
                                     <TurnGroup

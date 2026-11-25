@@ -18,11 +18,13 @@
  *   │                   │   └─ .rail       vertical guide line
  *   │                   └─ .replyBody      intermediate Markdown reply
  *   ├─ .finalReply               final reply rendered directly below the group
- *   └─ .error                    notice rendered when the turn was truncated, aborted or failed
+ *   ├─ .error                    notice rendered when the turn was truncated, aborted or failed
+ *   └─ .diagnostics              warning banner for settled provider diagnostics (e.g. dropped thinking)
  *
  * Classes passed to child components stay top-level so CSS Modules keep one class of specificity:
  *
  *   .icon
+ *   .diagnosticsIcon
  *   .chevron                     rotates 90deg when data-open="true"
  *   .markdown
  */
@@ -187,6 +189,17 @@
         overflow-wrap: anywhere;
     }
 
+    .diagnostics {
+        display: flex;
+        align-items: center;
+        gap: var(--space-8);
+        padding: var(--space-4);
+        color: var(--color-on-surface-variant);
+        font-size: var(--type-label-medium-size);
+        letter-spacing: var(--type-label-medium-tracking);
+        line-height: var(--type-label-medium-line-height);
+    }
+
     @media (prefers-reduced-motion: reduce) {
         .group .trigger,
         .group .collapse {
@@ -198,6 +211,12 @@
 .icon {
     flex: none;
     color: var(--color-on-surface-variant);
+}
+
+/* `--color-warning` conveys warning polarity on icons while body text stays high contrast. */
+.diagnosticsIcon {
+    flex: none;
+    color: var(--color-warning);
 }
 
 .chevron {

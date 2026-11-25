@@ -1,5 +1,5 @@
 import { assertNever } from "@pivia/protocol";
-import { ChevronRight, Layers, MessageSquareText } from "lucide-react";
+import { AlertTriangle, ChevronRight, Layers, MessageSquareText } from "lucide-react";
 import { Fragment, useId, useState, type ReactElement } from "react";
 
 import { Icon, Markdown } from "@components";
@@ -215,6 +215,15 @@ export function TurnGroup({
             {notice !== null ? (
                 <div className={styles.error} role={notice.announce ? "alert" : "status"}>
                     {notice.text}
+                </div>
+            ) : null}
+
+            {!turn.streaming && turn.diagnosticsNotice !== undefined ? (
+                <div className={styles.diagnostics} role="status">
+                    <Icon size="no-container" className={styles.diagnosticsIcon}>
+                        <AlertTriangle strokeWidth={1.75} />
+                    </Icon>
+                    <span>{turn.diagnosticsNotice}</span>
                 </div>
             ) : null}
 

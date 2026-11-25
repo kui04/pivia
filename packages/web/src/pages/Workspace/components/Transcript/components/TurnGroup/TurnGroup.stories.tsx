@@ -225,6 +225,7 @@ const streamingErrorTurn: TranscriptTurnItem = {
     outcome: { kind: "error", message: "Error: The provider closed the connection." },
     steps: [],
     finalReply: null,
+    diagnosticsNotice: "Anthropic dropped 2 thinking blocks",
 };
 
 const meta = {
@@ -399,8 +400,9 @@ export const StreamingTurnHidesNotice: Story = {
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
         await expect(canvas.getByRole("status")).toHaveTextContent("Working...");
-        // The runtime still reports activity, so a settled-looking error notice must wait.
+        // The runtime still reports activity, so settled error and diagnostics notices must wait.
         await expect(canvas.queryByRole("alert")).not.toBeInTheDocument();
+        await expect(canvas.queryByText(/Anthropic dropped/)).not.toBeInTheDocument();
     },
 };
 
@@ -412,5 +414,19 @@ export const CompactingTurn: Story = {
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
         await expect(canvas.getByRole("status")).toHaveTextContent("Auto-compacting context...");
+    },
+};
+
+export const DiagnosticsWarning: Story = {
+    args: {
+        turn: {
+            ...completedTurn,
+            id: "turn-diagnostics",
+            diagnosticsNotice: "Anthropic dropped 2 thinking blocks",
+        },
+    },
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+        await expect(canvas.getByRole("status")).toHaveTextContent("Anthropic dropped 2 thinking blocks");
     },
 };

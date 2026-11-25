@@ -1,0 +1,24 @@
+/*
+ * Collapsible compaction or branch-summary note with an optional muted metadata caption underneath.
+ *
+ * The nesting this file styles:
+ *
+ *   .root
+ *   └─ .meta         token count and summary billing subtitle aligned flush with the header edge
+ */
+.root {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    min-inline-size: 0;
+
+    .meta {
+        margin: 0;
+        padding-inline: var(--space-4);
+        color: var(--color-on-surface-variant);
+        font-size: var(--type-label-medium-size);
+        font-variant-numeric: tabular-nums;
+        letter-spacing: var(--type-label-medium-tracking);
+        line-height: var(--type-label-medium-line-height);
+    }
+}

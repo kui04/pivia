@@ -9,6 +9,7 @@
  *       └─ &[data-visible="true"]  reveals the button after scrolling above the bottom edge
  *
  *   .column                        centered max-width stack of transcript items inside ScrollArea
+ *   ├─ .inlineNotice               lightweight non-collapsible usage/cache status line
  *   └─ .activityNotice             inline compaction/retry status or error banner
  *       └─ &[data-tone="error"]
  *
@@ -124,6 +125,16 @@
     min-inline-size: 0;
     margin-inline: auto;
     padding-inline: var(--space-16);
+
+    .inlineNotice {
+        margin: 0;
+        padding-inline: var(--space-4);
+        color: var(--color-on-surface-variant);
+        font-size: var(--type-label-medium-size);
+        font-variant-numeric: tabular-nums;
+        letter-spacing: var(--type-label-medium-tracking);
+        line-height: var(--type-label-medium-line-height);
+    }
 
     .activityNotice {
         padding: var(--space-8) var(--space-12);

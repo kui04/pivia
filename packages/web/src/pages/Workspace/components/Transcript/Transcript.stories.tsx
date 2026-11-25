@@ -730,3 +730,48 @@ export const QueuedAutoFollow: Story = {
         await expect(viewport.scrollTop).toBeLessThanOrEqual(pausedScrollTop + 4);
     },
 };
+
+export const CompactionBillingAndUsageNotices: Story = {
+    args: {
+        items: [
+            {
+                kind: "note",
+                id: "note-compaction-billed",
+                title: "Session compacted",
+                text: "Kept active workspace edits and dropped earlier exploratory output.",
+                tokensBefore: 42_100,
+                billing: { billedTokens: 3_200, approxCostUsd: 0.024 },
+            },
+            ...shortItems,
+            {
+                kind: "notice",
+                id: "notice-cache-warm",
+                text: "Cache warmed (idle): $0.0025",
+            },
+            {
+                kind: "turn",
+                id: "turn-dropped-thinking",
+                timing: { kind: "static", durationMs: 4_000 },
+                streaming: false,
+                outcome: { kind: "completed" },
+                steps: [],
+                finalReply: "Finished checking the branch.",
+                diagnosticsNotice: "Anthropic dropped 2 thinking blocks",
+            },
+        ],
+    },
+    decorators: [
+        (Story) => (
+            <div className={styles.frame}>
+                <Story />
+            </div>
+        ),
+    ],
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+        await expect(canvas.getByRole("button", { name: "Session compacted" })).toBeVisible();
+        await expect(canvas.getByText("Compacted from 42,100 tokens · 3.2k tokens billed (~$0.02)")).toBeVisible();
+        await expect(canvas.getByText("Cache warmed (idle): $0.0025")).toBeVisible();
+        await expect(canvas.getByRole("status")).toHaveTextContent("Anthropic dropped 2 thinking blocks");
+    },
+};

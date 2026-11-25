@@ -747,3 +747,67 @@ export const ClosedSessionHidesQueue: Story = {
         await expect(canvas.queryByRole("list", { name: "Queued messages" })).not.toBeInTheDocument();
     },
 };
+
+const metadataAndUsageScenario: Scenario = ({ socket }) => {
+    const ws = socket.latest();
+    ws?.open();
+    ws?.receive(
+        inlineSnapshot([
+            userEntry("m1", null, "Earlier prompt", 1_000),
+            {
+                type: "compaction",
+                id: "c1",
+                parentId: "m1",
+                timestamp: "2026-04-01T00:00:02.000Z",
+                summary: "Compacted earlier discussion.",
+                firstKeptEntryId: "m1",
+                tokensBefore: 18_400,
+                usage: {
+                    input: 1_800,
+                    output: 400,
+                    cacheRead: 0,
+                    cacheWrite: 0,
+                    totalTokens: 2_200,
+                    cost: { input: 0.01, output: 0.01, cacheRead: 0, cacheWrite: 0, total: 0.02 },
+                },
+            },
+            assistantEntry("m2", "c1", [{ type: "text", text: "Resumed from summary." }], {
+                timestamp: 3_000,
+                diagnostics: [
+                    {
+                        type: "anthropic_input_transformations",
+                        timestamp: 3_000,
+                        details: {
+                            transformations: [{ type: "thinking_dropped", index: 0 }],
+                        },
+                    },
+                ],
+            }),
+            {
+                type: "usage",
+                id: "u1",
+                parentId: "m2",
+                timestamp: "2026-04-01T00:01:00.000Z",
+                kind: "cache_warm",
+                provider: "anthropic",
+                model: "claude",
+                usage: {
+                    ...EMPTY_USAGE,
+                    cost: { ...EMPTY_USAGE.cost, total: 0.0012 },
+                },
+                note: "idle",
+            },
+        ]),
+    );
+};
+
+export const MetadataAndUsageRealtime: Story = {
+    render: () => <PageHarness route={`/workspace/${SESSION_ID}`} setup={metadataAndUsageScenario} />,
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+        await expect(await canvas.findByRole("button", { name: "Session compacted" })).toBeVisible();
+        await expect(canvas.getByText("Compacted from 18,400 tokens · 2.2k tokens billed (~$0.02)")).toBeVisible();
+        await expect(canvas.getByRole("status")).toHaveTextContent("Anthropic dropped 1 thinking block");
+        await expect(canvas.getByText("Cache warmed (idle): $0.0012")).toBeVisible();
+    },
+};

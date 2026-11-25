@@ -27,6 +27,18 @@ import {
     type TranscriptToolStatus,
     type TranscriptToolWarning,
 } from "./tool-details";
+import {
+    countDroppedThinkingBlocks,
+    formatCacheWarmingText,
+    formatSystemNoteMeta,
+    formatThinkingDropNotice,
+    normalizeUsageNote,
+    readNonNegativeTokenCount,
+    readSummaryBilling,
+    readUsageTotalCostUsd,
+    type TranscriptNoticeItem,
+    type TranscriptSummaryBilling,
+} from "./transcript-meta";
 
 function ignoreUnknownVariant(value: never): void {
     // Compile-time exhaustiveness check over the Pi SDK union; unknown variants from a newer
@@ -34,12 +46,14 @@ function ignoreUnknownVariant(value: never): void {
     void value;
 }
 
-export { formatNestedCallDuration, formatUsdCost };
+export { formatNestedCallDuration, formatSystemNoteMeta, formatUsdCost };
 
 export type {
     TranscriptNestedCallStatus,
     TranscriptNestedCallsSummary,
     TranscriptNestedToolCall,
+    TranscriptNoticeItem,
+    TranscriptSummaryBilling,
     TranscriptToolArguments,
     TranscriptToolKind,
     TranscriptToolPreview,
@@ -183,6 +197,10 @@ export type TranscriptNoteItem = {
     readonly title: string;
     /** Text the entry carries; the transcript renders it as Markdown. */
     readonly text: string;
+    /** Token count on the branch prior to compaction, when recorded on a `compaction` entry. */
+    readonly tokensBefore?: number | undefined;
+    /** Summary generation token & cost totals, when recorded on `compaction` or `branch_summary`. */
+    readonly billing?: TranscriptSummaryBilling | undefined;
 };
 
 /**
@@ -215,6 +233,8 @@ export type TranscriptTurnItem = {
     readonly outcome: TranscriptTurnOutcome;
     readonly timing: TranscriptTiming;
     readonly streaming: boolean;
+    /** Warning notice attached when Anthropic dropped additional thinking blocks in this turn. */
+    readonly diagnosticsNotice?: string | undefined;
 };
 
 /** One top-level entry in the transcript list. */
@@ -224,7 +244,8 @@ export type TranscriptItem =
     | TranscriptBashItem
     | TranscriptCustomItem
     | TranscriptTurnItem
-    | TranscriptNoteItem;
+    | TranscriptNoteItem
+    | TranscriptNoticeItem;
 
 /** Optional inputs for live transcript rendering. */
 export type BuildTranscriptOptions = {
@@ -270,6 +291,7 @@ type ViewAssistantMessage = {
     readonly stopReason: AssistantStopReason | null;
     readonly errorMessage: string | null;
     readonly durationMs: number | null;
+    readonly droppedThinkingBlocks: number;
 };
 
 /** Tool result reduced to the fields the transcript reads. */
@@ -518,6 +540,7 @@ function readAssistantMessage(
         stopReason: isKnownStopReason(message.stopReason) ? message.stopReason : null,
         errorMessage: typeof message.errorMessage === "string" ? message.errorMessage : null,
         durationMs: toDuration(message.durationMs),
+        droppedThinkingBlocks: countDroppedThinkingBlocks(message.diagnostics),
     };
 }
 
@@ -671,7 +694,8 @@ function buildTurnItem(
     precedingUserTimestamp: number | null,
     options: BuildTranscriptOptions,
     isTrailingTurn: boolean,
-): TranscriptTurnItem | null {
+    previousDroppedThinking: number,
+): { readonly turn: TranscriptTurnItem | null; readonly nextDroppedThinking: number } {
     const assistants: AssistantTurnMessage[] = [];
     const toolResults = new Map<string, ViewToolResultMessage>();
     for (const turnMessage of turnMessages) {
@@ -685,7 +709,7 @@ function buildTurnItem(
     const firstAssistant = assistants[0];
     const lastAssistant = assistants.at(-1);
     if (firstAssistant === undefined || lastAssistant === undefined) {
-        return null;
+        return { turn: null, nextDroppedThinking: previousDroppedThinking };
     }
 
     const lastMessage = lastAssistant.message;
@@ -698,6 +722,8 @@ function buildTurnItem(
     const steps: TranscriptStep[] = [];
     const seenToolIds = new Set<string>();
     let finalReply: string | null = null;
+    let runningDroppedThinking = previousDroppedThinking;
+    let noticedDroppedThinking: number | null = null;
 
     for (let assistantIndex = 0; assistantIndex < assistants.length; assistantIndex += 1) {
         const turnMessage = assistants[assistantIndex];
@@ -705,6 +731,11 @@ function buildTurnItem(
             continue;
         }
         const assistant = turnMessage.message;
+        const isTerminalFailure = assistant.stopReason === "aborted" || assistant.stopReason === "error";
+        if (!isTerminalFailure && assistant.droppedThinkingBlocks > runningDroppedThinking) {
+            noticedDroppedThinking = assistant.droppedThinkingBlocks;
+        }
+        runningDroppedThinking = assistant.droppedThinkingBlocks;
         const isLastAssistant = assistantIndex === assistants.length - 1;
         const extractFinalText = isLastAssistant && lastIsFinalReplyCandidate;
         // A live message only animates while the runtime can still append to it; a persisted
@@ -865,14 +896,23 @@ function buildTurnItem(
         }
     }
 
+    const diagnosticsNotice =
+        noticedDroppedThinking !== null ? formatThinkingDropNotice(noticedDroppedThinking) : undefined;
+
     return {
-        kind: "turn",
-        id: `turn-${firstAssistant.message.timestamp}`,
-        steps,
-        finalReply,
-        outcome: readTurnOutcome(lastMessage),
-        timing: streaming ? { kind: "since", startedAtMs: startMs } : { kind: "static", durationMs: settledDurationMs },
-        streaming,
+        turn: {
+            kind: "turn",
+            id: `turn-${firstAssistant.message.timestamp}`,
+            steps,
+            finalReply,
+            outcome: readTurnOutcome(lastMessage),
+            timing: streaming
+                ? { kind: "since", startedAtMs: startMs }
+                : { kind: "static", durationMs: settledDurationMs },
+            streaming,
+            ...(diagnosticsNotice !== undefined ? { diagnosticsNotice } : {}),
+        },
+        nextDroppedThinking: runningDroppedThinking,
     };
 }
 
@@ -896,39 +936,94 @@ export function buildTranscript(
     let pendingTurn: TurnMessage[] = [];
     let lastUserTimestamp: number | null = null;
     let liveMessageDuplicated = false;
+    let lastDroppedThinking = 0;
+    let deferredCacheWarms: {
+        readonly id: string;
+        readonly note: string | undefined;
+        readonly cost: number;
+    }[] = [];
+    let lastCacheWarmNotice: {
+        readonly transcriptIndex: number;
+        readonly note: string | undefined;
+        totalCost: number;
+    } | null = null;
+
+    const pushCacheWarmNotice = (entryId: string, note: string | undefined, cost: number): void => {
+        // Collapse adjacent cache-warm refreshes with the same qualifier into one cumulative line.
+        if (
+            lastCacheWarmNotice !== null &&
+            transcript.length - 1 === lastCacheWarmNotice.transcriptIndex &&
+            lastCacheWarmNotice.note === note
+        ) {
+            lastCacheWarmNotice.totalCost += cost;
+            const previous = transcript[lastCacheWarmNotice.transcriptIndex];
+            if (previous?.kind === "notice") {
+                transcript[lastCacheWarmNotice.transcriptIndex] = {
+                    ...previous,
+                    text: formatCacheWarmingText(lastCacheWarmNotice.totalCost, note),
+                };
+            }
+            return;
+        }
+        const noticeItem: TranscriptNoticeItem = {
+            kind: "notice",
+            id: `notice-${entryId}`,
+            text: formatCacheWarmingText(cost, note),
+        };
+        lastCacheWarmNotice = {
+            transcriptIndex: transcript.length,
+            note,
+            totalCost: cost,
+        };
+        transcript.push(noticeItem);
+    };
 
     const flushTurn = (isTrailingTurn: boolean): void => {
-        if (pendingTurn.length === 0) {
-            return;
+        const warmsToFlush = deferredCacheWarms;
+        deferredCacheWarms = [];
+        if (pendingTurn.length > 0) {
+            const { turn, nextDroppedThinking } = buildTurnItem(
+                pendingTurn,
+                lastUserTimestamp,
+                options,
+                isTrailingTurn,
+                lastDroppedThinking,
+            );
+            pendingTurn = [];
+            lastDroppedThinking = nextDroppedThinking;
+            // A note or compaction ends the previous cycle; the next turn must not inherit its prompt
+            // time when no new user message precedes it.
+            lastUserTimestamp = null;
+            if (turn !== null) {
+                // A turn id must stay unique across the list; the live-to-persisted handover keeps the same
+                // timestamp, so the same suffix is chosen in both phases.
+                let id = turn.id;
+                let suffix = 1;
+                while (usedTurnIds.has(id)) {
+                    id = `${turn.id}-${suffix}`;
+                    suffix += 1;
+                }
+                usedTurnIds.add(id);
+                transcript.push(id === turn.id ? turn : { ...turn, id });
+            }
         }
-        const turn = buildTurnItem(pendingTurn, lastUserTimestamp, options, isTrailingTurn);
-        pendingTurn = [];
-        // A note or compaction ends the previous cycle; the next turn must not inherit its prompt
-        // time when no new user message precedes it.
-        lastUserTimestamp = null;
-        if (turn === null) {
-            return;
+        for (const warm of warmsToFlush) {
+            pushCacheWarmNotice(warm.id, warm.note, warm.cost);
         }
-        // A turn id must stay unique across the list; the live-to-persisted handover keeps the same
-        // timestamp, so the same suffix is chosen in both phases.
-        let id = turn.id;
-        let suffix = 1;
-        while (usedTurnIds.has(id)) {
-            id = `${turn.id}-${suffix}`;
-            suffix += 1;
-        }
-        usedTurnIds.add(id);
-        transcript.push(id === turn.id ? turn : { ...turn, id });
     };
 
     for (const item of items) {
         if (item.kind === "compaction") {
             flushTurn(false);
+            const tokensBefore = readNonNegativeTokenCount(item.entry.tokensBefore);
+            const billing = readSummaryBilling(item.entry.usage);
             transcript.push({
                 kind: "note",
                 id: `note-${item.entry.id}`,
                 title: "Session compacted",
                 text: item.entry.summary,
+                ...(tokensBefore !== undefined ? { tokensBefore } : {}),
+                ...(billing !== undefined ? { billing } : {}),
             });
             continue;
         }
@@ -1018,22 +1113,42 @@ export function buildTranscript(
                 lastUserTimestamp = timestamp > 0 ? timestamp : null;
                 break;
             }
-            case "branch_summary":
+            case "branch_summary": {
                 flushTurn(false);
+                const billing = readSummaryBilling(entry.usage);
                 transcript.push({
                     kind: "note",
                     id: `note-${entry.id}`,
                     title: "Branch summary",
                     text: entry.summary,
+                    ...(billing !== undefined ? { billing } : {}),
                 });
                 break;
+            }
+            case "usage": {
+                if (entry.kind !== "cache_warm") {
+                    break;
+                }
+                const cost = readUsageTotalCostUsd(entry.usage);
+                if (cost === null) {
+                    break;
+                }
+                const note = normalizeUsageNote(entry.note);
+                // CacheWarmer can refresh during a long tool turn; deferring until flushTurn avoids
+                // splitting an open toolUse round from its incoming toolResult.
+                if (pendingTurn.length > 0) {
+                    deferredCacheWarms.push({ id: entry.id, note, cost });
+                } else {
+                    pushCacheWarmNotice(entry.id, note, cost);
+                }
+                break;
+            }
             case "compaction":
                 // Only the newest compaction shapes the view. Older ones inside a kept range stay
                 // model-context metadata and would repeat a summary the reader already saw.
                 break;
             case "thinking_level_change":
             case "model_change":
-            case "usage":
             case "custom":
             case "context_edit":
             case "label":
@@ -1049,14 +1164,7 @@ export function buildTranscript(
     const live = options.liveMessage ?? null;
     if (live !== null && !liveMessageDuplicated) {
         pendingTurn.push({
-            message: {
-                role: "assistant",
-                content: toAssistantBlocks(live.content),
-                timestamp: toTimestamp(live.timestamp),
-                stopReason: isKnownStopReason(live.stopReason) ? live.stopReason : null,
-                errorMessage: typeof live.errorMessage === "string" ? live.errorMessage : null,
-                durationMs: toDuration(live.durationMs),
-            },
+            message: readAssistantMessage(live, undefined),
             live: true,
         });
     }

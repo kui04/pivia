@@ -462,7 +462,13 @@ describe("buildTranscript", () => {
             ]),
         );
 
-        expect(items[0]).toEqual({ kind: "note", id: "note-c1", title: "Session compacted", text: "Earlier context" });
+        expect(items[0]).toEqual({
+            kind: "note",
+            id: "note-c1",
+            title: "Session compacted",
+            text: "Earlier context",
+            tokensBefore: 1_200,
+        });
         expect(items[1]).toMatchObject({ kind: "user", text: "Kept prompt" });
         expect(turnOf(items, 2).finalReply).toBe("Kept answer");
         expect(items[3]).toMatchObject({ kind: "user", text: "Next prompt" });
@@ -1445,5 +1451,278 @@ describe("formatTurnDuration and formatToolDuration", () => {
         expect(formatToolDuration(11_200)).toBe("11.2s");
         expect(formatToolDuration(60_000)).toBe("1m");
         expect(formatToolDuration(125_000)).toBe("2m 5s");
+    });
+});
+
+describe("Step 5 metadata, cache warming usage, and diagnostics", () => {
+    it("extracts billing metadata on compaction and branch_summary notes", () => {
+        const items = buildTranscript(
+            project([
+                userEntry("m1", null, "First prompt", 1_000),
+                {
+                    type: "compaction",
+                    id: "c1",
+                    parentId: "m1",
+                    timestamp: "2026-04-01T00:00:02.000Z",
+                    summary: "Compacted",
+                    firstKeptEntryId: "m1",
+                    tokensBefore: 42_100,
+                    usage: {
+                        input: 2_500,
+                        output: 500,
+                        cacheRead: 200,
+                        cacheWrite: 0,
+                        totalTokens: 3_200,
+                        cost: { input: 0.01, output: 0.01, cacheRead: 0, cacheWrite: 0, total: 0.02 },
+                    },
+                },
+                {
+                    type: "branch_summary",
+                    id: "b1",
+                    parentId: "c1",
+                    timestamp: "2026-04-01T00:00:03.000Z",
+                    fromId: "m1",
+                    summary: "Branch exploration",
+                    usage: {
+                        input: 1_500,
+                        output: 300,
+                        cacheRead: 0,
+                        cacheWrite: 0,
+                        totalTokens: 1_800,
+                        cost: { input: 0.004, output: 0.001, cacheRead: 0, cacheWrite: 0, total: 0.005 },
+                    },
+                },
+            ]),
+        );
+
+        expect(items[0]).toEqual({
+            kind: "note",
+            id: "note-c1",
+            title: "Session compacted",
+            text: "Compacted",
+            tokensBefore: 42_100,
+            billing: { billedTokens: 3_200, approxCostUsd: 0.02 },
+        });
+        expect(items[2]).toEqual({
+            kind: "note",
+            id: "note-b1",
+            title: "Branch summary",
+            text: "Branch exploration",
+            billing: { billedTokens: 1_800, approxCostUsd: null },
+        });
+    });
+
+    it("collapses adjacent cache_warm usage entries with matching notes and ignores other usage kinds", () => {
+        const items = buildTranscript(
+            project([
+                userEntry("m1", null, "First prompt", 1_000),
+                assistantEntry("m2", "m1", [{ type: "text", text: "Done." }], { timestamp: 2_000 }),
+                {
+                    type: "usage",
+                    id: "u1",
+                    parentId: "m2",
+                    timestamp: "2026-04-01T00:01:00.000Z",
+                    kind: "cache_warm",
+                    provider: "anthropic",
+                    model: "claude",
+                    usage: {
+                        ...EMPTY_USAGE,
+                        cost: { ...EMPTY_USAGE.cost, total: 0.001 },
+                    },
+                    note: "idle",
+                },
+                {
+                    type: "usage",
+                    id: "u2",
+                    parentId: "u1",
+                    timestamp: "2026-04-01T00:02:00.000Z",
+                    kind: "cache_warm",
+                    provider: "anthropic",
+                    model: "claude",
+                    usage: {
+                        ...EMPTY_USAGE,
+                        cost: { ...EMPTY_USAGE.cost, total: 0.0015 },
+                    },
+                    note: "idle",
+                },
+                {
+                    type: "usage",
+                    id: "u3",
+                    parentId: "u2",
+                    timestamp: "2026-04-01T00:03:00.000Z",
+                    kind: "other_metric",
+                    provider: "anthropic",
+                    model: "claude",
+                    usage: {
+                        ...EMPTY_USAGE,
+                        cost: { ...EMPTY_USAGE.cost, total: 5 },
+                    },
+                },
+                {
+                    type: "usage",
+                    id: "u4",
+                    parentId: "u3",
+                    timestamp: "2026-04-01T00:04:00.000Z",
+                    kind: "cache_warm",
+                    provider: "anthropic",
+                    model: "claude",
+                    usage: {
+                        ...EMPTY_USAGE,
+                        cost: { ...EMPTY_USAGE.cost, total: 0.002 },
+                    },
+                },
+                userEntry("m3", "u4", "Follow-up", 300_000),
+                {
+                    type: "usage",
+                    id: "u5",
+                    parentId: "m3",
+                    timestamp: "2026-04-01T00:06:00.000Z",
+                    kind: "cache_warm",
+                    provider: "anthropic",
+                    model: "claude",
+                    usage: {
+                        ...EMPTY_USAGE,
+                        cost: { ...EMPTY_USAGE.cost, total: 0.001 },
+                    },
+                    note: "idle",
+                },
+            ]),
+        );
+
+        expect(items[2]).toEqual({
+            kind: "notice",
+            id: "notice-u1",
+            text: "Cache warmed (idle): $0.0025",
+        });
+        expect(items[3]).toEqual({
+            kind: "notice",
+            id: "notice-u4",
+            text: "Cache warmed: $0.002",
+        });
+        expect(items[5]).toEqual({
+            kind: "notice",
+            id: "notice-u5",
+            text: "Cache warmed (idle): $0.001",
+        });
+    });
+
+    it("keeps mid-turn tool execution paired across cache_warm usage entries and skips invalid costs", () => {
+        const items = buildTranscript(
+            project([
+                userEntry("m1", null, "Run slow command", 1_000),
+                assistantEntry(
+                    "m2",
+                    "m1",
+                    [{ type: "toolCall", id: "c1", name: "bash", arguments: { command: "sleep 60" } }],
+                    { timestamp: 2_000, stopReason: "toolUse" },
+                ),
+                {
+                    type: "usage",
+                    id: "u-mid",
+                    parentId: "m2",
+                    timestamp: "2026-04-01T00:05:00.000Z",
+                    kind: "cache_warm",
+                    provider: "anthropic",
+                    model: "claude",
+                    usage: { ...EMPTY_USAGE, cost: { ...EMPTY_USAGE.cost, total: 0 } },
+                },
+                {
+                    type: "usage",
+                    id: "u-bad",
+                    parentId: "u-mid",
+                    timestamp: "2026-04-01T00:05:30.000Z",
+                    kind: "cache_warm",
+                    provider: "anthropic",
+                    model: "claude",
+                    usage: { ...EMPTY_USAGE, cost: { ...EMPTY_USAGE.cost, total: -1 } },
+                },
+                toolResultEntry("m3", "u-bad", "c1", "ok"),
+                assistantEntry("m4", "m3", [{ type: "text", text: "Completed." }], { timestamp: 6_000 }),
+            ]),
+        );
+
+        const turn = turnOf(items, 1);
+        expect(turn.steps).toHaveLength(1);
+        expect(turn.steps[0]).toMatchObject({ kind: "toolCall", id: "c1", status: "done", output: "ok" });
+        expect(turn.finalReply).toBe("Completed.");
+        expect(items[2]).toEqual({
+            kind: "notice",
+            id: "notice-u-mid",
+            text: "Cache warmed: $0.000",
+        });
+        expect(items).toHaveLength(3);
+    });
+
+    it("tracks Anthropic thinking_dropped across multi-round turns, compaction, live messages, and aborted stops", () => {
+        const makeDiagnostics = (count: number) => [
+            {
+                type: "anthropic_input_transformations",
+                timestamp: 2_000,
+                details: {
+                    transformations: Array.from({ length: count }, () => ({ type: "thinking_dropped" })),
+                },
+            },
+        ];
+
+        const items = buildTranscript(
+            project([
+                userEntry("m0", null, "Initial", 500),
+                assistantEntry("m0a", "m0", [{ type: "text", text: "Baseline" }], {
+                    timestamp: 800,
+                    diagnostics: makeDiagnostics(1),
+                }),
+                userEntry("m1", "m0a", "First", 1_000),
+                assistantEntry(
+                    "m2",
+                    "m1",
+                    [{ type: "toolCall", id: "c1", name: "read", arguments: { path: "a.ts" } }],
+                    { timestamp: 2_000, stopReason: "toolUse", diagnostics: makeDiagnostics(1) },
+                ),
+                toolResultEntry("m3", "m2", "c1", "contents"),
+                assistantEntry("m4", "m3", [{ type: "text", text: "One" }], {
+                    timestamp: 2_500,
+                    diagnostics: makeDiagnostics(2),
+                }),
+                {
+                    type: "compaction",
+                    id: "cmp1",
+                    parentId: "m4",
+                    timestamp: "2026-04-01T00:00:03.000Z",
+                    summary: "Compacted",
+                    firstKeptEntryId: "m1",
+                    tokensBefore: 10_000,
+                },
+                userEntry("m5", "cmp1", "Aborted", 3_500),
+                assistantEntry("m6", "m5", [{ type: "text", text: "Partial" }], {
+                    timestamp: 4_000,
+                    stopReason: "aborted",
+                    diagnostics: makeDiagnostics(5),
+                }),
+                userEntry("m7", "m6", "Same", 4_500),
+                assistantEntry("m8", "m7", [{ type: "text", text: "Equal after abort" }], {
+                    timestamp: 5_000,
+                    diagnostics: makeDiagnostics(5),
+                }),
+                userEntry("m9", "m8", "Live", 5_500),
+            ]),
+            {
+                liveMessage: {
+                    role: "assistant",
+                    content: [{ type: "text", text: "Streaming reply" }],
+                    api: "test",
+                    provider: "test",
+                    model: "test",
+                    usage: EMPTY_USAGE,
+                    stopReason: "stop",
+                    timestamp: 6_000,
+                    diagnostics: makeDiagnostics(6),
+                },
+            },
+        );
+
+        expect(turnOf(items, 2).diagnosticsNotice).toBe("Anthropic dropped 2 thinking blocks");
+        expect(turnOf(items, 4).diagnosticsNotice).toBeUndefined();
+        expect(turnOf(items, 6).diagnosticsNotice).toBeUndefined();
+        expect(turnOf(items, 8).diagnosticsNotice).toBe("Anthropic dropped 6 thinking blocks");
     });
 });

@@ -82,3 +82,19 @@ export const LongSummaryScrolls: Story = {
         });
     },
 };
+
+export const WithTokensAndBilling: Story = {
+    args: {
+        item: {
+            ...compactionNote,
+            id: "note-compaction-meta",
+            tokensBefore: 42_100,
+            billing: { billedTokens: 3_200, approxCostUsd: 0.024 },
+        },
+    },
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+        await expect(canvas.getByRole("button", { name: "Session compacted" })).toBeVisible();
+        await expect(canvas.getByText("Compacted from 42,100 tokens · 3.2k tokens billed (~$0.02)")).toBeVisible();
+    },
+};

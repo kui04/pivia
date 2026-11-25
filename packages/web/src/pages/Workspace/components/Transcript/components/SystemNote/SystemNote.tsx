@@ -2,9 +2,11 @@ import { Layers } from "lucide-react";
 import type { ReactElement } from "react";
 
 import { Markdown } from "@components";
-import type { TranscriptNoteItem } from "@/stores/session/transcript";
+import { cn } from "@/lib/cn";
+import { formatSystemNoteMeta, type TranscriptNoteItem } from "@/stores/session/transcript";
 
 import { CollapsibleBlock } from "../CollapsibleBlock/CollapsibleBlock";
+import styles from "./SystemNote.module.css";
 
 /** Props of {@link SystemNote}. */
 export type SystemNoteProps = {
@@ -20,14 +22,21 @@ export type SystemNoteProps = {
  * A system checkpoint between prompts, such as a compaction or branch summary.
  *
  * It shares the thinking block shell: collapsed by default with a clickable label, and the summary
- * scrolls inside a bounded panel once opened instead of dominating the conversation.
+ * scrolls inside a bounded panel once opened instead of dominating the conversation. Optional
+ * compaction token counts and summary billing totals sit beneath the header so they stay scannable
+ * before opening.
  *
  * @param props - Note item and an optional class for the surrounding row.
  */
 export function SystemNote({ item, onOpenLink, className }: SystemNoteProps): ReactElement {
+    const meta = formatSystemNoteMeta(item);
+
     return (
-        <CollapsibleBlock label={item.title} icon={Layers} scrollLabel={`${item.title} details`} className={className}>
-            <Markdown {...(onOpenLink !== undefined ? { onOpenLink } : {})}>{item.text}</Markdown>
-        </CollapsibleBlock>
+        <div className={cn(styles.root, className)}>
+            <CollapsibleBlock label={item.title} icon={Layers} scrollLabel={`${item.title} details`}>
+                <Markdown {...(onOpenLink !== undefined ? { onOpenLink } : {})}>{item.text}</Markdown>
+            </CollapsibleBlock>
+            {meta !== null ? <p className={styles.meta}>{meta}</p> : null}
+        </div>
     );
 }
