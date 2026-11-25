@@ -428,6 +428,51 @@ describe("session sync reducer", () => {
         expect(client.currentState.entries.map((entry) => entry.id)).toEqual(["session-1", "e1", "e2"]);
     });
 
+    it("hydrates over a cached prefix without duplicating overlap entries", () => {
+        const reducer = createSessionSyncReducer();
+        const header: FileEntry = {
+            type: "session",
+            version: 3,
+            id: "session-1",
+            timestamp: "2026-04-01T00:00:00.000Z",
+            cwd: "/tmp",
+        };
+        const persisted: FileEntry = {
+            type: "message",
+            id: "e1",
+            parentId: null,
+            timestamp: "2026-04-01T00:00:01.000Z",
+            message: assistant({ timestamp: 12345, content: [{ type: "text", text: "Final answer" }] }),
+        };
+        const next: FileEntry = {
+            type: "message",
+            id: "e2",
+            parentId: "e1",
+            timestamp: "2026-04-01T00:00:02.000Z",
+            message: { role: "user", content: "follow-up", timestamp: 2 },
+        };
+        let state = reducer.applySnapshot(
+            connectingState(),
+            makeSnapshot({ entries: { mode: "inline", data: [header, persisted] } }),
+        );
+        state = reducer.applyDelta(state, {
+            kind: "agent_event",
+            event: { type: "message_start", message: assistant({ timestamp: 12345 }) },
+        });
+        state = reducer.applyDelta(state, {
+            kind: "agent_event",
+            event: { type: "message_end", message: assistant({ timestamp: 12345 }) },
+        });
+        expect(state.liveMessage.kind).toBe("settled");
+
+        // The HTTP slice repeats the cached entry and adds one more.
+        state = applyHydratedEntries(state, V152, 2, [persisted, next]);
+
+        expect(state.entries.map((entry) => entry.id)).toEqual(["session-1", "e1", "e2"]);
+        expect(state.liveMessage).toEqual({ kind: "none" });
+        expect(state.entriesSync).toEqual({ kind: "idle" });
+    });
+
     it("converges terminal closed state and ignores subsequent frames", () => {
         const reducer = createSessionSyncReducer();
         const base = reducer.applySnapshot(connectingState(), makeSnapshot({ pendingUiRequests: [dialog("a")] }));

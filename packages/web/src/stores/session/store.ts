@@ -155,6 +155,12 @@ export function createSessionStore(options: SessionStoreOptions) {
             }
         };
 
+        /** Cancel a pending automatic entry-sync retry so the next failure can schedule a fresh one. */
+        const resetEntriesSyncRetry = (): void => {
+            cancelEntriesRetry();
+            autoRetriedAfterFailure = false;
+        };
+
         const closeActiveSocket = (): void => {
             const current = socket;
             socket = null;
@@ -338,7 +344,7 @@ export function createSessionStore(options: SessionStoreOptions) {
                     if (ctx.signal.aborted || capturedGen !== generation) {
                         throw new DOMException("Aborted", "AbortError");
                     }
-                    autoRetriedAfterFailure = false;
+                    resetEntriesSyncRetry();
                     return applyHydratedEntries(
                         ctx.getLatestState(),
                         detail.entriesVersion,
@@ -350,10 +356,7 @@ export function createSessionStore(options: SessionStoreOptions) {
                         throw error;
                     }
                     if (error instanceof ApiClientError && error.status === 404) {
-                        reconnect.stop();
-                        closeActiveSocket();
-                        evictMissingSession(sessionId);
-                        syncClient.reset(applySessionClosed(ctx.getLatestState(), "session", error.message), null);
+                        closeSession(sessionId, ctx.getLatestState(), error.message);
                         throw new DOMException("Session closed", "AbortError");
                     }
                     const message = error instanceof Error ? error.message : String(error);
@@ -423,8 +426,7 @@ export function createSessionStore(options: SessionStoreOptions) {
                         return;
                     }
                     if (frame.type === "sync:snapshot" || frame.type === "sync:replay") {
-                        cancelEntriesRetry();
-                        autoRetriedAfterFailure = false;
+                        resetEntriesSyncRetry();
                         reconnect.markConnected();
                     } else if (frame.type === "sync:delta" && frame.delta.kind === "extension_error") {
                         Log.warn(
@@ -487,24 +489,46 @@ export function createSessionStore(options: SessionStoreOptions) {
             },
         });
 
+        /**
+         * Reset to the terminal `closed` state and release the current transport.
+         *
+         * A missing session also leaves both caches so the workspace does not reopen a deleted id.
+         */
+        const closeSession = (missingSessionId: SessionId | null, state: SessionState, message: string): void => {
+            reconnect.stop();
+            resetEntriesSyncRetry();
+            closeActiveSocket();
+            if (missingSessionId !== null) {
+                evictMissingSession(missingSessionId);
+            }
+            syncClient.reset(applySessionClosed(state, "session", message), null);
+        };
+
+        /**
+         * Drop the current transport and replace the synced state, invalidating in-flight work.
+         *
+         * Returns the new generation guard, which the caller must pass to any asynchronous follow-up.
+         */
+        const resetRuntime = (nextState: SessionState): number => {
+            generation += 1;
+            resetEntriesSyncRetry();
+            closeActiveSocket();
+            reconnect.stop();
+            syncClient.reset(nextState, null);
+            return generation;
+        };
+
         const handleClose = (sessionId: SessionId, close: SessionSocketClose): void => {
             socket = null;
             if (close.classification === "client") {
                 return;
             }
             if (close.code === SESSION_CLOSE_CODE.sessionNotFound) {
-                reconnect.stop();
-                cancelEntriesRetry();
-                evictMissingSession(sessionId);
-                const closedState = applySessionClosed(syncClient.currentState, "session", close.reason);
-                syncClient.reset(closedState, null);
+                closeSession(sessionId, syncClient.currentState, close.reason);
                 return;
             }
             if (close.classification === "session") {
-                reconnect.stop();
-                cancelEntriesRetry();
-                const closedState = applySessionClosed(syncClient.currentState, "session", close.reason);
-                syncClient.reset(closedState, null);
+                closeSession(null, syncClient.currentState, close.reason);
                 return;
             }
             reconnect.notifyClosed();
@@ -568,37 +592,20 @@ export function createSessionStore(options: SessionStoreOptions) {
                 if (current.sessionId !== null && current.sessionId !== sessionId) {
                     saveToMemoryLru(current);
                 }
-                generation += 1;
-                const capturedGen = generation;
-                cancelEntriesRetry();
-                autoRetriedAfterFailure = false;
-                closeActiveSocket();
-                reconnect.stop();
+                const capturedGen = resetRuntime({ ...initialSessionState, status: "connecting", sessionId });
                 reconnect.start();
-                syncClient.reset({ ...initialSessionState, status: "connecting", sessionId }, null);
                 hydrateAndConnect(sessionId, capturedGen);
             },
             disconnect: () => {
                 saveToMemoryLru(get());
-                generation += 1;
-                cancelEntriesRetry();
-                autoRetriedAfterFailure = false;
-                reconnect.stop();
-                closeActiveSocket();
-                syncClient.reset(initialSessionState, null);
+                resetRuntime(initialSessionState);
             },
             clearCache: () => {
                 memoryLru.clear();
-                generation += 1;
-                cancelEntriesRetry();
-                autoRetriedAfterFailure = false;
-                reconnect.stop();
-                closeActiveSocket();
-                syncClient.reset(initialSessionState, null);
+                resetRuntime(initialSessionState);
             },
             retryEntriesSync: () => {
-                cancelEntriesRetry();
-                autoRetriedAfterFailure = false;
+                resetEntriesSyncRetry();
                 triggerHydrationRetry();
             },
             sendCommand: (command) => {

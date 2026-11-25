@@ -363,6 +363,44 @@ describe("createSessionStore", () => {
         });
     });
 
+    it("resets to idle and drops the memory cache on clearCache", () => {
+        const store = createSessionStore({ WebSocket: FakeSocket, apiClient: stubApiClient });
+        store.getState().connect(SESSION_1);
+        const socket = lastSocket();
+        socket.open();
+        socket.receive({
+            type: "sync:snapshot",
+            cursor: { epoch: RUNTIME_1, seq: seq(1) },
+            snapshot: {
+                entriesVersion: V152,
+                baseEntryCount: 0,
+                entries: { mode: "inline", data: [messageEntry("m1")] },
+                state: summary(),
+                liveMessage: null,
+                pendingUiRequests: [],
+            },
+        });
+        expect(store.getState().entries).toHaveLength(1);
+
+        // Disconnect caches the branch in memory, so connecting again shows it before the socket answers.
+        store.getState().disconnect();
+        store.getState().connect(SESSION_1);
+        expect(store.getState().entries).toHaveLength(1);
+
+        store.getState().clearCache();
+        expect(store.getState()).toMatchObject({
+            status: "idle",
+            sessionId: null,
+            entries: [],
+            state: null,
+            pendingUiRequests: [],
+        });
+
+        // The memory cache is gone, so reconnecting starts from an empty branch.
+        store.getState().connect(SESSION_1);
+        expect(store.getState().entries).toEqual([]);
+    });
+
     it("tracks pending dialogs and resolved requests", () => {
         const store = createSessionStore({ WebSocket: FakeSocket, apiClient: stubApiClient });
         store.getState().connect(SESSION_1);

@@ -285,8 +285,15 @@ function containsAssistantMessage(entries: readonly FileEntry[], timestamp: numb
     );
 }
 
-/** Merge newly appended entries idempotently by `entry.id` and clear a settled `liveMessage` only when matched. */
-export function mergeAppendedEntries(
+/**
+ * Merge an incoming entry slice idempotently by `entry.id`, keeping `existing` and appending only
+ * entries whose id lies outside the overlap window.
+ *
+ * A settled `liveMessage` is dropped once its persisted assistant entry is part of the incoming
+ * slice. HTTP hydration reuses this path with overlap start `0`, so every incoming entry is deduped
+ * against the cached prefix.
+ */
+function mergeAppendedEntries(
     existing: readonly FileEntry[],
     baseEntryCount: number,
     additions: readonly FileEntry[],
@@ -599,25 +606,14 @@ export function applyHydratedEntries(
         return state;
     }
     const basePrefix = baseEntryCount > 0 ? state.entries.slice(0, baseEntryCount) : [];
-    const seenIds = new Set(basePrefix.map((entry) => entry.id));
-    const additions: FileEntry[] = [];
-    for (const entry of entries) {
-        if (!seenIds.has(entry.id)) {
-            seenIds.add(entry.id);
-            additions.push(entry);
-        }
-    }
-    const mergedEntries = basePrefix.length === 0 ? additions : [...basePrefix, ...additions];
-    const nextLive =
-        state.liveMessage.kind === "settled" && containsAssistantMessage(entries, state.liveMessage.message.timestamp)
-            ? ({ kind: "none" } as const)
-            : state.liveMessage;
+    // The cached prefix is already held, so overlap start `0` dedupes every incoming entry against it.
+    const merged = mergeAppendedEntries(basePrefix, 0, entries, state.liveMessage);
     return {
         ...state,
         entriesVersion: entriesVersion ?? state.entriesVersion,
-        entries: mergedEntries,
+        entries: merged.entries,
         entriesSync: { kind: "idle" },
-        liveMessage: nextLive,
+        liveMessage: merged.liveMessage,
         liveToolExecutions: pruneSettledLiveTools(state.liveToolExecutions, entries),
     };
 }
