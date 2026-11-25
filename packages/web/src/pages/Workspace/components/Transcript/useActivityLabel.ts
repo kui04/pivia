@@ -2,13 +2,20 @@ import { useEffect, useState } from "react";
 
 import type { SessionLiveActivity } from "@/stores/session/store";
 
+/**
+ * Visible label of the working state.
+ *
+ * The activity row and the turn header fallback share it, so the copy does not drift between them.
+ */
+export const WORKING_LABEL = "Working...";
+
 /** Formats a {@link SessionLiveActivity} into its visible status label with an optional retry countdown. */
 export function formatActivityLabel(activity: SessionLiveActivity, retryRemainingSeconds = 0): string | null {
     switch (activity.kind) {
         case "idle":
             return null;
         case "working":
-            return "Working...";
+            return WORKING_LABEL;
         case "compacting":
             return activity.reason === "threshold" || activity.reason === "overflow"
                 ? "Auto-compacting context..."

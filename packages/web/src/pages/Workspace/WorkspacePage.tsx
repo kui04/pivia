@@ -7,7 +7,7 @@ import { projectSessionTranscript } from "@/stores/session/projection";
 import type { SessionActivityNotice, SessionLiveActivity } from "@/stores/session/store";
 import { buildTranscript, type TranscriptItem } from "@/stores/session/transcript";
 
-import { hasQueuedMessages, type TranscriptQueuedMessages } from "./components/Transcript/components";
+import { collectQueuedEntries, type QueuedEntry } from "./components/Transcript/components";
 import { Transcript } from "./components/Transcript/Transcript";
 import { useWorkspaceSession } from "./useWorkspaceSession";
 import { selectWorkspaceView, type WorkspaceView } from "./workspaceView";
@@ -24,10 +24,7 @@ export interface WorkspacePageProps {
 const IDLE_ACTIVITY: SessionLiveActivity = { kind: "idle" };
 const WORKING_ACTIVITY: SessionLiveActivity = { kind: "working" };
 const EMPTY_QUEUE: readonly string[] = [];
-const EMPTY_QUEUED_MESSAGES: TranscriptQueuedMessages = {
-    steeringMessages: EMPTY_QUEUE,
-    followUpMessages: EMPTY_QUEUE,
-};
+const EMPTY_QUEUED_ENTRIES: readonly QueuedEntry[] = [];
 
 /** Open a followed link in a new tab so the session view never navigates away in place. */
 function openExternalLink(href: string): void {
@@ -42,7 +39,7 @@ interface StageProps {
     readonly items: readonly TranscriptItem[];
     readonly liveActivity: SessionLiveActivity;
     readonly activityNotice: SessionActivityNotice | null;
-    readonly queuedMessages: TranscriptQueuedMessages;
+    readonly queuedEntries: readonly QueuedEntry[];
     readonly onOpenLink: (href: string) => void;
     readonly onRetryEntriesSync: () => void;
 }
@@ -54,7 +51,7 @@ function renderStage({
     items,
     liveActivity,
     activityNotice,
-    queuedMessages,
+    queuedEntries,
     onOpenLink,
     onRetryEntriesSync,
 }: StageProps): ReactElement {
@@ -116,7 +113,7 @@ function renderStage({
                         items={items}
                         liveActivity={liveActivity}
                         activityNotice={activityNotice}
-                        queuedMessages={queuedMessages}
+                        queuedEntries={queuedEntries}
                         edgeFade={false}
                         className={styles.transcript}
                         onOpenLink={onOpenLink}
@@ -168,8 +165,8 @@ export function WorkspacePage(props: WorkspacePageProps = {}): ReactElement {
             ? WORKING_ACTIVITY
             : IDLE_ACTIVITY;
     const effectiveNotice = terminalStatus ? null : activityNotice;
-    const queuedMessages = useMemo<TranscriptQueuedMessages>(
-        () => (connectedRuntime ? { steeringMessages, followUpMessages } : EMPTY_QUEUED_MESSAGES),
+    const queuedEntries = useMemo(
+        () => (connectedRuntime ? collectQueuedEntries({ steeringMessages, followUpMessages }) : EMPTY_QUEUED_ENTRIES),
         [connectedRuntime, followUpMessages, steeringMessages],
     );
 
@@ -190,7 +187,7 @@ export function WorkspacePage(props: WorkspacePageProps = {}): ReactElement {
 
     const hasVisibleActivity =
         entriesSync.kind !== "loading" &&
-        (effectiveActivity.kind !== "idle" || effectiveNotice !== null || hasQueuedMessages(queuedMessages));
+        (effectiveActivity.kind !== "idle" || effectiveNotice !== null || queuedEntries.length > 0);
     const view = selectWorkspaceView({
         routeMatchesStore,
         status,
@@ -247,7 +244,7 @@ export function WorkspacePage(props: WorkspacePageProps = {}): ReactElement {
                     items,
                     liveActivity: effectiveActivity,
                     activityNotice: effectiveNotice,
-                    queuedMessages,
+                    queuedEntries,
                     onOpenLink,
                     onRetryEntriesSync: retryEntriesSync,
                 })}

@@ -1,18 +1,17 @@
 import type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
 import type { ParsedSkillBlock } from "@earendil-works/pi-coding-agent";
-import { isFiniteNumber, isImageContent, isRecord, type StrictOmit } from "@pivia/protocol";
+import { isRecord, type StrictOmit } from "@pivia/protocol";
 
 import { stripAnsi } from "@/lib";
 
 import type { ProjectedTranscriptItem } from "./projection";
 import type { LiveToolExecutionState } from "./reducer";
+import { readFiniteNumber, readNonEmptyString, readNonNegativeNumber, readPositiveNumber } from "./readers";
 import { parseSkillBlock } from "./skill-block";
 import {
     buildToolPresentation,
     formatReadLineRangeSummary,
-    readOptionalPositiveNumber,
     readToolFilePath,
-    toNonNegativeDuration,
     toToolArguments,
     toToolResultBlocks,
     type NormalizedToolResultBlock,
@@ -317,14 +316,6 @@ type AssistantTurnMessage = {
     readonly live: boolean;
 };
 
-/** A timestamp is only useful when it is finite; a broken one must not poison ids or durations. */
-function toTimestamp(value: unknown): number {
-    return isFiniteNumber(value) ? value : 0;
-}
-
-/** A duration is only useful when it is a finite, non-negative number. */
-const toDuration = toNonNegativeDuration;
-
 function collapseWhitespace(value: string): string {
     return value.replace(/\s+/g, " ").trim();
 }
@@ -384,7 +375,7 @@ function formatSearchSummary(args: TranscriptToolArguments, extraQualifier?: str
     if (base === "") {
         return "";
     }
-    const limit = readOptionalPositiveNumber(args.limit);
+    const limit = readPositiveNumber(args.limit);
     const qualifierSuffix = extraQualifier !== undefined && extraQualifier !== "" ? ` (${extraQualifier})` : "";
     const limitSuffix = limit !== undefined ? ` (limit ${limit})` : "";
     return `${base}${qualifierSuffix}${limitSuffix}`;
@@ -407,7 +398,7 @@ export function describeToolCall(name: string, args: TranscriptToolArguments): T
         case "bash":
         case "powershell": {
             const command = stringArg(args, "command");
-            const timeout = readOptionalPositiveNumber(args.timeout);
+            const timeout = readPositiveNumber(args.timeout);
             summary = timeout !== undefined && command !== "" ? `${command} (timeout ${timeout}s)` : command;
             break;
         }
@@ -429,7 +420,7 @@ export function describeToolCall(name: string, args: TranscriptToolArguments): T
             break;
         case "ls": {
             const path = stringArg(args, "path");
-            const limit = readOptionalPositiveNumber(args.limit);
+            const limit = readPositiveNumber(args.limit);
             const base = path !== "" ? path : ".";
             summary = limit !== undefined ? `${base} (limit ${limit})` : base;
             break;
@@ -450,8 +441,6 @@ function parseIsoTimestamp(iso: string): number {
     return Number.isFinite(ms) ? ms : 0;
 }
 
-const toArguments = toToolArguments;
-
 /** Read one assistant block, or return null for an unknown or incomplete block. */
 function toAssistantBlock(raw: unknown): AssistantBlock | null {
     if (!isRecord(raw)) {
@@ -469,8 +458,8 @@ function toAssistantBlock(raw: unknown): AssistantBlock | null {
                 type: "toolCall",
                 // A call without an id still renders; the step id then falls back to its position.
                 id: typeof raw.id === "string" ? raw.id : "",
-                name: typeof raw.name === "string" && raw.name !== "" ? raw.name : "unknown",
-                arguments: toArguments(raw.arguments),
+                name: readNonEmptyString(raw.name) ?? "unknown",
+                arguments: toToolArguments(raw.arguments),
                 argumentsError: typeof raw.argumentsError === "string" ? raw.argumentsError : null,
             };
         default:
@@ -489,42 +478,36 @@ function toAssistantBlocks(content: unknown): AssistantBlock[] {
     if (typeof content === "string") {
         return [{ type: "text", text: content }];
     }
-    if (!Array.isArray(content)) {
-        return [];
-    }
-    const blocks: AssistantBlock[] = [];
-    for (const raw of content) {
-        const block = toAssistantBlock(raw);
-        if (block !== null) {
-            blocks.push(block);
+    return Array.isArray(content) ? content.flatMap((raw) => toAssistantBlock(raw) ?? []) : [];
+}
+
+/** Split normalized text/image blocks into the two projections the transcript renders. */
+function splitContentBlocks(blocks: readonly NormalizedToolResultBlock[]): {
+    texts: string[];
+    images: ImageContent[];
+} {
+    const texts: string[] = [];
+    const images: ImageContent[] = [];
+    for (const block of blocks) {
+        if (block.type === "text") {
+            texts.push(block.text);
+        } else {
+            images.push(block);
         }
     }
-    return blocks;
+    return { texts, images };
 }
 
 /** Split user or extension content into text and attachments. */
 function readUserContent(content: unknown): { text: string; images: ImageContent[] } {
-    if (typeof content === "string") {
-        return { text: content.trim(), images: [] };
-    }
-    if (!Array.isArray(content)) {
-        return { text: "", images: [] };
-    }
-    const texts: string[] = [];
-    const images: ImageContent[] = [];
-    for (const raw of content) {
-        if (!isRecord(raw)) {
-            continue;
-        }
-        if (raw.type === "text" && typeof raw.text === "string") {
-            if (raw.text.trim() !== "") {
-                texts.push(raw.text.trim());
-            }
-        } else if (isImageContent(raw)) {
-            images.push({ type: "image", data: raw.data, mimeType: raw.mimeType });
-        }
-    }
-    return { text: texts.join("\n\n"), images };
+    const { texts, images } = splitContentBlocks(toToolResultBlocks(content));
+    return {
+        text: texts
+            .map((text) => text.trim())
+            .filter((text) => text !== "")
+            .join("\n\n"),
+        images,
+    };
 }
 
 function readAssistantMessage(
@@ -534,10 +517,10 @@ function readAssistantMessage(
     return {
         role: "assistant",
         content: toAssistantBlocks(editedContent ?? message.content),
-        timestamp: toTimestamp(message.timestamp),
+        timestamp: readFiniteNumber(message.timestamp) ?? 0,
         stopReason: isKnownStopReason(message.stopReason) ? message.stopReason : null,
         errorMessage: typeof message.errorMessage === "string" ? message.errorMessage : null,
-        durationMs: toDuration(message.durationMs),
+        durationMs: readNonNegativeNumber(message.durationMs),
         droppedThinkingBlocks: countDroppedThinkingBlocks(message.diagnostics),
     };
 }
@@ -553,8 +536,8 @@ function readToolResultMessage(
         details: message.details,
         nestedCalls: message.nestedCalls,
         isError: message.isError === true,
-        timestamp: toTimestamp(message.timestamp),
-        durationMs: toDuration(message.durationMs),
+        timestamp: readFiniteNumber(message.timestamp) ?? 0,
+        durationMs: readNonNegativeNumber(message.durationMs),
     };
 }
 
@@ -571,9 +554,8 @@ function readBashStatus(cancelled: boolean, exitCode: number | null): Transcript
 
 /** Read one persisted `!` command record; output keeps its text, loses terminal escapes and uses LF. */
 function readBashItem(entryId: string, message: BashExecutionRecord): TranscriptBashItem {
-    const exitCode = isFiniteNumber(message.exitCode) ? message.exitCode : null;
-    const fullOutputPath =
-        typeof message.fullOutputPath === "string" && message.fullOutputPath !== "" ? message.fullOutputPath : null;
+    const exitCode = readFiniteNumber(message.exitCode);
+    const fullOutputPath = readNonEmptyString(message.fullOutputPath) ?? null;
     return {
         kind: "bash",
         id: `bash-${entryId}`,
@@ -592,27 +574,19 @@ function readBashItem(entryId: string, message: BashExecutionRecord): Transcript
  * every field takes the same boundary checks as a user message and a missing label stays readable.
  */
 function readCustomItem(entry: CustomMessageEntry, editedContent: EditableContent | undefined): TranscriptCustomItem {
-    const customType = typeof entry.customType === "string" ? entry.customType.trim() : "";
+    const customType = readNonEmptyString(entry.customType) ?? "extension";
     const { text, images } = readUserContent(editedContent ?? entry.content);
     return {
         kind: "custom",
         id: `custom-${entry.id}`,
-        customType: customType === "" ? "extension" : customType,
+        customType,
         text,
         images,
     };
 }
 
 function readToolResultContent(content: readonly ToolResultBlock[]): { output: string; images: ImageContent[] } {
-    const texts: string[] = [];
-    const images: ImageContent[] = [];
-    for (const block of content) {
-        if (block.type === "text") {
-            texts.push(block.text);
-        } else {
-            images.push(block);
-        }
-    }
+    const { texts, images } = splitContentBlocks(content);
     return { output: texts.join("\n"), images };
 }
 
@@ -1033,7 +1007,7 @@ export function buildTranscript(
                 switch (message.role) {
                     case "user": {
                         flushTurn(false);
-                        const timestamp = toTimestamp(message.timestamp);
+                        const timestamp = readFiniteNumber(message.timestamp) ?? 0;
                         const { text, images } = readUserContent(item.editedContent ?? message.content);
                         const skillBlock = parseSkillBlock(text);
                         if (skillBlock === null) {

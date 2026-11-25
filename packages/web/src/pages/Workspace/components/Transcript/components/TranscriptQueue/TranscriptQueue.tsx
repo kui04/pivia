@@ -4,13 +4,13 @@ import type { ReactElement } from "react";
 import { Icon } from "@components";
 import { cn } from "@/lib";
 
-import { collectQueuedEntries, type TranscriptQueuedMessages } from "./queue";
+import { type QueuedEntry } from "./queue";
 import styles from "./TranscriptQueue.module.css";
 
 /** Props of {@link TranscriptQueue}. */
 export type TranscriptQueueProps = {
-    /** Pending steering and follow-up messages waiting in the agent queue. */
-    readonly queue: TranscriptQueuedMessages;
+    /** Visible queued entries in render order; the caller collects them with `collectQueuedEntries`. */
+    readonly entries: readonly QueuedEntry[];
     /** Optional class name on the outer list container. */
     readonly className?: string | undefined;
 };
@@ -22,9 +22,7 @@ export type TranscriptQueueProps = {
  * inputs read naturally in the conversation column, while pairing a dashed container bubble with a
  * subtle status caption to distinguish pending entries from committed turns.
  */
-export function TranscriptQueue({ queue, className }: TranscriptQueueProps): ReactElement | null {
-    const entries = collectQueuedEntries(queue);
-
+export function TranscriptQueue({ entries, className }: TranscriptQueueProps): ReactElement | null {
     if (entries.length === 0) {
         return null;
     }

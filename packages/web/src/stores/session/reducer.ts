@@ -14,8 +14,8 @@ import {
     type SessionStateSnapshot,
 } from "@pivia/protocol";
 
+import { readNonNegativeNumber } from "./readers";
 import {
-    toNonNegativeDuration,
     toToolArguments,
     toToolResultBlocks,
     type NormalizedToolResultBlock,
@@ -435,7 +435,7 @@ function applyToolExecutionEvent(
                     args: existing?.args ?? {},
                     result: extractToolExecutionResult(event.result),
                     isError: event.isError === true,
-                    durationMs: toNonNegativeDuration(event.durationMs),
+                    durationMs: readNonNegativeNumber(event.durationMs),
                 },
             };
         }
@@ -526,7 +526,7 @@ function applyActivityEvent(
                     scope: "turn",
                     attempt: event.attempt,
                     maxAttempts: event.maxAttempts,
-                    delayMs: toNonNegativeDuration(event.delayMs) ?? 0,
+                    delayMs: readNonNegativeNumber(event.delayMs) ?? 0,
                     errorMessage: event.errorMessage,
                 },
                 notice: null,
@@ -552,7 +552,7 @@ function applyActivityEvent(
                     scope: "summarization",
                     attempt: event.attempt,
                     maxAttempts: event.maxAttempts,
-                    delayMs: toNonNegativeDuration(event.delayMs) ?? 0,
+                    delayMs: readNonNegativeNumber(event.delayMs) ?? 0,
                     errorMessage: event.errorMessage,
                 },
                 notice: {

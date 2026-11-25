@@ -6,6 +6,7 @@ import { Button } from "@components";
 import type { TranscriptItem, TranscriptTurnItem } from "@/stores/session/transcript";
 
 import { Transcript } from "./Transcript";
+import { collectQueuedEntries } from "./components/TranscriptQueue/queue";
 import styles from "./Transcript.stories.module.css";
 
 function requireElement<T extends Element>(element: T | null, name: string): T {
@@ -649,10 +650,10 @@ export const CompactingBetweenTurns: Story = {
 export const QueuedSteeringAndFollowUp: Story = {
     args: {
         items: shortItems,
-        queuedMessages: {
+        queuedEntries: collectQueuedEntries({
             steeringMessages: ["Run vitest on protocol next"],
             followUpMessages: ["Then generate the final summary"],
-        },
+        }),
     },
     decorators: [
         (Story) => (
@@ -685,7 +686,7 @@ function QueuedAutoFollowDemo() {
             </div>
             <Transcript
                 items={longItems.slice(0, 6)}
-                queuedMessages={{ steeringMessages: [], followUpMessages: queued }}
+                queuedEntries={collectQueuedEntries({ steeringMessages: [], followUpMessages: queued })}
             />
         </div>
     );

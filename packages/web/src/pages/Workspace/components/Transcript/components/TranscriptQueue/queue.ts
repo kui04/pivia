@@ -32,25 +32,3 @@ export function collectQueuedEntries(queue: TranscriptQueuedMessages): readonly 
     }
     return entries;
 }
-
-/** Counts non-blank items in a single queued prompt slice so trailing blank entries are ignored. */
-export function countVisibleQueueMessages(messages: readonly string[] | undefined): number {
-    if (!messages) {
-        return 0;
-    }
-    let count = 0;
-    for (const raw of messages) {
-        if (raw.trim() !== "") {
-            count += 1;
-        }
-    }
-    return count;
-}
-
-/**
- * Reports whether either queue contains at least one non-blank message that `TranscriptQueue`
- * renders, so parent views do not treat whitespace-only items as visible transcript activity.
- */
-export function hasQueuedMessages(queue: TranscriptQueuedMessages): boolean {
-    return collectQueuedEntries(queue).length > 0;
-}

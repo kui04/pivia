@@ -1,7 +1,9 @@
 import type { AssistantMessageDiagnostic } from "@earendil-works/pi-ai";
-import { isFiniteNumber, isRecord } from "@pivia/protocol";
+import { isRecord } from "@pivia/protocol";
 
 import { Formatter } from "@/lib";
+
+import { readNonNegativeNumber } from "./readers";
 
 /** Billed token and cost metadata extracted from compaction or branch-summary usage. */
 export type TranscriptSummaryBilling = {
@@ -20,10 +22,6 @@ export type TranscriptNoticeItem = {
 
 const COMPACTION_COST_NOTICE_MIN_USD = 0.01;
 
-function readNonNegativeFinite(value: unknown): number | null {
-    return isFiniteNumber(value) && value >= 0 ? value : null;
-}
-
 /**
  * Validates `CompactionEntry.tokensBefore` at the session boundary.
  *
@@ -31,7 +29,7 @@ function readNonNegativeFinite(value: unknown): number | null {
  * token count rather than displaying invalid numbers.
  */
 export function readNonNegativeTokenCount(value: unknown): number | undefined {
-    const parsed = readNonNegativeFinite(value);
+    const parsed = readNonNegativeNumber(value);
     return parsed === null ? undefined : Math.round(parsed);
 }
 
@@ -45,12 +43,12 @@ export function readSummaryBilling(usage: unknown): TranscriptSummaryBilling | u
         return undefined;
     }
     const billedTokens = Math.round(
-        (readNonNegativeFinite(usage.input) ?? 0) +
-            (readNonNegativeFinite(usage.output) ?? 0) +
-            (readNonNegativeFinite(usage.cacheRead) ?? 0) +
-            (readNonNegativeFinite(usage.cacheWrite) ?? 0),
+        (readNonNegativeNumber(usage.input) ?? 0) +
+            (readNonNegativeNumber(usage.output) ?? 0) +
+            (readNonNegativeNumber(usage.cacheRead) ?? 0) +
+            (readNonNegativeNumber(usage.cacheWrite) ?? 0),
     );
-    const totalCost = isRecord(usage.cost) ? (readNonNegativeFinite(usage.cost.total) ?? 0) : 0;
+    const totalCost = isRecord(usage.cost) ? (readNonNegativeNumber(usage.cost.total) ?? 0) : 0;
     const approxCostUsd = totalCost >= COMPACTION_COST_NOTICE_MIN_USD ? totalCost : null;
     if (billedTokens <= 0 && approxCostUsd === null) {
         return undefined;
@@ -80,7 +78,7 @@ export function readUsageTotalCostUsd(usage: unknown): number | null {
     if (!isRecord(usage) || !isRecord(usage.cost)) {
         return null;
     }
-    return readNonNegativeFinite(usage.cost.total);
+    return readNonNegativeNumber(usage.cost.total);
 }
 
 /** Normalizes optional `UsageEntry.note` so adjacent `cache_warm` collapsing uses exact parity. */
@@ -97,7 +95,7 @@ export function normalizeUsageNote(note: unknown): string | undefined {
  * (`Cache warmed (<note>): $0.0012`).
  */
 export function formatCacheWarmingText(totalCostUsd: number, note: string | undefined): string {
-    const safeCost = readNonNegativeFinite(totalCostUsd) ?? 0;
+    const safeCost = readNonNegativeNumber(totalCostUsd) ?? 0;
     const formattedCost = safeCost.toFixed(6).replace(/(\.\d{3}\d*?)0+$/, "$1");
     const normalizedNote = normalizeUsageNote(note);
     const noteSuffix = normalizedNote !== undefined ? ` (${normalizedNote})` : "";

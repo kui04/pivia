@@ -5,7 +5,7 @@ export { SkillInvocationBlock, type SkillInvocationBlockProps } from "./SkillInv
 export { SystemNote, type SystemNoteProps } from "./SystemNote/SystemNote";
 export { ThinkingBlock, type ThinkingBlockProps } from "./ThinkingBlock/ThinkingBlock";
 export { ToolCallBlock, type ToolCallBlockProps } from "./ToolCallBlock/ToolCallBlock";
-export { hasQueuedMessages, type TranscriptQueuedMessages } from "./TranscriptQueue/queue";
+export { collectQueuedEntries, type QueuedEntry } from "./TranscriptQueue/queue";
 export { TranscriptQueue, type TranscriptQueueProps } from "./TranscriptQueue/TranscriptQueue";
 export { TurnGroup, type TurnGroupProps } from "./TurnGroup/TurnGroup";
 export { UserMessage, type UserMessageProps } from "./UserMessage/UserMessage";

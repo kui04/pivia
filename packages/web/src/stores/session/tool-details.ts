@@ -15,6 +15,8 @@ import { assertNever, isFiniteNumber, isImageContent, isRecord } from "@pivia/pr
 import { resolveLanguage } from "@/components/CodeBlock/highlight";
 import { Formatter } from "@/lib";
 
+import { readNonEmptyString, readNonNegativeNumber, readPositiveInteger, readPositiveNumber } from "./readers";
+
 const DEFAULT_MAX_BYTES = 50 * 1024;
 const DEFAULT_MAX_LINES = 2000;
 const READ_CONTINUATION_FOOTER =
@@ -163,12 +165,6 @@ const BASENAME_LANGUAGES: Readonly<Record<string, string>> = {
     gnumakefile: "makefile",
 };
 
-function parsePositiveInteger(value: unknown): number | undefined {
-    const num =
-        typeof value === "string" && value.trim() !== "" ? Number(value) : isFiniteNumber(value) ? value : undefined;
-    return num !== undefined && Number.isInteger(num) && num >= 1 ? num : undefined;
-}
-
 /** One normalized tool result content block, safe to render from either persisted entries or live updates. */
 export type NormalizedToolResultBlock = { readonly type: "text"; readonly text: string } | ImageContent;
 
@@ -177,40 +173,23 @@ export function toToolArguments(raw: unknown): TranscriptToolArguments {
     return isRecord(raw) ? { ...raw } : {};
 }
 
+/** Read one content block, or return `null` for an unknown block kind. */
+function toToolResultBlock(raw: unknown): NormalizedToolResultBlock | null {
+    if (!isRecord(raw)) {
+        return null;
+    }
+    if (raw.type === "text" && typeof raw.text === "string") {
+        return { type: "text", text: raw.text };
+    }
+    return isImageContent(raw) ? { type: "image", data: raw.data, mimeType: raw.mimeType } : null;
+}
+
 /** Normalize persisted, edited, or live tool result content into renderable blocks. */
 export function toToolResultBlocks(content: unknown): NormalizedToolResultBlock[] {
     if (typeof content === "string") {
         return [{ type: "text", text: content }];
     }
-    if (!Array.isArray(content)) {
-        return [];
-    }
-    const blocks: NormalizedToolResultBlock[] = [];
-    for (const raw of content) {
-        if (!isRecord(raw)) {
-            continue;
-        }
-        if (raw.type === "text" && typeof raw.text === "string") {
-            blocks.push({ type: "text", text: raw.text });
-        } else if (isImageContent(raw)) {
-            blocks.push({ type: "image", data: raw.data, mimeType: raw.mimeType });
-        }
-    }
-    return blocks;
-}
-
-/** Normalize a duration in milliseconds, rejecting non-finite or negative numbers. */
-export function toNonNegativeDuration(value: unknown): number | null {
-    return isFiniteNumber(value) ? Math.max(0, value) : null;
-}
-
-/** Returns `value` when it is a finite positive number, or `undefined` otherwise. */
-export function readOptionalPositiveNumber(value: unknown): number | undefined {
-    return isFiniteNumber(value) && value > 0 ? value : undefined;
-}
-
-function readOptionalNonEmptyString(value: unknown): string | undefined {
-    return typeof value === "string" && value !== "" ? value : undefined;
+    return Array.isArray(content) ? content.flatMap((raw) => toToolResultBlock(raw) ?? []) : [];
 }
 
 /** Read the target path from `path` or legacy `file_path` arguments, falling back if `path` is blank. */
@@ -235,14 +214,14 @@ export function formatReadLineRangeSummary(offset: unknown, limit: unknown): str
     if (offset == null && limit == null) {
         return "";
     }
-    const start = offset == null ? 1 : parsePositiveInteger(offset);
+    const start = offset == null ? 1 : readPositiveInteger(offset);
     if (start === undefined) {
         return "";
     }
     if (limit == null) {
         return `:${start}`;
     }
-    const count = parsePositiveInteger(limit);
+    const count = readPositiveInteger(limit);
     if (count === undefined) {
         return "";
     }
@@ -321,8 +300,8 @@ export function parseEditToolDetails(
     if (!isRecord(raw)) {
         return null;
     }
-    const patch = readOptionalNonEmptyString(raw.patch) ?? "";
-    const diff = readOptionalNonEmptyString(raw.diff) ?? "";
+    const patch = readNonEmptyString(raw.patch) ?? "";
+    const diff = readNonEmptyString(raw.diff) ?? "";
     if (patch === "" && diff === "") {
         return null;
     }
@@ -339,7 +318,7 @@ export function parseShellToolDetails(raw: unknown): BashToolDetails | null {
         return null;
     }
     const truncation = parseTruncationResult(raw.truncation);
-    const fullOutputPath = readOptionalNonEmptyString(raw.fullOutputPath);
+    const fullOutputPath = readNonEmptyString(raw.fullOutputPath);
     if (truncation === null && fullOutputPath === undefined) {
         return null;
     }
@@ -364,7 +343,7 @@ export function parseGrepToolDetails(raw: unknown): GrepToolDetails | null {
         return null;
     }
     const truncation = parseTruncationResult(raw.truncation);
-    const matchLimitReached = readOptionalPositiveNumber(raw.matchLimitReached);
+    const matchLimitReached = readPositiveNumber(raw.matchLimitReached);
     const linesTruncated = raw.linesTruncated === true ? true : undefined;
     if (truncation === null && matchLimitReached === undefined && linesTruncated === undefined) {
         return null;
@@ -384,7 +363,7 @@ function parseSingleLimitDetails<TKey extends "resultLimitReached" | "entryLimit
         return null;
     }
     const truncation = parseTruncationResult(raw.truncation);
-    const limit = readOptionalPositiveNumber(raw[limitKey]);
+    const limit = readPositiveNumber(raw[limitKey]);
     if (truncation === null && limit === undefined) {
         return null;
     }
@@ -453,15 +432,15 @@ function parseCodemodeNestedCall(raw: unknown): CodemodeNestedCall | null {
         return null;
     }
     const id = typeof raw.id === "string" ? raw.id : undefined;
-    const name = readOptionalNonEmptyString(raw.name);
+    const name = readNonEmptyString(raw.name);
     const args = typeof raw.args === "string" ? raw.args : undefined;
     const status = parseAllowedStatus(raw.status, CODEMODE_CALL_STATUSES);
     if (id === undefined || name === undefined || args === undefined || status === undefined) {
         return null;
     }
-    const durationMs = isFiniteNumber(raw.durationMs) && raw.durationMs >= 0 ? raw.durationMs : undefined;
+    const durationMs = readNonNegativeNumber(raw.durationMs) ?? undefined;
     const error = typeof raw.error === "string" ? raw.error : undefined;
-    const cost = readOptionalPositiveNumber(raw.cost);
+    const cost = readPositiveNumber(raw.cost);
     return {
         id,
         name,
@@ -485,7 +464,7 @@ export function parseCodemodeToolDetails(raw: unknown): CodemodeToolDetails | nu
             calls.push(parsed);
         }
     }
-    const fullOutputPath = readOptionalNonEmptyString(raw.fullOutputPath);
+    const fullOutputPath = readNonEmptyString(raw.fullOutputPath);
     return {
         calls,
         ...(fullOutputPath === undefined ? {} : { fullOutputPath }),
@@ -497,15 +476,14 @@ function parseNestedToolCallRecord(raw: unknown): NestedToolCallRecord | null {
         return null;
     }
     const id = typeof raw.id === "string" ? raw.id : undefined;
-    const name = readOptionalNonEmptyString(raw.name);
+    const name = readNonEmptyString(raw.name);
     const status = parseAllowedStatus(raw.status, RECORD_CALL_STATUSES);
     if (id === undefined || name === undefined || status === undefined) {
         return null;
     }
     const argsObj = toJsonObject(raw.arguments);
-    const argumentsBytes =
-        isFiniteNumber(raw.argumentsBytes) && raw.argumentsBytes >= 0 ? raw.argumentsBytes : undefined;
-    const durationMs = isFiniteNumber(raw.durationMs) && raw.durationMs >= 0 ? raw.durationMs : undefined;
+    const argumentsBytes = readNonNegativeNumber(raw.argumentsBytes) ?? undefined;
+    const durationMs = readNonNegativeNumber(raw.durationMs) ?? undefined;
     const error = typeof raw.error === "string" ? raw.error : undefined;
     return {
         id,
@@ -634,7 +612,7 @@ function buildReadPresentation(
     }
 
     return {
-        preview: buildCodePreview(input.args, code, parsePositiveInteger(input.args.offset) ?? 1),
+        preview: buildCodePreview(input.args, code, readPositiveInteger(input.args.offset) ?? 1),
         warnings,
         output: input.output,
     };
@@ -657,7 +635,7 @@ function normalizeCodemodeCall(call: CodemodeNestedCall): TranscriptNestedToolCa
         args: call.args,
         status: call.status,
         durationMs: call.durationMs ?? null,
-        error: readOptionalNonEmptyString(call.error) ?? null,
+        error: readNonEmptyString(call.error) ?? null,
         cost: call.cost ?? null,
     };
 }
@@ -669,7 +647,7 @@ function normalizeRecordedCall(record: NestedToolCallRecord): TranscriptNestedTo
         args: formatRecordArgs(record),
         status: record.status,
         durationMs: record.durationMs ?? null,
-        error: readOptionalNonEmptyString(record.error) ?? null,
+        error: readNonEmptyString(record.error) ?? null,
         cost: null,
     };
 }

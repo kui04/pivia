@@ -14,6 +14,7 @@ import { Icon, Markdown } from "@components";
 import { cn, Formatter } from "@/lib";
 import { type TranscriptStep, type TranscriptTurnItem, type TranscriptTurnOutcome } from "@/stores/session/transcript";
 
+import { WORKING_LABEL } from "../../useActivityLabel";
 import { useLiveDuration } from "../../useLiveDuration";
 import { ThinkingBlock } from "../ThinkingBlock/ThinkingBlock";
 import { ToolCallBlock } from "../ToolCallBlock/ToolCallBlock";
@@ -40,9 +41,9 @@ export type TurnGroupProps = {
 
 function formatHeaderLabel(streaming: boolean, durationMs: number | null): string {
     if (streaming) {
-        // The first sample of a running turn arrives on the next frame; until then the header names
-        // the state without a misleading zero.
-        return durationMs === null ? "Working" : `Working for ${Formatter.duration(durationMs)}`;
+        // The first sample of a running turn arrives on the next frame; until then the header shows
+        // the shared working label instead of a misleading zero.
+        return durationMs === null ? WORKING_LABEL : `Working for ${Formatter.duration(durationMs)}`;
     }
 
     return durationMs !== null ? `Worked for ${Formatter.duration(durationMs)}` : "Worked";
@@ -275,7 +276,7 @@ export function TurnGroup({
             })}
 
             {turn.streaming && activityLabel !== null ? (
-                <WorkingIndicator {...(activityLabel !== undefined ? { label: activityLabel } : {})} />
+                <WorkingIndicator label={activityLabel ?? WORKING_LABEL} />
             ) : null}
         </div>
     );

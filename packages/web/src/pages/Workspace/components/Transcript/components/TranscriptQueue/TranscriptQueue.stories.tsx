@@ -2,18 +2,19 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, within } from "storybook/test";
 
 import { TranscriptQueue } from "./TranscriptQueue";
+import { collectQueuedEntries } from "./queue";
 import styles from "./TranscriptQueue.stories.module.css";
 
 const meta = {
     title: "Pages/Workspace/Transcript/TranscriptQueue",
     component: TranscriptQueue,
     args: {
-        queue: {
+        entries: collectQueuedEntries({
             steeringMessages: ["Focus only on packages/web tests first."],
             followUpMessages: [
                 "Once the suite passes, summarize the diff:\n1. Protocol changes\n2. Web component updates across packages.",
             ],
-        },
+        }),
     },
     decorators: [
         (Story) => (
@@ -56,23 +57,7 @@ export const SteeringAndFollowUp: Story = {
 
 export const EmptyQueues: Story = {
     args: {
-        queue: {
-            steeringMessages: [],
-            followUpMessages: [],
-        },
-    },
-    play: async ({ canvasElement }) => {
-        const canvas = within(canvasElement);
-        await expect(canvas.queryByRole("list", { name: "Queued messages" })).not.toBeInTheDocument();
-    },
-};
-
-export const WhitespaceOnlyQueues: Story = {
-    args: {
-        queue: {
-            steeringMessages: ["   ", "\n\t"],
-            followUpMessages: [""],
-        },
+        entries: [],
     },
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
