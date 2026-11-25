@@ -2,7 +2,8 @@ import { Check, Copy, WrapText, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { ThemedToken } from "shiki";
 
-import { copyText } from "../../lib/clipboard";
+import { copyFeedbackText, useCopyFeedback } from "@/hooks";
+
 import { cn } from "../../lib/cn";
 
 import { IconButton } from "../IconButton/IconButton";
@@ -10,11 +11,6 @@ import { ScrollArea } from "../ScrollArea/ScrollArea";
 import { parseDiffLines } from "./diff";
 import { highlight, resolveLanguage } from "./highlight";
 import styles from "./CodeBlock.module.css";
-
-type CopyStatus = "idle" | "copied" | "failed";
-
-/** How long the copy button keeps its success or failure icon. */
-const COPY_FEEDBACK_MS = 2000;
 
 export type CodeBlockProps = {
     /** Text that is rendered and copied. */
@@ -60,7 +56,7 @@ export function CodeBlock({
     className,
 }: CodeBlockProps) {
     const [wrapped, setWrapped] = useState(defaultWrap);
-    const [copy, setCopy] = useState<{ status: CopyStatus; pulse: number }>({ status: "idle", pulse: 0 });
+    const { status: copyStatus, copy } = useCopyFeedback(onCopy);
     const [rendered, setRendered] = useState<{ code: string; language: string; lines: ThemedToken[][] }>();
 
     const sourceLines = useMemo(() => code.split("\n"), [code]);
@@ -112,31 +108,11 @@ export function CodeBlock({
         };
     }, [code, isDiff, language, streaming]);
 
-    useEffect(() => {
-        if (copy.status === "idle") {
-            return;
-        }
-
-        // The pulse lets a second click restart the timer while the status holds.
-        const timer = setTimeout(() => setCopy((value) => ({ status: "idle", pulse: value.pulse })), COPY_FEEDBACK_MS);
-        return () => clearTimeout(timer);
-    }, [copy.status, copy.pulse]);
-
-    function handleCopy() {
-        copyText(code).then(
-            () => {
-                setCopy((value) => ({ status: "copied", pulse: value.pulse + 1 }));
-                onCopy?.(code);
-            },
-            () => setCopy((value) => ({ status: "failed", pulse: value.pulse + 1 })),
-        );
-    }
-
     const tokens =
         !streaming && rendered !== undefined && rendered.code === code && rendered.language === language
             ? rendered.lines
             : undefined;
-    const statusText = copy.status === "copied" ? "Copied" : copy.status === "failed" ? "Copy failed" : "";
+    const statusText = copyFeedbackText(copyStatus);
 
     return (
         <div className={cn(styles.block, className)} data-slot="code-block">
@@ -149,8 +125,8 @@ export function CodeBlock({
                         <WrapText />
                     </IconButton>
                     {copyable ? (
-                        <IconButton label="Copy code" className={styles.copyButton} onClick={handleCopy}>
-                            {copy.status === "copied" ? <Check /> : copy.status === "failed" ? <X /> : <Copy />}
+                        <IconButton label="Copy code" className={styles.copyButton} onClick={() => copy(code)}>
+                            {copyStatus === "copied" ? <Check /> : copyStatus === "failed" ? <X /> : <Copy />}
                         </IconButton>
                     ) : null}
                 </div>

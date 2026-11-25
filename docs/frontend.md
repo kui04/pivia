@@ -39,7 +39,7 @@ CSS Modules use native nesting (no preprocessor). Follow these rules:
 - `packages/web/src/router.tsx` creates one `createBrowserRouter` instance at module load (never in React state); the Node server falls back non-API paths to `index.html`. React Router 8 imports `RouterProvider` from `react-router/dom` and hooks/components from `react-router`.
 - `AppLayout` (`packages/web/src/pages/AppLayout/`) is the root route owning shared chrome and the single-host auth gate (`checking` / `unauthenticated` / `authenticated`). The root `errorElement` renders `RouteError` outside `AppLayout`.
 - `/workspace` (`WorkspaceLayout`) owns the workspace shell (sidebar/drawer, topbar, settings, new-session dialog, catalog sync) and renders the active chat column via `<Outlet />` so switching sessions never remounts the shell.
-- Reusable component-free hooks live in `packages/web/src/hooks/<name>.ts` (no `index.ts` barrel; import via `@/hooks/<name>`). Component-scoped hooks stay in `components/<Name>/`; page-scoped hooks stay in `pages/<Name>/`.
+- Reusable component-free hooks live in `packages/web/src/hooks/<name>.ts` and are re-exported from `packages/web/src/hooks/index.ts`; import them via `@/hooks`. Component-scoped hooks stay in `components/<Name>/`; page-scoped hooks stay in `pages/<Name>/`.
 
 ## State, Cache, and Transport
 

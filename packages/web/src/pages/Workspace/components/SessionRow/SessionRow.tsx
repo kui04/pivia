@@ -3,7 +3,7 @@ import { Copy, EllipsisVertical, Pin, PinOff, X } from "lucide-react";
 import { memo, useEffect, useRef, useState, type PointerEvent, type ReactElement } from "react";
 
 import { IconButton, Menu, MenuItem } from "@components";
-import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { useMediaQuery } from "@/hooks";
 import { formatRelativeAge, sessionRowStatus, type SessionRow as SessionRowModel } from "@/stores/workspace/model";
 
 import styles from "./SessionRow.module.css";

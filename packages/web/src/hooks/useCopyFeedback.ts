@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { copyText } from "@/lib/clipboard";
+import { copyText } from "../lib/clipboard";
 
 /** How long the copy control keeps its success or failure state. */
 const COPY_FEEDBACK_MS = 2000;
@@ -16,7 +16,25 @@ export type CopyFeedback = {
 };
 
 /**
- * Drive the copy button of one transcript block.
+ * Announcement for the last copy attempt.
+ *
+ * The icon carries the same state visually, so the live region repeats it for assistive
+ * technology only. The exhaustive switch makes a new status a compile error instead of an empty
+ * announcement.
+ */
+export function copyFeedbackText(status: CopyFeedbackStatus): string {
+    switch (status) {
+        case "idle":
+            return "";
+        case "copied":
+            return "Copied";
+        case "failed":
+            return "Copy failed";
+    }
+}
+
+/**
+ * Drive one copy control.
  *
  * The pulse counter restarts the timeout, so copying again before the icon resets keeps the
  * feedback visible instead of letting the first timer clear it. An empty payload never reaches the

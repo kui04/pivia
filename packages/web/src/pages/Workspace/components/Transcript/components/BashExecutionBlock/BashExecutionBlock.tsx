@@ -3,11 +3,11 @@ import { Check, Copy, Terminal, WrapText, X } from "lucide-react";
 import { useState, type ReactElement } from "react";
 
 import { Icon, IconButton, ScrollArea } from "@components";
+import { copyFeedbackText, useCopyFeedback } from "@/hooks";
 import { cn } from "@/lib/cn";
 import type { TranscriptBashItem, TranscriptBashStatus } from "@/stores/session/transcript";
 
 import { useAutoScroll } from "../../useAutoScroll";
-import { useCopyFeedback } from "../../useCopyFeedback";
 import styles from "./BashExecutionBlock.module.css";
 
 /** Props of {@link BashExecutionBlock}. */
@@ -59,7 +59,7 @@ export function BashExecutionBlock({
     const { viewportRef, fadeTop, fadeBottom } = useAutoScroll({ streaming: false });
 
     const statusText = formatStatus(item.status);
-    const copyStatusText = copyStatus === "copied" ? "Copied" : copyStatus === "failed" ? "Copy failed" : "";
+    const copyStatusText = copyFeedbackText(copyStatus);
     const hasOutput = item.output.length > 0;
     const outputLabel = item.command.trim() !== "" ? `${item.command} output` : "Command output";
 

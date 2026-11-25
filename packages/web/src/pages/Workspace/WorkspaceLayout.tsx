@@ -3,8 +3,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactElement } from "re
 import { Outlet, useNavigate, useParams } from "react-router";
 
 import { Drawer } from "@components";
-import { useMediaQuery } from "@/hooks/useMediaQuery";
-import { useNow } from "@/hooks/useNow";
+import { useMediaQuery, useNow } from "@/hooks";
 import { copyText } from "@/lib/clipboard";
 import { Log } from "@/lib/log";
 import { showError, showWarning } from "@/lib/toast";

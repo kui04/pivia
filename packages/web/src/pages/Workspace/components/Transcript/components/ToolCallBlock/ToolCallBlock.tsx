@@ -22,6 +22,7 @@ import {
 import { useId, useMemo, useState, type ReactElement } from "react";
 
 import { CodeBlock, Icon, IconButton, Image, ScrollArea } from "@components";
+import { copyFeedbackText, useCopyFeedback } from "@/hooks";
 import { cn } from "@/lib/cn";
 import {
     formatNestedCallDuration,
@@ -36,7 +37,6 @@ import {
 } from "@/stores/session/transcript";
 
 import { useAutoScroll } from "../../useAutoScroll";
-import { useCopyFeedback } from "../../useCopyFeedback";
 import { useLiveDuration } from "../../useLiveDuration";
 import styles from "./ToolCallBlock.module.css";
 
@@ -245,7 +245,7 @@ export function ToolCallBlock({
     );
     const hasCopyable = hasOutput || (!hasPreview && (step.argumentsError !== null || hasArguments));
     const formattedDuration = liveDurationMs !== null ? formatToolDuration(liveDurationMs) : null;
-    const statusText = copyStatus === "copied" ? "Copied" : copyStatus === "failed" ? "Copy failed" : "";
+    const statusText = copyFeedbackText(copyStatus);
 
     /**
      * Build the copy payload on demand: with output it is the output, and only an argument-only card
