@@ -645,3 +645,88 @@ export const CompactingBetweenTurns: Story = {
         await expect(canvas.getByRole("status")).toHaveTextContent("Compacting context...");
     },
 };
+
+export const QueuedSteeringAndFollowUp: Story = {
+    args: {
+        items: shortItems,
+        queuedMessages: {
+            steeringMessages: ["Run vitest on protocol next"],
+            followUpMessages: ["Then generate the final summary"],
+        },
+    },
+    decorators: [
+        (Story) => (
+            <div className={styles.frame}>
+                <Story />
+            </div>
+        ),
+    ],
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+        const queueList = canvas.getByRole("list", { name: "Queued messages" });
+        await expect(within(queueList).getAllByRole("listitem")).toHaveLength(2);
+        await expect(within(queueList).getByText("Run vitest on protocol next")).toBeVisible();
+        await expect(within(queueList).getByText("Then generate the final summary")).toBeVisible();
+    },
+};
+
+function QueuedAutoFollowDemo() {
+    const [queued, setQueued] = useState<string[]>([]);
+
+    return (
+        <div className={styles.streamingShell}>
+            <div className={styles.controls}>
+                <Button
+                    type="button"
+                    onClick={() => setQueued((prev) => [...prev, `Queued follow-up ${prev.length + 1}`])}
+                >
+                    Append queued
+                </Button>
+            </div>
+            <Transcript
+                items={longItems.slice(0, 6)}
+                queuedMessages={{ steeringMessages: [], followUpMessages: queued }}
+            />
+        </div>
+    );
+}
+
+export const QueuedAutoFollow: Story = {
+    render: () => <QueuedAutoFollowDemo />,
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+        const viewport = getViewport(canvasElement);
+        const appendButton = canvas.getByRole("button", { name: "Append queued" });
+
+        await waitFor(async () => {
+            await expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight);
+            await expect(
+                Math.abs(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop),
+            ).toBeLessThanOrEqual(3);
+        });
+
+        await userEvent.click(appendButton);
+        await waitFor(async () => {
+            await expect(canvas.getByText("Queued follow-up 1")).toBeVisible();
+            await expect(
+                Math.abs(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop),
+            ).toBeLessThanOrEqual(3);
+        });
+
+        viewport.dispatchEvent(new WheelEvent("wheel", { deltaY: -300, bubbles: true, cancelable: true }));
+        viewport.scrollTop = 20;
+        viewport.dispatchEvent(new Event("scroll"));
+
+        const jumpButton = await canvas.findByRole("button", { name: "To bottom" });
+        await waitFor(async () => {
+            await expect(jumpButton).toBeVisible();
+        });
+
+        const pausedScrollTop = viewport.scrollTop;
+        await userEvent.click(appendButton);
+        await waitFor(async () => {
+            await expect(canvas.getByText("Queued follow-up 2")).toBeVisible();
+        });
+        await expect(viewport.scrollTop).toBeLessThanOrEqual(pausedScrollTop + 4);
+    },
+};

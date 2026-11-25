@@ -7,6 +7,7 @@ import { projectSessionTranscript } from "@/stores/session/projection";
 import type { SessionActivityNotice, SessionLiveActivity } from "@/stores/session/store";
 import { buildTranscript, type TranscriptItem } from "@/stores/session/transcript";
 
+import { hasQueuedMessages, type TranscriptQueuedMessages } from "./components/Transcript/components";
 import { Transcript } from "./components/Transcript/Transcript";
 import { useWorkspaceSession } from "./useWorkspaceSession";
 import { selectWorkspaceView, type WorkspaceView } from "./workspaceView";
@@ -22,6 +23,11 @@ export interface WorkspacePageProps {
 
 const IDLE_ACTIVITY: SessionLiveActivity = { kind: "idle" };
 const WORKING_ACTIVITY: SessionLiveActivity = { kind: "working" };
+const EMPTY_QUEUE: readonly string[] = [];
+const EMPTY_QUEUED_MESSAGES: TranscriptQueuedMessages = {
+    steeringMessages: EMPTY_QUEUE,
+    followUpMessages: EMPTY_QUEUE,
+};
 
 /** Open a followed link in a new tab so the session view never navigates away in place. */
 function openExternalLink(href: string): void {
@@ -36,6 +42,7 @@ interface StageProps {
     readonly items: readonly TranscriptItem[];
     readonly liveActivity: SessionLiveActivity;
     readonly activityNotice: SessionActivityNotice | null;
+    readonly queuedMessages: TranscriptQueuedMessages;
     readonly onOpenLink: (href: string) => void;
     readonly onRetryEntriesSync: () => void;
 }
@@ -47,6 +54,7 @@ function renderStage({
     items,
     liveActivity,
     activityNotice,
+    queuedMessages,
     onOpenLink,
     onRetryEntriesSync,
 }: StageProps): ReactElement {
@@ -108,6 +116,7 @@ function renderStage({
                         items={items}
                         liveActivity={liveActivity}
                         activityNotice={activityNotice}
+                        queuedMessages={queuedMessages}
                         edgeFade={false}
                         className={styles.transcript}
                         onOpenLink={onOpenLink}
@@ -140,6 +149,8 @@ export function WorkspacePage(props: WorkspacePageProps = {}): ReactElement {
     const liveActivity = sessionStore((state) => state.liveActivity);
     const activityNotice = sessionStore((state) => state.activityNotice);
     const runtimeStreaming = sessionStore((state) => state.state?.isStreaming ?? null);
+    const steeringMessages = sessionStore((state) => state.state?.steeringMessages ?? EMPTY_QUEUE);
+    const followUpMessages = sessionStore((state) => state.state?.followUpMessages ?? EMPTY_QUEUE);
     const lastError = sessionStore((state) => state.lastError);
     const retryEntriesSync = sessionStore((state) => state.retryEntriesSync);
 
@@ -157,6 +168,10 @@ export function WorkspacePage(props: WorkspacePageProps = {}): ReactElement {
             ? WORKING_ACTIVITY
             : IDLE_ACTIVITY;
     const effectiveNotice = terminalStatus ? null : activityNotice;
+    const queuedMessages = useMemo<TranscriptQueuedMessages>(
+        () => (connectedRuntime ? { steeringMessages, followUpMessages } : EMPTY_QUEUED_MESSAGES),
+        [connectedRuntime, followUpMessages, steeringMessages],
+    );
 
     // Projecting the branch walks every entry, so it must not run again for each streamed token.
     const projectedItems = useMemo(
@@ -174,7 +189,8 @@ export function WorkspacePage(props: WorkspacePageProps = {}): ReactElement {
     );
 
     const hasVisibleActivity =
-        entriesSync.kind !== "loading" && (effectiveActivity.kind !== "idle" || effectiveNotice !== null);
+        entriesSync.kind !== "loading" &&
+        (effectiveActivity.kind !== "idle" || effectiveNotice !== null || hasQueuedMessages(queuedMessages));
     const view = selectWorkspaceView({
         routeMatchesStore,
         status,
@@ -231,6 +247,7 @@ export function WorkspacePage(props: WorkspacePageProps = {}): ReactElement {
                     items,
                     liveActivity: effectiveActivity,
                     activityNotice: effectiveNotice,
+                    queuedMessages,
                     onOpenLink,
                     onRetryEntriesSync: retryEntriesSync,
                 })}

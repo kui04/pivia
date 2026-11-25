@@ -12,10 +12,13 @@ import {
     CustomMessageBlock,
     SkillInvocationBlock,
     SystemNote,
+    TranscriptQueue,
     TurnGroup,
     UserMessage,
     WorkingIndicator,
+    type TranscriptQueuedMessages,
 } from "./components";
+import { countVisibleQueueMessages } from "./components/TranscriptQueue/queue";
 import styles from "./Transcript.module.css";
 import { useActivityLabel } from "./useActivityLabel";
 import { useAutoScroll } from "./useAutoScroll";
@@ -30,6 +33,8 @@ export type TranscriptProps = {
     liveActivity?: SessionLiveActivity | undefined;
     /** Terminal compaction cancellation or retry failure notice shown below the transcript items. */
     activityNotice?: SessionActivityNotice | null | undefined;
+    /** Queued steering and follow-up messages rendered at the bottom of the transcript. */
+    queuedMessages?: TranscriptQueuedMessages | undefined;
     /** Applies top and bottom CSS mask fades directly on the viewport. Disable when surrounding chrome owns the fades. */
     edgeFade?: boolean | undefined;
     /** Accessible name for the scroll region. Defaults to "Transcript". */
@@ -53,6 +58,7 @@ export function Transcript({
     onOpenLink,
     liveActivity,
     activityNotice = null,
+    queuedMessages,
     edgeFade = true,
     label = "Transcript",
     labelledBy,
@@ -74,13 +80,32 @@ export function Transcript({
         initialBottom: true,
     });
 
-    const prevNoticeRef = useRef<SessionActivityNotice | null>(null);
+    const steeringMessages = queuedMessages?.steeringMessages;
+    const followUpMessages = queuedMessages?.followUpMessages;
+    const steeringCount = countVisibleQueueMessages(steeringMessages);
+    const followUpCount = countVisibleQueueMessages(followUpMessages);
+    const prevTrailingRef = useRef<{
+        readonly notice: SessionActivityNotice | null;
+        readonly steeringCount: number;
+        readonly followUpCount: number;
+    }>({
+        notice: activityNotice,
+        steeringCount,
+        followUpCount,
+    });
     useEffect(() => {
-        if (activityNotice !== null && activityNotice !== prevNoticeRef.current && atBottom) {
+        const prev = prevTrailingRef.current;
+        const noticeChanged = activityNotice !== null && activityNotice !== prev.notice;
+        const queueAdded = steeringCount > prev.steeringCount || followUpCount > prev.followUpCount;
+        if ((noticeChanged || queueAdded) && atBottom) {
             scrollToBottom("auto");
         }
-        prevNoticeRef.current = activityNotice;
-    }, [activityNotice, atBottom, scrollToBottom]);
+        prevTrailingRef.current = {
+            notice: activityNotice,
+            steeringCount,
+            followUpCount,
+        };
+    }, [activityNotice, atBottom, followUpCount, scrollToBottom, steeringCount]);
 
     const handleViewportRef = useCallback(
         (node: HTMLDivElement | null) => {
@@ -173,6 +198,7 @@ export function Transcript({
                             {activityNotice.message}
                         </div>
                     ) : null}
+                    {queuedMessages !== undefined ? <TranscriptQueue queue={queuedMessages} /> : null}
                 </div>
             </ScrollArea>
 

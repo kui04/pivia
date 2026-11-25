@@ -677,3 +677,73 @@ export const LiveToolAndCompacting: Story = {
         await expect(canvas.getByText("RUN v5.1.1 running unit checks...")).toBeVisible();
     },
 };
+
+const queuedMessagesScenario: Scenario = ({ socket }) => {
+    const ws = socket.latest();
+    ws?.open();
+    ws?.receive(
+        inlineSnapshot(
+            TRANSCRIPT_ENTRIES.slice(0, 2),
+            sessionState({ isStreaming: true, steeringMessages: ["Check lint"] }),
+        ),
+    );
+    ws?.receive(
+        deltaFrame(2, {
+            kind: "agent_event",
+            event: {
+                type: "queue_update",
+                steering: ["Check lint"],
+                followUp: ["Report verified test counts"],
+            },
+        }),
+    );
+};
+
+export const QueuedMessagesRealtime: Story = {
+    render: () => <PageHarness route={`/workspace/${SESSION_ID}`} setup={queuedMessagesScenario} />,
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+        const queueList = await canvas.findByRole("list", { name: "Queued messages" });
+        await expect(within(queueList).getByText("Queued · Steering")).toBeVisible();
+        await expect(within(queueList).getByText("Check lint")).toBeVisible();
+        await expect(within(queueList).getByText("Queued · Follow-up")).toBeVisible();
+        await expect(within(queueList).getByText("Report verified test counts")).toBeVisible();
+    },
+};
+
+const queuedOnEmptyBranchScenario: Scenario = ({ socket }) => {
+    const ws = socket.latest();
+    ws?.open();
+    ws?.receive(inlineSnapshot([], sessionState({ isStreaming: true, steeringMessages: ["Pending on empty branch"] })));
+};
+
+export const QueuedOnEmptyBranch: Story = {
+    render: () => <PageHarness route={`/workspace/${SESSION_ID}`} setup={queuedOnEmptyBranchScenario} />,
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+        const queueList = await canvas.findByRole("list", { name: "Queued messages" });
+        await expect(within(queueList).getByText("Pending on empty branch")).toBeVisible();
+        await expect(canvas.queryByRole("heading", { name: "Empty session" })).not.toBeInTheDocument();
+    },
+};
+
+const closedSessionHidesQueueScenario: Scenario = ({ socket }) => {
+    const ws = socket.latest();
+    ws?.open();
+    ws?.receive(
+        inlineSnapshot(
+            TRANSCRIPT_ENTRIES.slice(0, 2),
+            sessionState({ isStreaming: true, steeringMessages: ["Should hide when closed"] }),
+        ),
+    );
+    ws?.serverClose(SESSION_CLOSE_CODE.sessionClosed, "The session was closed by the user.");
+};
+
+export const ClosedSessionHidesQueue: Story = {
+    render: () => <PageHarness route={`/workspace/${SESSION_ID}`} setup={closedSessionHidesQueueScenario} />,
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+        await expect(await canvas.findByText("Show the transcript view for this session.")).toBeVisible();
+        await expect(canvas.queryByRole("list", { name: "Queued messages" })).not.toBeInTheDocument();
+    },
+};
