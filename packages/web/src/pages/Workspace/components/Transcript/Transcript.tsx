@@ -18,6 +18,7 @@ import {
     WorkingIndicator,
     type QueuedEntry,
 } from "./components";
+import { Notice } from "./components/Notice/Notice";
 import styles from "./Transcript.module.css";
 import { useActivityLabel } from "./useActivityLabel";
 import { useAutoScroll } from "./useAutoScroll";
@@ -148,9 +149,9 @@ export function Transcript({
                                 return <SystemNote key={item.id} item={item} onOpenLink={onOpenLink} />;
                             case "notice":
                                 return (
-                                    <p key={item.id} className={styles.inlineNotice}>
+                                    <Notice key={item.id} className={styles.inlineNotice}>
                                         {item.text}
-                                    </p>
+                                    </Notice>
                                 );
                             case "turn": {
                                 // An idle runtime has no label; the turn falls back to WORKING_LABEL
@@ -174,13 +175,13 @@ export function Transcript({
                         <WorkingIndicator label={activityLabel} />
                     ) : null}
                     {activityNotice !== null ? (
-                        <div
+                        <Notice
+                            tone={activityNotice.tone}
+                            live={activityNotice.tone === "error" ? "alert" : "status"}
                             className={styles.activityNotice}
-                            data-tone={activityNotice.tone}
-                            role={activityNotice.tone === "error" ? "alert" : "status"}
                         >
                             {activityNotice.message}
-                        </div>
+                        </Notice>
                     ) : null}
                     {queuedEntries !== undefined ? <TranscriptQueue entries={queuedEntries} /> : null}
                 </div>

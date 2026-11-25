@@ -1,10 +1,12 @@
-import { ChevronRight, type LucideIcon } from "lucide-react";
-import { useId, useState, type ReactElement, type ReactNode } from "react";
+import type { LucideIcon } from "lucide-react";
+import type { ReactElement, ReactNode } from "react";
 
-import { Icon, ScrollArea } from "@components";
+import { ScrollArea } from "@components";
 import { cn } from "@/lib";
 
 import { useAutoScroll } from "../../useAutoScroll";
+import { Disclosure } from "../Disclosure/Disclosure";
+import { useDisclosure } from "../Disclosure/useDisclosure";
 import styles from "./CollapsibleBlock.module.css";
 
 /** Props of {@link CollapsibleBlock}. */
@@ -32,12 +34,11 @@ export type CollapsibleBlockProps = {
 };
 
 /**
- * One secondary collapsible row in a turn timeline.
+ * One secondary collapsible row with a bounded, scrollable body.
  *
- * It stays collapsed by default so completed steps keep the turn compact, and its body scrolls
- * inside a bounded viewport that follows the bottom edge while the content streams. Thinking
- * blocks and system notes share this shell so their geometry, fades and focus behaviour stay in
- * sync.
+ * It stays collapsed by default so completed steps keep the turn compact, and its body follows the
+ * bottom edge while the content streams. Thinking blocks and system notes share this body so their
+ * geometry, fades and focus behaviour stay in sync.
  *
  * @param props - Trigger label and icon, scroll-region name and panel content.
  */
@@ -53,64 +54,34 @@ export function CollapsibleBlock({
     className,
     tone = "neutral",
 }: CollapsibleBlockProps): ReactElement {
-    const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen);
-    const panelId = useId();
-    const open = controlledOpen ?? uncontrolledOpen;
-
-    const { viewportRef, fadeTop, fadeBottom } = useAutoScroll({ enabled: open, streaming });
-
-    const handleToggle = () => {
-        const next = !open;
-        if (controlledOpen === undefined) {
-            setUncontrolledOpen(next);
-        }
-        onOpenChange?.(next);
-    };
+    const control = useDisclosure({ defaultOpen, open: controlledOpen, onOpenChange });
+    const { viewportRef, fadeTop, fadeBottom } = useAutoScroll({ enabled: control.open, streaming });
 
     return (
-        <div className={cn(styles.root, className)} data-tone={tone}>
-            <button
-                type="button"
-                className={styles.trigger}
-                aria-expanded={open}
-                aria-controls={panelId}
-                onClick={handleToggle}
+        <Disclosure
+            control={control}
+            icon={LeadingIcon}
+            label={label}
+            tone={tone}
+            streaming={streaming}
+            className={className}
+        >
+            <div
+                className={styles.body}
+                data-fade-top={fadeTop ? "true" : undefined}
+                data-fade-bottom={fadeBottom ? "true" : undefined}
             >
-                <Icon size="no-container" className={styles.icon}>
-                    <LeadingIcon strokeWidth={1.75} />
-                </Icon>
-                <span className={styles.label} data-streaming={streaming ? "true" : undefined}>
-                    {label}
-                </span>
-                <Icon size="no-container" className={styles.chevron} data-open={open ? "true" : undefined}>
-                    <ChevronRight strokeWidth={1.75} />
-                </Icon>
-            </button>
-
-            <div id={panelId} className={styles.collapse} data-open={open ? "true" : undefined}>
-                <div className={styles.collapseInner} inert={!open} aria-hidden={!open}>
-                    <div
-                        className={styles.body}
-                        data-fade-top={fadeTop ? "true" : undefined}
-                        data-fade-bottom={fadeBottom ? "true" : undefined}
-                    >
-                        <div className={styles.rail} aria-hidden="true" />
-                        <ScrollArea
-                            label={scrollLabel}
-                            viewportRef={viewportRef}
-                            className={styles.scroll}
-                            viewportClassName={cn(
-                                styles.viewport,
-                                fadeTop && styles.fadeTop,
-                                fadeBottom && styles.fadeBottom,
-                            )}
-                            contentClassName={styles.content}
-                        >
-                            <div className={styles.contentBody}>{children}</div>
-                        </ScrollArea>
-                    </div>
-                </div>
+                <div className={styles.rail} aria-hidden="true" />
+                <ScrollArea
+                    label={scrollLabel}
+                    viewportRef={viewportRef}
+                    className={styles.scroll}
+                    viewportClassName={cn(styles.viewport, fadeTop && styles.fadeTop, fadeBottom && styles.fadeBottom)}
+                    contentClassName={styles.content}
+                >
+                    <div className={styles.contentBody}>{children}</div>
+                </ScrollArea>
             </div>
-        </div>
+        </Disclosure>
     );
 }

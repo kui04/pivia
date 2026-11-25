@@ -4,6 +4,7 @@ import type { ReactElement } from "react";
 import { Icon } from "@components";
 import { cn } from "@/lib";
 
+import bubbleStyles from "../UserMessage/Bubble.module.css";
 import { type QueuedEntry } from "./queue";
 import styles from "./TranscriptQueue.module.css";
 
@@ -31,7 +32,7 @@ export function TranscriptQueue({ entries, className }: TranscriptQueueProps): R
         <ul className={cn(styles.root, className)} aria-label="Queued messages">
             {entries.map((entry, index) => (
                 <li key={`${entry.kind}-${index}`} className={styles.item}>
-                    <div className={styles.bubble}>{entry.text}</div>
+                    <div className={cn(bubbleStyles.bubble, styles.queued)}>{entry.text}</div>
                     <div className={styles.meta} data-kind={entry.kind}>
                         <Icon size="no-container" glyphSize={12}>
                             <Clock strokeWidth={1.75} />

@@ -1,13 +1,16 @@
 import { assertNever } from "@pivia/protocol";
-import { Check, Copy, Terminal, WrapText, X } from "lucide-react";
+import { Terminal } from "lucide-react";
 import { useState, type ReactElement } from "react";
 
-import { Icon, IconButton, ScrollArea } from "@components";
-import { copyFeedbackText, useCopyFeedback } from "@/hooks";
+import { Icon } from "@components";
+import { useCopyFeedback } from "@/hooks";
 import { cn } from "@/lib";
 import type { TranscriptBashItem, TranscriptBashStatus } from "@/stores/session/transcript";
 
 import { useAutoScroll } from "../../useAutoScroll";
+import { Notice } from "../Notice/Notice";
+import { OutputScroller } from "../OutputCard/OutputScroller";
+import { OutputToolbar } from "../OutputCard/OutputToolbar";
 import styles from "./BashExecutionBlock.module.css";
 
 /** Props of {@link BashExecutionBlock}. */
@@ -59,7 +62,6 @@ export function BashExecutionBlock({
     const { viewportRef, fadeTop, fadeBottom } = useAutoScroll({ streaming: false });
 
     const statusText = formatStatus(item.status);
-    const copyStatusText = copyFeedbackText(copyStatus);
     const hasOutput = item.output.length > 0;
     const outputLabel = item.command.trim() !== "" ? `${item.command} output` : "Command output";
 
@@ -85,52 +87,32 @@ export function BashExecutionBlock({
                     {item.excludeFromContext ? <span className={styles.context}>{" · not in context"}</span> : null}
                 </code>
                 <div className={styles.meta}>
-                    <IconButton label="Wrap lines" aria-pressed={wrapped} onClick={() => setWrapped((prev) => !prev)}>
-                        <WrapText strokeWidth={1.75} />
-                    </IconButton>
-                    <IconButton label="Copy output" disabled={!hasOutput} onClick={handleCopy}>
-                        {copyStatus === "copied" ? (
-                            <Check strokeWidth={1.75} />
-                        ) : copyStatus === "failed" ? (
-                            <X strokeWidth={1.75} />
-                        ) : (
-                            <Copy strokeWidth={1.75} />
-                        )}
-                    </IconButton>
+                    <OutputToolbar
+                        wrapped={wrapped}
+                        onToggleWrapped={() => setWrapped((prev) => !prev)}
+                        copyStatus={copyStatus}
+                        onCopy={handleCopy}
+                        copyDisabled={!hasOutput}
+                    />
                 </div>
             </div>
 
-            <ScrollArea
+            <OutputScroller
                 label={outputLabel}
+                text={item.output}
+                placeholder="No output"
+                wrapped={wrapped}
                 viewportRef={viewportRef}
-                className={styles.scroll}
-                viewportClassName={cn(styles.viewport, fadeTop && styles.fadeTop, fadeBottom && styles.fadeBottom)}
-                contentClassName={cn(styles.content, wrapped && styles.contentWrapped)}
-            >
-                {hasOutput ? (
-                    <pre className={styles.output} data-wrapped={wrapped ? "true" : undefined}>
-                        {item.output}
-                    </pre>
-                ) : (
-                    <p className={styles.empty}>No output</p>
-                )}
-            </ScrollArea>
+                fadeTop={fadeTop}
+                fadeBottom={fadeBottom}
+            />
 
             {item.truncation.kind === "truncated" ? (
-                <p className={styles.notice}>
+                <Notice className={styles.notice}>
                     Output truncated.
-                    {item.truncation.fullOutputPath !== null ? (
-                        <>
-                            {" "}
-                            Full output: <code>{item.truncation.fullOutputPath}</code>
-                        </>
-                    ) : null}
-                </p>
+                    {item.truncation.fullOutputPath !== null ? ` Full output: ${item.truncation.fullOutputPath}` : null}
+                </Notice>
             ) : null}
-
-            <span className={styles.visuallyHidden} role="status">
-                {copyStatusText}
-            </span>
         </div>
     );
 }

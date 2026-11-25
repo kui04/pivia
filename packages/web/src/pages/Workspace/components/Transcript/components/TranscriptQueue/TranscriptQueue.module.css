@@ -9,9 +9,11 @@
  *
  *   .root
  *   └─ .item
- *       ├─ .bubble           right-aligned multiline prompt bubble matching UserMessage geometry
+ *       ├─ .queued           pending prompt surface on the shared bubble geometry
  *       └─ .meta             clock icon and queue status caption (data-kind)
  *           └─ &[data-kind="steering"]
+ *
+ * Bubble geometry and typography live in ../UserMessage/Bubble.module.css.
  */
 .root {
     display: flex;
@@ -29,20 +31,10 @@
         gap: var(--space-4);
         min-inline-size: 0;
 
-        .bubble {
-            max-inline-size: 85%;
-            padding-block: var(--space-8);
-            padding-inline: var(--space-16);
+        .queued {
             border: var(--border-width) dashed color-mix(in srgb, var(--color-on-primary-container) 55%, transparent);
-            border-radius: var(--shape-corner-large-increased);
             background-color: var(--color-primary-container);
             color: var(--color-on-surface);
-            font-size: var(--type-body-medium-size);
-            font-weight: var(--type-body-medium-weight);
-            letter-spacing: var(--type-body-medium-tracking);
-            line-height: var(--type-body-medium-line-height);
-            white-space: pre-wrap;
-            overflow-wrap: break-word;
         }
 
         .meta {

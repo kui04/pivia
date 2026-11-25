@@ -170,7 +170,7 @@ export const TruncatedOutput: Story = {
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
         await expect(canvas.getByText(/Output truncated/)).toBeVisible();
-        await expect(canvas.getByText("/tmp/pi-bash-a3d610.log")).toBeVisible();
+        await expect(canvas.getByText("Output truncated. Full output: /tmp/pi-bash-a3d610.log")).toBeVisible();
     },
 };
 

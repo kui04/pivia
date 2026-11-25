@@ -2,10 +2,8 @@ import { assertNever } from "@pivia/protocol";
 import {
     Ban,
     Check,
-    ChevronRight,
     CircleDashed,
     Code,
-    Copy,
     FilePen,
     FilePlus,
     FileText,
@@ -15,15 +13,14 @@ import {
     SearchCode,
     Terminal,
     Wrench,
-    WrapText,
     X,
     type LucideIcon,
 } from "lucide-react";
-import { useId, useMemo, useState, type ReactElement } from "react";
+import { useMemo, useState, type ReactElement } from "react";
 
-import { CodeBlock, Icon, IconButton, Image, ScrollArea } from "@components";
-import { copyFeedbackText, useCopyFeedback } from "@/hooks";
-import { cn, Formatter } from "@/lib";
+import { CodeBlock, Icon, Image, ScrollArea } from "@components";
+import { useCopyFeedback } from "@/hooks";
+import { Formatter } from "@/lib";
 import {
     type TranscriptNestedCallStatus,
     type TranscriptNestedCallsSummary,
@@ -35,6 +32,11 @@ import {
 
 import { useAutoScroll } from "../../useAutoScroll";
 import { useLiveDuration } from "../../useLiveDuration";
+import { Disclosure } from "../Disclosure/Disclosure";
+import { useDisclosure } from "../Disclosure/useDisclosure";
+import { Notice } from "../Notice/Notice";
+import { OutputScroller } from "../OutputCard/OutputScroller";
+import { OutputToolbar } from "../OutputCard/OutputToolbar";
 import styles from "./ToolCallBlock.module.css";
 
 /** Maps Pi built-in tools to dedicated icons and groups all custom tools under Wrench. */
@@ -73,17 +75,9 @@ export type ToolCallBlockProps = {
 function renderWarningItem(warning: TranscriptToolWarning, index: number): ReactElement {
     switch (warning.kind) {
         case "fullOutput":
-            return (
-                <p key={`fullOutput-${index}`} className={styles.notice}>
-                    Full output: <code>{warning.path}</code>
-                </p>
-            );
+            return <Notice key={`fullOutput-${index}`}>Full output: {warning.path}</Notice>;
         case "notice":
-            return (
-                <p key={`notice-${index}`} className={styles.notice}>
-                    {warning.message}
-                </p>
-            );
+            return <Notice key={`notice-${index}`}>{warning.message}</Notice>;
         default:
             return assertNever(warning);
     }
@@ -203,12 +197,11 @@ export function ToolCallBlock({
     defaultWrapped = false,
     className,
 }: ToolCallBlockProps): ReactElement {
-    const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen);
+    const control = useDisclosure({ defaultOpen, open: controlledOpen, onOpenChange });
     const [wrapped, setWrapped] = useState(defaultWrapped);
     const { status: copyStatus, copy } = useCopyFeedback(onCopy);
-    const panelId = useId();
 
-    const open = controlledOpen ?? uncontrolledOpen;
+    const { open } = control;
     const isRunning = step.status === "running";
     const isError = step.status === "error";
     const hasPreview = step.preview.kind !== "none";
@@ -224,14 +217,6 @@ export function ToolCallBlock({
     });
     const liveDurationMs = useLiveDuration(step.timing, 100);
 
-    const handleToggle = () => {
-        const next = !open;
-        if (controlledOpen === undefined) {
-            setUncontrolledOpen(next);
-        }
-        onOpenChange?.(next);
-    };
-
     const ToolIcon = TOOL_ICONS[step.toolKind];
     // A collapsed block or one with output never renders the argument JSON, and the running timer
     // re-renders every 100 ms, so serialize only when the expanded card actually shows it.
@@ -241,7 +226,6 @@ export function ToolCallBlock({
     );
     const hasCopyable = hasOutput || (!hasPreview && (step.argumentsError !== null || hasArguments));
     const formattedDuration = liveDurationMs !== null ? Formatter.duration(liveDurationMs) : null;
-    const statusText = copyFeedbackText(copyStatus);
 
     /**
      * Build the copy payload on demand: with output it is the output, and only an argument-only card
@@ -285,64 +269,50 @@ export function ToolCallBlock({
     const nestedCallsSection =
         step.nestedCalls !== null ? renderNestedCallsSection(step.label, step.nestedCalls) : null;
 
-    const renderOutputCard = (allowArgumentsFallback: boolean): ReactElement => (
-        <div
-            className={styles.card}
-            data-status={step.status}
-            data-fade-top={fadeTop ? "true" : undefined}
-            data-fade-bottom={fadeBottom ? "true" : undefined}
-        >
-            <div className={styles.toolbar}>
-                <IconButton label="Wrap lines" aria-pressed={wrapped} onClick={() => setWrapped((prev) => !prev)}>
-                    <WrapText strokeWidth={1.75} />
-                </IconButton>
-                <IconButton label="Copy output" disabled={!hasCopyable} onClick={handleCopy}>
-                    {copyStatus === "copied" ? (
-                        <Check strokeWidth={1.75} />
-                    ) : copyStatus === "failed" ? (
-                        <X strokeWidth={1.75} />
-                    ) : (
-                        <Copy strokeWidth={1.75} />
-                    )}
-                </IconButton>
-            </div>
-            <span className={styles.status} role="status">
-                {statusText}
-            </span>
+    const renderOutputCard = (allowArgumentsFallback: boolean): ReactElement => {
+        const showArguments = allowArgumentsFallback && step.images.length === 0 && step.argumentsError === null;
+        const text = hasOutput ? step.output : showArguments ? formattedArguments : "";
+        const placeholder = showArguments && !hasArguments ? (isRunning ? "Running..." : "No output") : undefined;
 
-            <ScrollArea
-                label={`${step.label} output`}
-                viewportRef={viewportRef}
-                className={styles.scroll}
-                viewportClassName={cn(styles.viewport, fadeTop && styles.fadeTop, fadeBottom && styles.fadeBottom)}
-                contentClassName={cn(styles.content, wrapped && styles.contentWrapped)}
+        return (
+            <div
+                className={styles.card}
+                data-status={step.status}
+                data-fade-top={fadeTop ? "true" : undefined}
+                data-fade-bottom={fadeBottom ? "true" : undefined}
             >
-                {allowArgumentsFallback && step.argumentsError !== null ? (
-                    <p className={styles.errorNote}>{step.argumentsError}</p>
-                ) : null}
+                <div className={styles.toolbar}>
+                    <OutputToolbar
+                        wrapped={wrapped}
+                        onToggleWrapped={() => setWrapped((prev) => !prev)}
+                        copyStatus={copyStatus}
+                        onCopy={handleCopy}
+                        copyDisabled={!hasCopyable}
+                    />
+                </div>
 
-                {hasOutput ? (
-                    <pre className={styles.output} data-wrapped={wrapped ? "true" : undefined}>
-                        {step.output}
-                    </pre>
-                ) : allowArgumentsFallback && step.images.length === 0 && step.argumentsError === null ? (
-                    hasArguments ? (
-                        <pre className={styles.output} data-wrapped={wrapped ? "true" : undefined}>
-                            {formattedArguments}
-                        </pre>
-                    ) : (
-                        <p className={styles.output} data-muted="true">
-                            {isRunning ? "Running..." : "No output"}
-                        </p>
-                    )
-                ) : null}
+                <OutputScroller
+                    label={`${step.label} output`}
+                    text={text}
+                    placeholder={placeholder}
+                    before={
+                        allowArgumentsFallback && step.argumentsError !== null ? (
+                            <p className={styles.errorNote}>{step.argumentsError}</p>
+                        ) : undefined
+                    }
+                    wrapped={wrapped}
+                    overlayToolbar
+                    viewportRef={viewportRef}
+                    fadeTop={fadeTop}
+                    fadeBottom={fadeBottom}
+                >
+                    {imagesSection}
+                </OutputScroller>
 
-                {imagesSection}
-            </ScrollArea>
-
-            {warningsSection}
-        </div>
-    );
+                {warningsSection}
+            </div>
+        );
+    };
 
     const renderBodyContent = (preview: TranscriptToolPreview): ReactElement => {
         switch (preview.kind) {
@@ -391,38 +361,20 @@ export function ToolCallBlock({
     };
 
     return (
-        <div className={cn(styles.root, className)}>
-            <button
-                type="button"
-                className={styles.trigger}
-                aria-expanded={open}
-                aria-controls={panelId}
-                data-status={step.status}
-                onClick={handleToggle}
-            >
-                <Icon size="no-container" className={cn(styles.icon, isError && styles.iconError)}>
-                    <ToolIcon strokeWidth={1.75} />
-                </Icon>
-                <span className={styles.name}>{step.label}</span>
-                <span className={styles.summary}>{step.summary}</span>
-                {formattedDuration !== null ? (
-                    <span className={styles.duration} data-running={isRunning ? "true" : undefined}>
-                        {formattedDuration}
-                    </span>
-                ) : null}
-                <Icon size="no-container" className={styles.chevron} data-open={open ? "true" : undefined}>
-                    <ChevronRight strokeWidth={1.75} />
-                </Icon>
-            </button>
-
-            <div id={panelId} className={styles.collapse} data-open={open ? "true" : undefined}>
-                <div className={styles.collapseInner} inert={!open} aria-hidden={!open}>
-                    <div className={styles.body}>
-                        <div className={styles.rail} aria-hidden="true" />
-                        {renderBodyContent(step.preview)}
-                    </div>
-                </div>
+        <Disclosure
+            control={control}
+            icon={ToolIcon}
+            label={step.label}
+            summary={step.summary}
+            meta={formattedDuration ?? undefined}
+            metaRunning={isRunning}
+            tone={isError ? "error" : "primary"}
+            className={className}
+        >
+            <div className={styles.body}>
+                <div className={styles.rail} aria-hidden="true" />
+                {renderBodyContent(step.preview)}
             </div>
-        </div>
+        </Disclosure>
     );
 }

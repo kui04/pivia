@@ -200,7 +200,8 @@ export const ErrorResult: Story = {
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
         const trigger = canvas.getByRole("button", { name: /Edit/ });
-        await expect(trigger).toHaveAttribute("data-status", "error");
+        const root = requireElement(trigger.parentElement, "the disclosure root");
+        await expect(root).toHaveAttribute("data-tone", "error");
         await expect(canvas.getByText(/Target text was not found/)).toBeVisible();
     },
 };
@@ -314,7 +315,7 @@ export const ReadWithWarnings: Story = {
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
         await expect(canvas.getByText("src/store.ts:15-17")).toBeVisible();
-        await expect(canvas.getByText("/tmp/pi-read-full.log")).toBeVisible();
+        await expect(canvas.getByText("Full output: /tmp/pi-read-full.log")).toBeVisible();
         await expect(canvas.getByText(/Truncated: showing 3 of 2500 lines/)).toBeVisible();
     },
 };
@@ -387,7 +388,7 @@ export const CodemodeScriptWithNestedCalls: Story = {
         await expect(canvas.getByText("Model calls: $0.0040")).toBeVisible();
         await expect(canvas.getByText(/Nested call log truncated or incomplete/)).toBeVisible();
         await expect(canvas.getByText(/src\/index\.ts/)).toBeVisible();
-        await expect(canvas.getByText("/tmp/pi-codemode-full.log")).toBeVisible();
+        await expect(canvas.getByText("Full output: /tmp/pi-codemode-full.log")).toBeVisible();
     },
 };
 

@@ -7,24 +7,15 @@
  *   ├─ .header
  *   │   ├─ .icon              terminal glyph
  *   │   ├─ .command           the command plus its .status and .context annotations
- *   │   └─ .meta              wrap and copy buttons
- *   ├─ .scroll
- *   │   └─ .viewport          bounded scroller with edge fades
- *   │       └─ .content
- *   │           ├─ .output[data-wrapped]
- *   │           └─ .empty
- *   ├─ .notice                truncation warning and full-output path
- *   └─ .visuallyHidden        copy announcement
+ *   │   └─ .meta              OutputToolbar row
+ *   ├─ (output)              OutputScroller
+ *   └─ .notice                Notice row for truncation and full-output path
+ *
+ * The output surface itself lives in OutputScroller.module.css.
  *
  * Classes passed to child components stay top-level so CSS Modules keep one class of specificity:
  *
  *   .icon
- *   .scroll
- *   .viewport
- *   .content
- *   .contentWrapped
- *   .fadeTop
- *   .fadeBottom
  */
 .root {
     position: relative;
@@ -92,108 +83,12 @@
     }
 
     .notice {
-        margin: 0;
         padding: var(--space-8) var(--space-12);
         border-block-start: var(--border-width) solid var(--color-outline-variant);
-        color: var(--color-on-surface-variant);
-        font-size: var(--type-label-medium-size);
-        letter-spacing: var(--type-label-medium-tracking);
-        line-height: var(--type-body-medium-line-height);
-        overflow-wrap: anywhere;
-
-        code {
-            font-family: var(--font-mono);
-            color: var(--color-on-surface);
-        }
-    }
-
-    .visuallyHidden {
-        position: absolute;
-        inline-size: var(--border-width);
-        block-size: var(--border-width);
-        overflow: hidden;
-        clip-path: inset(50%);
-        white-space: nowrap;
     }
 }
 
 .icon {
     flex: none;
     color: var(--color-on-surface-variant);
-}
-
-.scroll {
-    min-inline-size: 0;
-    max-block-size: calc(var(--space-64) * 3.5);
-}
-
-/* scroll-padding-block matches the fade, so a keyboard-focused link never stops partially faded
- * under an edge. */
-.viewport {
-    --fade-size: var(--space-24);
-    --fade-top: black;
-    --fade-bottom: black;
-
-    max-block-size: calc(var(--space-64) * 3.5);
-    scroll-padding-block: var(--fade-size);
-    -webkit-mask-image: linear-gradient(
-        to bottom,
-        var(--fade-top) 0,
-        black var(--fade-size),
-        black calc(100% - var(--fade-size)),
-        var(--fade-bottom) 100%
-    );
-    mask-image: linear-gradient(
-        to bottom,
-        var(--fade-top) 0,
-        black var(--fade-size),
-        black calc(100% - var(--fade-size)),
-        var(--fade-bottom) 100%
-    );
-}
-
-.fadeTop {
-    --fade-top: transparent;
-}
-
-.fadeBottom {
-    --fade-bottom: transparent;
-}
-
-.content {
-    box-sizing: border-box;
-    min-inline-size: 100%;
-    inline-size: max-content;
-    padding: var(--space-12);
-}
-
-/* Wrapping swaps the max-content width for the viewport width. Base UI writes min-width:
- * fit-content inline on the content element, so the reset needs an important declaration. */
-.contentWrapped {
-    box-sizing: border-box;
-    inline-size: 100%;
-    min-inline-size: 0 !important;
-}
-
-.output {
-    margin: 0;
-    color: var(--color-on-surface);
-    font-family: var(--font-mono);
-    font-size: var(--type-label-medium-size);
-    letter-spacing: var(--type-label-medium-tracking);
-    line-height: var(--type-body-medium-line-height);
-    white-space: pre;
-
-    &[data-wrapped="true"] {
-        white-space: pre-wrap;
-        overflow-wrap: anywhere;
-    }
-}
-
-.empty {
-    margin: 0;
-    color: var(--color-on-surface-variant);
-    font-size: var(--type-body-medium-size);
-    letter-spacing: var(--type-body-medium-tracking);
-    line-height: var(--type-body-medium-line-height);
 }

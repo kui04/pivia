@@ -1,0 +1,111 @@
+/*
+ * Bounded output surface shared by tool calls and command records.
+ *
+ *   .scroll
+ *   └─ .viewport            clip with top and bottom mask fades
+ *       └─ .content         output padding; the overlay variant reserves toolbar space
+ *           ├─ .output[data-wrapped]
+ *           └─ .empty
+ *
+ * Classes passed to ScrollArea stay top-level so CSS Modules keep one class of specificity:
+ *
+ *   .scroll
+ *   .viewport
+ *   .fadeTop
+ *   .fadeBottom
+ *   .content
+ *   .contentOverlayToolbar
+ *   .contentWrapped
+ */
+.scroll {
+    min-inline-size: 0;
+    max-block-size: calc(var(--space-64) * 3.5);
+}
+
+/*
+ * scroll-padding-block matches the fade, so a keyboard-focused link or image inside the output
+ * never stops partially faded under an edge.
+ */
+.viewport {
+    --fade-size: var(--space-24);
+    --fade-top: black;
+    --fade-bottom: black;
+
+    max-block-size: calc(var(--space-64) * 3.5);
+    scroll-padding-block: var(--fade-size);
+    -webkit-mask-image: linear-gradient(
+        to bottom,
+        var(--fade-top) 0,
+        black var(--fade-size),
+        black calc(100% - var(--fade-size)),
+        var(--fade-bottom) 100%
+    );
+    mask-image: linear-gradient(
+        to bottom,
+        var(--fade-top) 0,
+        black var(--fade-size),
+        black calc(100% - var(--fade-size)),
+        var(--fade-bottom) 100%
+    );
+}
+
+.fadeTop {
+    --fade-top: transparent;
+}
+
+.fadeBottom {
+    --fade-bottom: transparent;
+}
+
+.content {
+    box-sizing: border-box;
+    min-inline-size: 100%;
+    inline-size: max-content;
+    padding: var(--space-12);
+}
+
+/*
+ * An overlaid toolbar covers the first line, so the content keeps clear of the buttons. A coarse
+ * pointer enlarges each button to 48px and needs more room than the fine-pointer toolbar.
+ */
+.contentOverlayToolbar {
+    padding-block: var(--space-10);
+    padding-inline-end: calc(var(--space-64) + var(--space-12));
+
+    @media (pointer: coarse) {
+        padding-inline-end: calc(var(--space-48) * 2 + var(--space-16));
+    }
+}
+
+/*
+ * Wrapping swaps the max-content width for the viewport width. Base UI writes min-width: fit-content
+ * inline on the content element, so the reset needs an important declaration.
+ */
+.contentWrapped {
+    box-sizing: border-box;
+    inline-size: 100%;
+    min-inline-size: 0 !important;
+}
+
+.output {
+    margin: 0;
+    color: var(--color-on-surface);
+    font-family: var(--font-mono);
+    font-size: var(--type-label-medium-size);
+    letter-spacing: var(--type-label-medium-tracking);
+    line-height: var(--type-body-medium-line-height);
+    white-space: pre;
+
+    &[data-wrapped="true"] {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+    }
+}
+
+.empty {
+    margin: 0;
+    color: var(--color-on-surface-variant);
+    font-size: var(--type-body-medium-size);
+    letter-spacing: var(--type-body-medium-tracking);
+    line-height: var(--type-body-medium-line-height);
+}

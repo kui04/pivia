@@ -4,6 +4,7 @@ import { cn } from "@/lib";
 import type { TranscriptUserItem } from "@/stores/session/transcript";
 
 import { ImageAttachments } from "../ImageAttachments/ImageAttachments";
+import bubbleStyles from "./Bubble.module.css";
 import styles from "./UserMessage.module.css";
 
 /** Props of {@link UserMessage}. */
@@ -28,7 +29,9 @@ export function UserMessage({ item, className }: UserMessageProps): ReactElement
         <div className={cn(styles.root, className)}>
             <ImageAttachments images={item.images} label="Attachment" idPrefix={item.id} className={styles.images} />
 
-            {hasText || item.images.length === 0 ? <div className={styles.bubble}>{item.text}</div> : null}
+            {hasText || item.images.length === 0 ? (
+                <div className={cn(bubbleStyles.bubble, styles.prompt)}>{item.text}</div>
+            ) : null}
         </div>
     );
 }

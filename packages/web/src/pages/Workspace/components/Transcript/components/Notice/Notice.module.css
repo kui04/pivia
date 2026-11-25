@@ -1,0 +1,41 @@
+/*
+ * One transcript notice line.
+ *
+ *   .notice
+ *   ├─ &[data-tone="error"]
+ *   ├─ .icon
+ *   │   └─ &[data-tone="warning"]
+ *   └─ .text
+ */
+.notice {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-8);
+    color: var(--color-on-surface-variant);
+    font-size: var(--type-body-medium-size);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: var(--type-body-medium-tracking);
+    line-height: var(--type-body-medium-line-height);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+
+    &[data-tone="error"] {
+        color: var(--color-error);
+    }
+}
+
+.icon {
+    /* The 16px glyph sits in a 20px body line box; the 2px offset centers it with the first line. */
+    margin-block-start: var(--space-2);
+    flex: none;
+    color: inherit;
+
+    /* `--color-warning` conveys warning polarity on icons while body text stays high contrast. */
+    &[data-tone="warning"] {
+        color: var(--color-warning);
+    }
+}
+
+.text {
+    min-inline-size: 0;
+}

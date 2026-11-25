@@ -1,14 +1,6 @@
 import { assertNever } from "@pivia/protocol";
-import {
-    AlertTriangle,
-    Ban,
-    ChevronRight,
-    CircleAlert,
-    Layers,
-    MessageSquareText,
-    type LucideIcon,
-} from "lucide-react";
-import { Fragment, useId, useState, type ReactElement } from "react";
+import { AlertTriangle, Ban, CircleAlert, Layers, MessageSquareText, type LucideIcon } from "lucide-react";
+import { Fragment, type ReactElement } from "react";
 
 import { Icon, Markdown } from "@components";
 import { cn, Formatter } from "@/lib";
@@ -16,6 +8,9 @@ import { type TranscriptStep, type TranscriptTurnItem, type TranscriptTurnOutcom
 
 import { WORKING_LABEL } from "../../useActivityLabel";
 import { useLiveDuration } from "../../useLiveDuration";
+import { Disclosure } from "../Disclosure/Disclosure";
+import { useDisclosure } from "../Disclosure/useDisclosure";
+import { Notice } from "../Notice/Notice";
 import { ThinkingBlock } from "../ThinkingBlock/ThinkingBlock";
 import { ToolCallBlock } from "../ToolCallBlock/ToolCallBlock";
 import { WorkingIndicator } from "../WorkingIndicator/WorkingIndicator";
@@ -159,18 +154,8 @@ export function TurnGroup({
     activityLabel,
     className,
 }: TurnGroupProps): ReactElement {
-    const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen);
-    const panelId = useId();
-    const open = controlledOpen ?? uncontrolledOpen;
+    const control = useDisclosure({ defaultOpen, open: controlledOpen, onOpenChange });
     const liveDurationMs = useLiveDuration(turn.timing, 1000);
-
-    const handleToggle = () => {
-        const next = !open;
-        if (controlledOpen === undefined) {
-            setUncontrolledOpen(next);
-        }
-        onOpenChange?.(next);
-    };
 
     const headerLabel = formatHeaderLabel(turn.streaming, liveDurationMs);
     // A live message settles before the runtime reports `agent_settled`, so the notice waits:
@@ -200,42 +185,18 @@ export function TurnGroup({
             {singleStep !== undefined ? renderStep(singleStep, onOpenLink, true) : null}
 
             {hasGroup ? (
-                <div className={styles.group}>
-                    <button
-                        type="button"
-                        className={styles.trigger}
-                        aria-expanded={open}
-                        aria-controls={panelId}
-                        onClick={handleToggle}
-                    >
-                        <Icon size="no-container" className={styles.icon}>
-                            <Layers strokeWidth={1.75} />
-                        </Icon>
-                        <span className={styles.label}>{headerLabel}</span>
-                        <Icon size="no-container" className={styles.chevron} data-open={open ? "true" : undefined}>
-                            <ChevronRight strokeWidth={1.75} />
-                        </Icon>
-                    </button>
-
-                    <div id={panelId} className={styles.collapse} data-open={open ? "true" : undefined}>
-                        <div className={styles.collapseInner} inert={!open} aria-hidden={!open}>
-                            <div className={styles.timeline}>
-                                {turn.steps.map((step) => (
-                                    <Fragment key={step.id}>
-                                        <div
-                                            className={styles.connector}
-                                            aria-hidden="true"
-                                            data-slot="transcript-connector"
-                                        >
-                                            <div className={styles.connectorLine} />
-                                        </div>
-                                        {renderStep(step, onOpenLink, false)}
-                                    </Fragment>
-                                ))}
-                            </div>
-                        </div>
+                <Disclosure control={control} icon={Layers} label={headerLabel}>
+                    <div className={styles.timeline}>
+                        {turn.steps.map((step) => (
+                            <Fragment key={step.id}>
+                                <div className={styles.connector} aria-hidden="true" data-slot="transcript-connector">
+                                    <div className={styles.connectorLine} />
+                                </div>
+                                {renderStep(step, onOpenLink, false)}
+                            </Fragment>
+                        ))}
                     </div>
-                </div>
+                </Disclosure>
             ) : null}
 
             {hasFinalReply && turn.finalReply !== null ? (
@@ -246,22 +207,18 @@ export function TurnGroup({
                 </div>
             ) : null}
 
-            {footerNotices.map((notice) => {
-                const NoticeIcon = notice.icon;
-                return (
-                    <div
-                        key={notice.key}
-                        className={styles.notice}
-                        data-tone={notice.tone}
-                        role={notice.announce ? "alert" : "status"}
-                    >
-                        <Icon size="no-container" className={styles.noticeIcon}>
-                            <NoticeIcon strokeWidth={1.75} />
-                        </Icon>
-                        <span className={styles.noticeText}>{notice.text}</span>
-                    </div>
-                );
-            })}
+            {footerNotices.map((notice) => (
+                <Notice
+                    key={notice.key}
+                    tone={notice.tone === "error" ? "error" : "status"}
+                    icon={notice.icon}
+                    warningIcon={notice.tone === "warning"}
+                    live={notice.announce ? "alert" : "status"}
+                    className={styles.footerNotice}
+                >
+                    {notice.text}
+                </Notice>
+            ))}
 
             {turn.streaming ? <WorkingIndicator label={activityLabel ?? WORKING_LABEL} /> : null}
         </div>
