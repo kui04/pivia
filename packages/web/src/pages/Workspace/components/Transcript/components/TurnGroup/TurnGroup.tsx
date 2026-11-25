@@ -1,5 +1,13 @@
 import { assertNever } from "@pivia/protocol";
-import { AlertTriangle, ChevronRight, Layers, MessageSquareText } from "lucide-react";
+import {
+    AlertTriangle,
+    Ban,
+    ChevronRight,
+    CircleAlert,
+    Layers,
+    MessageSquareText,
+    type LucideIcon,
+} from "lucide-react";
 import { Fragment, useId, useState, type ReactElement } from "react";
 
 import { Icon, Markdown } from "@components";
@@ -45,14 +53,41 @@ function formatHeaderLabel(streaming: boolean, durationMs: number | null): strin
     return durationMs !== null ? `Worked for ${formatTurnDuration(durationMs)}` : "Worked";
 }
 
-/** Notice text for an abnormal ending, or null when the turn ended normally. */
-function outcomeNotice(outcome: TranscriptTurnOutcome): { readonly text: string; readonly announce: boolean } | null {
+type TurnFooterNotice = {
+    readonly key: string;
+    readonly text: string;
+    readonly tone: "error" | "warning" | "muted";
+    readonly icon: LucideIcon;
+    readonly announce: boolean;
+};
+
+/** Notice descriptor for an abnormal ending, or null when the turn ended normally. */
+function outcomeNotice(outcome: TranscriptTurnOutcome): TurnFooterNotice | null {
     switch (outcome.kind) {
         case "truncated":
-            return { text: "Response was truncated before completion.", announce: false };
+            return {
+                key: "truncated",
+                text: "Response was truncated before completion.",
+                tone: "warning",
+                icon: AlertTriangle,
+                announce: false,
+            };
         case "aborted":
+            return {
+                key: "aborted",
+                text: outcome.message,
+                tone: "muted",
+                icon: Ban,
+                announce: true,
+            };
         case "error":
-            return { text: outcome.message, announce: true };
+            return {
+                key: "error",
+                text: outcome.message,
+                tone: "error",
+                icon: CircleAlert,
+                announce: true,
+            };
         case "open":
         case "completed":
             return null;
@@ -151,8 +186,23 @@ export function TurnGroup({
 
     const headerLabel = formatHeaderLabel(turn.streaming, liveDurationMs);
     // A live message settles before the runtime reports `agent_settled`, so the notice waits:
-    // otherwise a finished-looking error or truncation warning would sit beside the working row.
-    const notice = turn.streaming ? null : outcomeNotice(turn.outcome);
+    // otherwise a finished-looking error, truncation, or diagnostic warning would sit beside the working row.
+    const footerNotices: TurnFooterNotice[] = [];
+    if (!turn.streaming) {
+        const outcomeRow = outcomeNotice(turn.outcome);
+        if (outcomeRow !== null) {
+            footerNotices.push(outcomeRow);
+        }
+        if (turn.diagnosticsNotice !== undefined) {
+            footerNotices.push({
+                key: "diagnostics",
+                text: turn.diagnosticsNotice,
+                tone: "warning",
+                icon: AlertTriangle,
+                announce: false,
+            });
+        }
+    }
     const singleStep = turn.steps.length === 1 ? turn.steps[0] : undefined;
     const hasGroup = turn.steps.length > 1;
     const hasFinalReply = turn.finalReply !== null && turn.finalReply.trim().length > 0;
@@ -212,20 +262,22 @@ export function TurnGroup({
                 </div>
             ) : null}
 
-            {notice !== null ? (
-                <div className={styles.error} role={notice.announce ? "alert" : "status"}>
-                    {notice.text}
-                </div>
-            ) : null}
-
-            {!turn.streaming && turn.diagnosticsNotice !== undefined ? (
-                <div className={styles.diagnostics} role="status">
-                    <Icon size="no-container" className={styles.diagnosticsIcon}>
-                        <AlertTriangle strokeWidth={1.75} />
-                    </Icon>
-                    <span>{turn.diagnosticsNotice}</span>
-                </div>
-            ) : null}
+            {footerNotices.map((notice) => {
+                const NoticeIcon = notice.icon;
+                return (
+                    <div
+                        key={notice.key}
+                        className={styles.notice}
+                        data-tone={notice.tone}
+                        role={notice.announce ? "alert" : "status"}
+                    >
+                        <Icon size="no-container" className={styles.noticeIcon}>
+                            <NoticeIcon strokeWidth={1.75} />
+                        </Icon>
+                        <span className={styles.noticeText}>{notice.text}</span>
+                    </div>
+                );
+            })}
 
             {turn.streaming && activityLabel !== null ? (
                 <WorkingIndicator {...(activityLabel !== undefined ? { label: activityLabel } : {})} />

@@ -18,13 +18,15 @@
  *   │                   │   └─ .rail       vertical guide line
  *   │                   └─ .replyBody      intermediate Markdown reply
  *   ├─ .finalReply               final reply rendered directly below the group
- *   ├─ .error                    notice rendered when the turn was truncated, aborted or failed
- *   └─ .diagnostics              warning banner for settled provider diagnostics (e.g. dropped thinking)
+ *   └─ .notice                   aligned footer row for truncation, abort, error, and diagnostics (data-tone)
+ *       ├─ &[data-tone="warning"]
+ *       ├─ &[data-tone="error"]
+ *       └─ .noticeText
  *
  * Classes passed to child components stay top-level so CSS Modules keep one class of specificity:
  *
  *   .icon
- *   .diagnosticsIcon
+ *   .noticeIcon
  *   .chevron                     rotates 90deg when data-open="true"
  *   .markdown
  */
@@ -176,28 +178,34 @@
         padding-inline: var(--space-4);
     }
 
-    .error {
-        padding: var(--space-8) var(--space-12);
-        border: var(--border-width) solid color-mix(in srgb, var(--color-error) 45%, var(--color-outline-variant));
-        border-radius: var(--shape-corner-small);
-        background-color: var(--color-surface-container);
-        color: var(--color-error);
-        font-size: var(--type-body-medium-size);
-        letter-spacing: var(--type-body-medium-tracking);
-        line-height: var(--type-body-medium-line-height);
-        white-space: pre-wrap;
-        overflow-wrap: anywhere;
-    }
+    .notice {
+        --turn-notice-icon: var(--color-on-surface-variant);
 
-    .diagnostics {
         display: flex;
-        align-items: center;
+        align-items: flex-start;
         gap: var(--space-8);
         padding: var(--space-4);
         color: var(--color-on-surface-variant);
         font-size: var(--type-label-medium-size);
         letter-spacing: var(--type-label-medium-tracking);
         line-height: var(--type-label-medium-line-height);
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+
+        /* `--color-warning` conveys warning polarity on icons while body text stays high contrast. */
+        &[data-tone="warning"] {
+            --turn-notice-icon: var(--color-warning);
+        }
+
+        &[data-tone="error"] {
+            --turn-notice-icon: var(--color-error);
+
+            color: var(--color-error);
+        }
+
+        .noticeText {
+            min-inline-size: 0;
+        }
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -213,10 +221,9 @@
     color: var(--color-on-surface-variant);
 }
 
-/* `--color-warning` conveys warning polarity on icons while body text stays high contrast. */
-.diagnosticsIcon {
+.noticeIcon {
     flex: none;
-    color: var(--color-warning);
+    color: var(--turn-notice-icon);
 }
 
 .chevron {
