@@ -143,8 +143,12 @@
 }
 
 /*
- * Ties with Button's [data-variant="secondary"] rules and loads after Button.module.css, so the
- * floating pill keeps an opaque raised background across rest, hover and active states.
+ * Every state selector below ties the matching Button [data-variant="secondary"] rule on
+ * specificity, and this module loads after Button.module.css, so the later declaration wins and the
+ * floating pill keeps an opaque raised background at rest, on hover and while pressed. Count the
+ * classes when changing a state: Button's hover rule also carries :not(:active), so the hover
+ * override must repeat both negations or its translucent state layer replaces the opaque surface
+ * and the transcript shows through the pill.
  */
 .jumpButton[data-variant="secondary"] {
     gap: var(--space-6);
@@ -166,7 +170,7 @@
     }
 
     @media (hover: hover) {
-        &:hover:not(:disabled) {
+        &:hover:not(:active):not(:disabled) {
             background-color: var(--color-surface-container-highest);
             background-image: linear-gradient(var(--state-hover), var(--state-hover));
         }
