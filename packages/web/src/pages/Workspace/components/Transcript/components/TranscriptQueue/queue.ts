@@ -16,8 +16,8 @@ const QUEUE_SECTIONS: readonly {
     readonly label: string;
     readonly key: keyof TranscriptQueuedMessages;
 }[] = [
-    { kind: "steering", label: "Queued · Steering", key: "steeringMessages" },
-    { kind: "followUp", label: "Queued · Follow-up", key: "followUpMessages" },
+    { kind: "steering", label: "Steering", key: "steeringMessages" },
+    { kind: "followUp", label: "Follow-up", key: "followUpMessages" },
 ];
 
 /** Collects non-blank queued prompts in render order (`steeringMessages` before `followUpMessages`). */

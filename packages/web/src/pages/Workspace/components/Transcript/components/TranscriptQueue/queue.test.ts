@@ -10,8 +10,8 @@ describe("collectQueuedEntries", () => {
                 followUpMessages: ["\n\t", "second"],
             }),
         ).toEqual([
-            { kind: "steering", label: "Queued · Steering", text: "first" },
-            { kind: "followUp", label: "Queued · Follow-up", text: "second" },
+            { kind: "steering", label: "Steering", text: "first" },
+            { kind: "followUp", label: "Follow-up", text: "second" },
         ]);
     });
 

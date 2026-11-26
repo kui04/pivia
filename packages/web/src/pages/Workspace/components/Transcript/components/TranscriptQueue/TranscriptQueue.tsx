@@ -1,11 +1,9 @@
-import { Clock } from "lucide-react";
 import type { ReactElement } from "react";
 
-import { Icon } from "@components";
 import { cn } from "@/lib";
 
 import bubbleStyles from "../UserMessage/Bubble.module.css";
-import { type QueuedEntry } from "./queue";
+import { type QueueKind, type QueuedEntry } from "./queue";
 import styles from "./TranscriptQueue.module.css";
 
 /** Props of {@link TranscriptQueue}. */
@@ -16,12 +14,39 @@ export type TranscriptQueueProps = {
     readonly className?: string | undefined;
 };
 
+type QueueSection = {
+    readonly kind: QueueKind;
+    readonly label: string;
+    readonly entries: readonly QueuedEntry[];
+};
+
 /**
- * Read-only list of queued steering and follow-up prompts shown at the end of the transcript.
+ * Group consecutive entries of the same queue, keeping the order `collectQueuedEntries` produced.
+ *
+ * The label is read from the first entry of each group; the group renders it once as a badge on
+ * its last bubble.
+ */
+function groupSections(entries: readonly QueuedEntry[]): readonly QueueSection[] {
+    const sections: { kind: QueueKind; label: string; entries: QueuedEntry[] }[] = [];
+    for (const entry of entries) {
+        const last = sections.at(-1);
+        if (last !== undefined && last.kind === entry.kind) {
+            last.entries.push(entry);
+            continue;
+        }
+        sections.push({ kind: entry.kind, label: entry.label, entries: [entry] });
+    }
+    return sections;
+}
+
+/**
+ * Read-only grouped list of queued steering and follow-up prompts shown at the end of the
+ * transcript.
  *
  * Uses the same right-aligned bubble geometry and multi-line wrapping as `UserMessage` so queued
- * inputs read naturally in the conversation column, while pairing a dashed container bubble with a
- * subtle status caption to distinguish pending entries from committed turns.
+ * inputs read naturally in the conversation column. One badge on the last bubble of each queue
+ * names the group, so pending entries stay distinguishable from committed turns without repeating
+ * a caption under every message.
  */
 export function TranscriptQueue({ entries, className }: TranscriptQueueProps): ReactElement | null {
     if (entries.length === 0) {
@@ -29,18 +54,21 @@ export function TranscriptQueue({ entries, className }: TranscriptQueueProps): R
     }
 
     return (
-        <ul className={cn(styles.root, className)} aria-label="Queued messages">
-            {entries.map((entry, index) => (
-                <li key={`${entry.kind}-${index}`} className={styles.item}>
-                    <div className={cn(bubbleStyles.bubble, styles.queued)}>{entry.text}</div>
-                    <div className={styles.meta} data-kind={entry.kind}>
-                        <Icon size="no-container" glyphSize={12}>
-                            <Clock strokeWidth={1.75} />
-                        </Icon>
-                        <span>{entry.label}</span>
-                    </div>
-                </li>
+        <div className={cn(styles.root, className)} role="group" aria-label="Queued messages">
+            {groupSections(entries).map((section) => (
+                <ul key={section.kind} className={styles.list} aria-label={section.label}>
+                    {section.entries.map((entry, index) => (
+                        <li key={`${section.kind}-${index}`} className={styles.item}>
+                            <div className={cn(bubbleStyles.bubble, styles.queued)}>{entry.text}</div>
+                            {index === section.entries.length - 1 ? (
+                                <span className={styles.badge} aria-hidden="true">
+                                    {section.label}
+                                </span>
+                            ) : null}
+                        </li>
+                    ))}
+                </ul>
             ))}
-        </ul>
+        </div>
     );
 }

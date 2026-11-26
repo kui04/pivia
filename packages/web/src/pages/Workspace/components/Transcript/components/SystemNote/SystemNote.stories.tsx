@@ -9,7 +9,7 @@ import { SystemNote } from "./SystemNote";
 const compactionNote: TranscriptNoteItem = {
     kind: "note",
     id: "note-compaction",
-    title: "Session compacted",
+    title: "Compaction",
     text: [
         "**Earlier context:** the reader asked for a read-only transcript view.",
         "",
@@ -55,7 +55,7 @@ type Story = StoryObj<typeof meta>;
 export const CompactionCheckpoint: Story = {
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
-        const trigger = canvas.getByRole("button", { name: "Session compacted" });
+        const trigger = canvas.getByRole("button", { name: "Compaction" });
 
         // A note shares the thinking block shell: collapsed until the reader opens it.
         await expect(trigger).toHaveAttribute("aria-expanded", "false");
@@ -63,7 +63,7 @@ export const CompactionCheckpoint: Story = {
         await userEvent.click(trigger);
         await expect(trigger).toHaveAttribute("aria-expanded", "true");
         await expect(canvas.getByText(/the reader asked for a read-only transcript view/)).toBeVisible();
-        await expect(canvas.getByRole("group", { name: "Session compacted details" })).toBeVisible();
+        await expect(canvas.getByRole("group", { name: "Compaction details" })).toBeVisible();
     },
 };
 
@@ -94,7 +94,7 @@ export const WithTokensAndBilling: Story = {
     },
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
-        await expect(canvas.getByRole("button", { name: "Session compacted" })).toBeVisible();
+        await expect(canvas.getByRole("button", { name: "Compaction" })).toBeVisible();
         await expect(canvas.getByText("Compacted from 42,100 tokens · 3.2k tokens billed (~$0.02)")).toBeVisible();
     },
 };

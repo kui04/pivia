@@ -1,4 +1,4 @@
-import { Layers } from "lucide-react";
+import { Archive } from "lucide-react";
 import type { ReactElement } from "react";
 
 import { Markdown } from "@components";
@@ -33,7 +33,7 @@ export function SystemNote({ item, onOpenLink, className }: SystemNoteProps): Re
 
     return (
         <div className={cn(styles.root, className)}>
-            <CollapsibleBlock label={item.title} icon={Layers} scrollLabel={`${item.title} details`}>
+            <CollapsibleBlock label={item.title} icon={Archive} scrollLabel={`${item.title} details`}>
                 <Markdown onOpenLink={onOpenLink}>{item.text}</Markdown>
             </CollapsibleBlock>
             {meta !== null ? <p className={styles.meta}>{meta}</p> : null}

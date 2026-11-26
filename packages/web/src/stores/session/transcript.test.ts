@@ -465,7 +465,7 @@ describe("buildTranscript", () => {
         expect(items[0]).toEqual({
             kind: "note",
             id: "note-c1",
-            title: "Session compacted",
+            title: "Compaction",
             text: "Earlier context",
             tokensBefore: 1_200,
         });
@@ -1464,7 +1464,7 @@ describe("Step 5 metadata, cache warming usage, and diagnostics", () => {
         expect(items[0]).toEqual({
             kind: "note",
             id: "note-c1",
-            title: "Session compacted",
+            title: "Compaction",
             text: "Compacted",
             tokensBefore: 42_100,
             billing: { billedTokens: 3_200, approxCostUsd: 0.02 },

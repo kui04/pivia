@@ -561,7 +561,7 @@ function buildNoteItem(entry: SummaryEntry): TranscriptNoteItem {
     return {
         kind: "note",
         id: `note-${entry.id}`,
-        title: entry.type === "compaction" ? "Session compacted" : "Branch summary",
+        title: entry.type === "compaction" ? "Compaction" : "Branch summary",
         text: entry.summary,
         tokensBefore: entry.type === "compaction" ? readNonNegativeTokenCount(entry.tokensBefore) : undefined,
         billing: readSummaryBilling(entry.usage),

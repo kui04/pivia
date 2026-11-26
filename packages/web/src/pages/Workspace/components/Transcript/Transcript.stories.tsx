@@ -138,7 +138,7 @@ const mixedItems: TranscriptItem[] = [
     {
         kind: "note",
         id: "note-mixed",
-        title: "Session compacted",
+        title: "Compaction",
         text: "Earlier context was summarized before this turn.",
     },
 ];
@@ -433,7 +433,7 @@ export const NoteBetweenTurns: Story = {
             {
                 kind: "note",
                 id: "note-compaction",
-                title: "Session compacted",
+                title: "Compaction",
                 text: "Earlier context was summarized before this turn.",
             },
         ],
@@ -447,7 +447,7 @@ export const NoteBetweenTurns: Story = {
     ],
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
-        const note = canvas.getByRole("button", { name: "Session compacted" });
+        const note = canvas.getByRole("button", { name: "Compaction" });
         await expect(note).toHaveAttribute("aria-expanded", "false");
 
         await userEvent.click(note);
@@ -518,7 +518,7 @@ export const MixedItemKinds: Story = {
         await expect(canvas.getByText("Every check passed.")).toBeVisible();
         await expect(canvas.getByRole("group", { name: "git status output" })).toBeVisible();
         await expect(canvas.getByRole("button", { name: "[task]" })).toBeVisible();
-        await expect(canvas.getByRole("button", { name: "Session compacted" })).toBeVisible();
+        await expect(canvas.getByRole("button", { name: "Compaction" })).toBeVisible();
     },
 };
 
@@ -651,10 +651,12 @@ export const QueuedSteeringAndFollowUp: Story = {
     ],
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
-        const queueList = canvas.getByRole("list", { name: "Queued messages" });
-        await expect(within(queueList).getAllByRole("listitem")).toHaveLength(2);
-        await expect(within(queueList).getByText("Run vitest on protocol next")).toBeVisible();
-        await expect(within(queueList).getByText("Then generate the final summary")).toBeVisible();
+        const queueGroup = canvas.getByRole("group", { name: "Queued messages" });
+        await expect(within(queueGroup).getAllByRole("listitem")).toHaveLength(2);
+        await expect(within(queueGroup).getByText("Steering")).toBeVisible();
+        await expect(within(queueGroup).getByText("Follow-up")).toBeVisible();
+        await expect(within(queueGroup).getByText("Run vitest on protocol next")).toBeVisible();
+        await expect(within(queueGroup).getByText("Then generate the final summary")).toBeVisible();
     },
 };
 
@@ -725,7 +727,7 @@ export const CompactionBillingAndUsageNotices: Story = {
             {
                 kind: "note",
                 id: "note-compaction-billed",
-                title: "Session compacted",
+                title: "Compaction",
                 text: "Kept active workspace edits and dropped earlier exploratory output.",
                 tokensBefore: 42_100,
                 billing: { billedTokens: 3_200, approxCostUsd: 0.024 },
@@ -757,7 +759,7 @@ export const CompactionBillingAndUsageNotices: Story = {
     ],
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
-        await expect(canvas.getByRole("button", { name: "Session compacted" })).toBeVisible();
+        await expect(canvas.getByRole("button", { name: "Compaction" })).toBeVisible();
         await expect(canvas.getByText("Compacted from 42,100 tokens · 3.2k tokens billed (~$0.02)")).toBeVisible();
         await expect(canvas.getByText("Cache warmed (idle): $0.0025")).toBeVisible();
         await expect(canvas.getByRole("status")).toHaveTextContent("Anthropic dropped 2 thinking blocks");

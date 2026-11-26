@@ -703,11 +703,11 @@ export const QueuedMessagesRealtime: Story = {
     render: () => <PageHarness route={`/workspace/${SESSION_ID}`} setup={queuedMessagesScenario} />,
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
-        const queueList = await canvas.findByRole("list", { name: "Queued messages" });
-        await expect(within(queueList).getByText("Queued · Steering")).toBeVisible();
-        await expect(within(queueList).getByText("Check lint")).toBeVisible();
-        await expect(within(queueList).getByText("Queued · Follow-up")).toBeVisible();
-        await expect(within(queueList).getByText("Report verified test counts")).toBeVisible();
+        const queueGroup = await canvas.findByRole("group", { name: "Queued messages" });
+        await expect(within(queueGroup).getByText("Steering")).toBeVisible();
+        await expect(within(queueGroup).getByText("Check lint")).toBeVisible();
+        await expect(within(queueGroup).getByText("Follow-up")).toBeVisible();
+        await expect(within(queueGroup).getByText("Report verified test counts")).toBeVisible();
     },
 };
 
@@ -721,8 +721,8 @@ export const QueuedOnEmptyBranch: Story = {
     render: () => <PageHarness route={`/workspace/${SESSION_ID}`} setup={queuedOnEmptyBranchScenario} />,
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
-        const queueList = await canvas.findByRole("list", { name: "Queued messages" });
-        await expect(within(queueList).getByText("Pending on empty branch")).toBeVisible();
+        const queueGroup = await canvas.findByRole("group", { name: "Queued messages" });
+        await expect(within(queueGroup).getByText("Pending on empty branch")).toBeVisible();
         await expect(canvas.queryByRole("heading", { name: "Empty session" })).not.toBeInTheDocument();
     },
 };
@@ -744,7 +744,7 @@ export const ClosedSessionHidesQueue: Story = {
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
         await expect(await canvas.findByText("Show the transcript view for this session.")).toBeVisible();
-        await expect(canvas.queryByRole("list", { name: "Queued messages" })).not.toBeInTheDocument();
+        await expect(canvas.queryByRole("group", { name: "Queued messages" })).not.toBeInTheDocument();
     },
 };
 
@@ -805,7 +805,7 @@ export const MetadataAndUsageRealtime: Story = {
     render: () => <PageHarness route={`/workspace/${SESSION_ID}`} setup={metadataAndUsageScenario} />,
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
-        await expect(await canvas.findByRole("button", { name: "Session compacted" })).toBeVisible();
+        await expect(await canvas.findByRole("button", { name: "Compaction" })).toBeVisible();
         await expect(canvas.getByText("Compacted from 18,400 tokens · 2.2k tokens billed (~$0.02)")).toBeVisible();
         await expect(canvas.getByRole("status")).toHaveTextContent("Anthropic dropped 1 thinking block");
         await expect(canvas.getByText("Cache warmed (idle): $0.0012")).toBeVisible();

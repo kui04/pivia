@@ -184,11 +184,11 @@ export function ToolCallBlock({
         enabled: open && hasScrollableOutputCard,
         streaming: isRunning,
     });
-    const liveDurationMs = useLiveDuration(step.timing, 100);
+    const liveDurationMs = useLiveDuration(step.timing, 1000);
 
     const { label, icon: ToolIcon } = toolDisplay(step.toolKind, step.toolName);
     // A collapsed block or one with output never renders the argument JSON, and the running timer
-    // re-renders every 100 ms, so serialize only when the expanded card actually shows it.
+    // re-renders once per second, so serialize only when the expanded card actually shows it.
     const formattedArguments = useMemo(
         () => (open && !hasPreview && !hasOutput && hasArguments ? JSON.stringify(step.arguments, null, 2) : ""),
         [hasArguments, hasOutput, hasPreview, open, step.arguments],
