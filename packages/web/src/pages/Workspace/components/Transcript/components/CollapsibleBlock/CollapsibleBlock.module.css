@@ -1,105 +1,18 @@
 /*
- * Bounded scroll body shared by thinking blocks and system notes.
+ * Content styling inside CollapsibleBlock's shared RailScrollArea body.
  *
- * The nesting this file styles:
- *
- *   .body
- *   └─ .rail            vertical guide line
- *
- * Classes passed to child components stay top-level so CSS Modules keep one class of specificity:
- *
- *   .scroll
- *   .viewport           bounded scroller with top and bottom mask fades
- *   .fadeTop
- *   .fadeBottom
- *   .content
- *   .contentBody        wrapper around the panel content
- *       └─ [data-slot="markdown"]  Markdown root; receives the muted transcript colors
- */
-.body {
-    display: grid;
-    grid-template-columns: var(--space-16) minmax(0, 1fr);
-    column-gap: var(--space-8);
-    min-inline-size: 0;
-    padding-inline-start: var(--space-4);
-
-    /*
-     * A 1px track inside a 16px box snaps off-center because 15px is odd. Start at 2px so
-     * the box sits symmetrically on the 8px midpoint, then scale it to 1px around its
-     * center.
-     */
-    .rail {
-        inline-size: var(--border-width-strong);
-        block-size: 100%;
-        justify-self: center;
-        background-color: var(--color-outline-variant);
-        transform: scaleX(0.5);
-    }
-}
-
-.scroll {
-    min-inline-size: 0;
-    max-block-size: calc(var(--space-64) * 3.5);
-    margin-block: var(--space-4) var(--space-8);
-}
-
-/*
- * The viewport carries the maximum height so short content stays compact while long content is
- * bounded. scroll-padding-block matches the fade, so a keyboard-focused link never stops partially
- * faded under an edge.
- */
-.viewport {
-    --fade-size: var(--space-24);
-    --fade-top: black;
-    --fade-bottom: black;
-
-    max-block-size: calc(var(--space-64) * 3.5);
-    scroll-padding-block: var(--fade-size);
-    -webkit-mask-image: linear-gradient(
-        to bottom,
-        var(--fade-top) 0,
-        black var(--fade-size),
-        black calc(100% - var(--fade-size)),
-        var(--fade-bottom) 100%
-    );
-    mask-image: linear-gradient(
-        to bottom,
-        var(--fade-top) 0,
-        black var(--fade-size),
-        black calc(100% - var(--fade-size)),
-        var(--fade-bottom) 100%
-    );
-}
-
-.fadeTop {
-    --fade-top: transparent;
-}
-
-.fadeBottom {
-    --fade-bottom: transparent;
-}
-
-/*
- * Base UI writes min-width: fit-content inline on the content element; only an important
- * declaration keeps the panel at the viewport width so a wide code block scrolls inside its own
- * container instead of widening the row.
- */
-.content {
-    box-sizing: border-box;
-    inline-size: 100%;
-    min-inline-size: 0 !important;
-    padding-block: var(--space-2);
-    padding-inline-end: var(--space-12);
-}
-
-/*
- * Markdown declares --md-text on its own root, so a value inherited from an ancestor is shadowed
- * by that declaration. Target the Markdown element itself to keep secondary text muted; the
- * derived --md-border-strong, --md-inline-bg and --md-header-bg follow the same computed value.
+ *   .contentBody                  applied to ScrollArea.Content
+ *   └─ [data-slot="markdown"]     Markdown root; receives the muted transcript colors
  */
 .contentBody {
     min-inline-size: 0;
+    padding-inline-end: var(--space-4);
 
+    /*
+     * Markdown declares --md-text on its own root, so a value inherited from an ancestor is
+     * shadowed by that declaration. Target the Markdown element itself to keep secondary text
+     * muted; the derived --md-border-strong, --md-inline-bg and --md-header-bg follow it.
+     */
     [data-slot="markdown"] {
         --md-text: var(--color-on-surface-variant);
     }

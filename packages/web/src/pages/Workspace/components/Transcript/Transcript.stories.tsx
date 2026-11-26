@@ -674,7 +674,7 @@ function QueuedAutoFollowDemo() {
                 </Button>
             </div>
             <Transcript
-                items={longItems.slice(0, 6)}
+                items={longItems.slice(0, 8)}
                 queuedEntries={collectQueuedEntries({ steeringMessages: [], followUpMessages: queued })}
             />
         </div>

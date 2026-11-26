@@ -1,0 +1,227 @@
+/*
+ * Bounded scroll container pairing a continuous 1px left guide rail with a fixed-length vertical
+ * thumb that slides directly along that rail when content overflows.
+ *
+ * The nesting this file styles:
+ *
+ *   .root[data-max-height][data-indent]
+ *   ├─ .rail[data-overflowing][data-dragging]   16px left gutter aligned with the header icon center
+ *   │   ├─ .railLine                             continuous 1px vertical track line
+ *   │   └─ .thumb                                fixed-length 24px pill moving along .railLine
+ *   └─ (BaseScrollArea.Root)
+ *       └─ .hScrollbar                         horizontal overlay bar for wide inner content
+ *           └─ .hThumb
+ *
+ * Classes passed to Base UI parts stay top-level so CSS Modules keep one class of specificity:
+ *
+ *   .scroll
+ *   .viewport                                  bounded viewport with top and bottom mask fades
+ *   .fadeTop
+ *   .fadeBottom
+ *   .content                                   indents content clear of the left rail
+ */
+.root {
+    --rail-max-height: calc(var(--space-64) * 3.5);
+    --rail-content-indent: calc(var(--space-24) + var(--space-4));
+    --rail-padding-block-start: var(--space-4);
+    --rail-padding-block-end: var(--space-8);
+    /* Keep the thumb at or above WCAG 1.4.11's 3:1 non-text contrast in both themes. */
+    --rail-thumb-opacity: 0.7;
+    --rail-thumb-hover-opacity: 0.85;
+
+    position: relative;
+    min-inline-size: 0;
+
+    &[data-max-height="lg"] {
+        --rail-max-height: calc(var(--space-64) * 5);
+        --rail-padding-block-start: var(--space-2);
+        --rail-padding-block-end: var(--space-4);
+    }
+
+    &[data-indent="trigger"] {
+        --rail-content-indent: var(--space-24);
+    }
+
+    .rail {
+        position: absolute;
+        inset-block: var(--rail-padding-block-start) var(--rail-padding-block-end);
+        inset-inline-start: var(--space-4);
+        z-index: 2;
+        display: flex;
+        justify-content: center;
+        inline-size: var(--space-16);
+        pointer-events: none;
+        touch-action: none;
+        user-select: none;
+
+        /*
+         * A 1px track inside a 16px box snaps off-center because 15px is odd. Start at 2px so
+         * the line sits symmetrically on the 8px midpoint, then scale to 1px around its center.
+         */
+        .railLine {
+            inline-size: var(--border-width-strong);
+            block-size: 100%;
+            background-color: var(--color-outline-variant);
+            transform: scaleX(0.5);
+        }
+
+        .thumb {
+            position: absolute;
+            inset-block-start: 0;
+            inline-size: var(--space-4);
+            block-size: var(--space-24);
+            border-radius: var(--shape-corner-full);
+            background-color: var(--color-on-surface-variant);
+            visibility: hidden;
+            opacity: var(--rail-thumb-opacity);
+            pointer-events: none;
+            cursor: grab;
+            transition: opacity var(--motion-duration-effects-fast) var(--motion-easing-standard);
+
+            /*
+             * On touch devices expand the hit box inside the 0..24px left gutter and up to 48px
+             * vertically without encroaching on interactive rows starting at 24px.
+             */
+            @media (hover: none) {
+                &::before {
+                    content: "";
+                    position: absolute;
+                    inset-block: calc(-1 * var(--space-12));
+                    inset-inline: calc(-1 * var(--space-10));
+                }
+            }
+
+            @media (forced-colors: active) {
+                background-color: CanvasText;
+                opacity: 1;
+            }
+        }
+
+        &[data-overflowing="true"] {
+            pointer-events: auto;
+
+            .thumb {
+                visibility: visible;
+                pointer-events: auto;
+            }
+        }
+
+        @media (hover: hover) {
+            &[data-overflowing="true"]:hover .thumb {
+                opacity: var(--rail-thumb-hover-opacity);
+            }
+        }
+
+        &[data-dragging="true"] .thumb {
+            opacity: var(--rail-thumb-hover-opacity);
+            cursor: grabbing;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .thumb {
+                transition: none;
+            }
+        }
+    }
+
+    .hScrollbar {
+        z-index: 2;
+        display: flex;
+        block-size: var(--space-6);
+        background-color: transparent;
+
+        .hThumb {
+            block-size: 100%;
+            border-radius: var(--shape-corner-full);
+            background-color: var(--color-on-surface-variant);
+            opacity: var(--rail-thumb-opacity);
+            transition: opacity var(--motion-duration-effects-fast) var(--motion-easing-standard);
+
+            &:hover,
+            &[data-scrolling] {
+                opacity: var(--rail-thumb-hover-opacity);
+            }
+
+            @media (hover: none) {
+                position: relative;
+
+                &::before {
+                    content: "";
+                    position: absolute;
+                    inset-block: calc(-1 * var(--space-20)) 0;
+                    inset-inline: 0;
+                }
+            }
+
+            @media (forced-colors: active) {
+                background-color: CanvasText;
+                opacity: 1;
+            }
+
+            @media (prefers-reduced-motion: reduce) {
+                transition: none;
+            }
+        }
+    }
+}
+
+.scroll {
+    min-inline-size: 0;
+    max-block-size: var(--rail-max-height);
+}
+
+/*
+ * The viewport carries the maximum height so short content stays compact while long content is
+ * bounded. scroll-padding-block matches the fade so keyboard-focused items never stop faded.
+ */
+.viewport {
+    --fade-size: var(--space-24);
+    --fade-top: black;
+    --fade-bottom: black;
+
+    inline-size: 100%;
+    max-block-size: var(--rail-max-height);
+    scroll-padding-block: var(--fade-size);
+    -webkit-mask-image: linear-gradient(
+        to bottom,
+        var(--fade-top) 0,
+        black var(--fade-size),
+        black calc(100% - var(--fade-size)),
+        var(--fade-bottom) 100%
+    );
+    mask-image: linear-gradient(
+        to bottom,
+        var(--fade-top) 0,
+        black var(--fade-size),
+        black calc(100% - var(--fade-size)),
+        var(--fade-bottom) 100%
+    );
+
+    /*
+     * global.css sets the ring at (0,2,0); this selector is (0,3,0), keeping the ring inside
+     * the viewport where Disclosure's .collapseInner clips the outer edges.
+     */
+    &[tabindex]:focus-visible {
+        outline-offset: calc(-1 * var(--border-width-strong));
+    }
+}
+
+.fadeTop {
+    --fade-top: transparent;
+}
+
+.fadeBottom {
+    --fade-bottom: transparent;
+}
+
+/*
+ * Base UI writes min-width: fit-content inline on the content element; reset it so wide Markdown
+ * or step rows stay within the viewport while indenting cleanly past the left rail.
+ */
+.content {
+    box-sizing: border-box;
+    inline-size: 100%;
+    min-inline-size: 0 !important;
+    padding-block: var(--rail-padding-block-start) var(--rail-padding-block-end);
+    padding-inline-start: var(--rail-content-indent);
+}

@@ -11,6 +11,7 @@ import { useLiveDuration } from "../../useLiveDuration";
 import { Disclosure } from "../Disclosure/Disclosure";
 import { useDisclosure } from "../Disclosure/useDisclosure";
 import { Notice } from "../Notice/Notice";
+import { RailScrollArea } from "../RailScrollArea/RailScrollArea";
 import { ThinkingBlock } from "../ThinkingBlock/ThinkingBlock";
 import { ToolCallBlock } from "../ToolCallBlock/ToolCallBlock";
 import { WorkingIndicator } from "../WorkingIndicator/WorkingIndicator";
@@ -186,16 +187,19 @@ export function TurnGroup({
 
             {hasGroup ? (
                 <Disclosure control={control} icon={Layers} label={headerLabel}>
-                    <div className={styles.timeline}>
-                        {turn.steps.map((step) => (
-                            <Fragment key={step.id}>
-                                <div className={styles.connector} aria-hidden="true" data-slot="transcript-connector">
-                                    <div className={styles.connectorLine} />
-                                </div>
-                                {renderStep(step, onOpenLink, false)}
-                            </Fragment>
-                        ))}
-                    </div>
+                    <RailScrollArea
+                        label="Turn steps"
+                        enabled={control.open}
+                        streaming={turn.streaming}
+                        maxHeight="lg"
+                        indent="trigger"
+                    >
+                        <div className={styles.timeline}>
+                            {turn.steps.map((step) => (
+                                <Fragment key={step.id}>{renderStep(step, onOpenLink, false)}</Fragment>
+                            ))}
+                        </div>
+                    </RailScrollArea>
                 </Disclosure>
             ) : null}
 

@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 
 import type { TranscriptTurnItem } from "@/stores/session/transcript";
-import { requireElement } from "@/storybook/dom";
+import { requireElement, requireViewport } from "@/storybook/dom";
 import storyFrame from "@/storybook/storyFrame.module.css";
 
 import { TurnGroup } from "./TurnGroup";
@@ -222,6 +222,42 @@ const streamingErrorTurn: TranscriptTurnItem = {
     diagnosticsNotice: "Anthropic dropped 2 thinking blocks",
 };
 
+const longTurn: TranscriptTurnItem = {
+    kind: "turn",
+    id: "turn-long",
+    timing: { kind: "static", durationMs: 28_400 },
+    streaming: false,
+    outcome: { kind: "completed" },
+    steps: Array.from({ length: 16 }, (_, index) => {
+        if (index % 3 === 0) {
+            return {
+                kind: "thinking" as const,
+                id: `long-think-${index}`,
+                thinking: `Evaluating batch step ${index + 1} before editing.`,
+                redacted: false,
+                streaming: false,
+            };
+        }
+        return {
+            kind: "toolCall" as const,
+            id: `long-tool-${index}`,
+            toolKind: "read" as const,
+            toolName: "read",
+            summary: `packages/web/src/components/Item${index + 1}.tsx`,
+            arguments: { path: `packages/web/src/components/Item${index + 1}.tsx` },
+            argumentsError: null,
+            status: "done" as const,
+            output: `export const item = ${index + 1};`,
+            images: [],
+            preview: { kind: "none" as const },
+            warnings: [],
+            nestedCalls: null,
+            timing: { kind: "static" as const, durationMs: 35 + index * 5 },
+        };
+    }),
+    finalReply: "Reviewed all 16 steps while keeping the turn timeline bounded.",
+};
+
 const meta = {
     title: "Pages/Workspace/Transcript/TurnGroup",
     component: TurnGroup,
@@ -286,7 +322,7 @@ export const WithIntermediateReply: Story = {
         await expect(canvas.getByText(/running the unit checks before wiring the view/)).toBeVisible();
         await expect(canvas.getByText("All 42 unit tests pass across 4 test files.")).toBeVisible();
 
-        // Every step row keeps the same height, so the connector gaps and the guide rail line up.
+        // Steps stack with a consistent 4px vertical gap beside the shared left rail.
         const thinkingRow = requireElement(canvas.getByRole("button", { name: "Thoughts" }), "the thinking row");
         const replyRow = requireElement(
             canvasElement.querySelector<HTMLElement>("[data-slot='transcript-reply-step']"),
@@ -297,16 +333,57 @@ export const WithIntermediateReply: Story = {
         const gapBeforeReply = rowBounds(rows, 1).top - rowBounds(rows, 0).bottom;
         const gapBeforeTool = rowBounds(rows, 2).top - rowBounds(rows, 1).bottom;
 
-        // The connector between two rows is one 8px segment, whatever height the row content takes.
-        await expect(gapBeforeReply).toBeCloseTo(8, 0);
-        await expect(gapBeforeTool).toBeCloseTo(8, 0);
+        await expect(gapBeforeReply).toBeCloseTo(4, 0);
+        await expect(gapBeforeTool).toBeCloseTo(4, 0);
         await expect(Math.abs(gapBeforeReply - gapBeforeTool)).toBeLessThanOrEqual(1);
 
-        const connectors = [...canvasElement.querySelectorAll<HTMLElement>("[data-slot='transcript-connector']")];
-        await expect(connectors.length).toBeGreaterThan(0);
-        for (const connector of connectors) {
-            await expect(connector.getBoundingClientRect().height).toBeCloseTo(8, 0);
+        await userEvent.hover(toolRow);
+        await expect(getComputedStyle(toolRow).backgroundColor).toBe("rgba(0, 0, 0, 0)");
+    },
+};
+
+export const LongTurnBoundedTimeline: Story = {
+    args: {
+        turn: longTurn,
+        defaultOpen: true,
+    },
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+        const viewport = requireViewport(canvasElement, "the turn steps viewport");
+        const headerRow = canvas.getByRole("button", { name: "Worked for 28.4s" });
+        const innerRow = canvas.getAllByRole("button", { name: "Thoughts" })[0];
+        if (innerRow === undefined) {
+            throw new Error("The story did not render an inner Thoughts row");
         }
+        const scrollbar = requireElement(
+            canvasElement.querySelector<HTMLElement>("[data-slot='rail-scrollbar']"),
+            "the left-rail vertical scrollbar",
+        );
+        const thumb = requireElement(
+            canvasElement.querySelector<HTMLElement>("[data-slot='rail-thumb']"),
+            "the fixed-length rail thumb",
+        );
+
+        await waitFor(async () => {
+            await expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight);
+            await expect(thumb).toBeVisible();
+        });
+        await expect(viewport.clientHeight).toBeLessThanOrEqual(322);
+        await expect(innerRow.getBoundingClientRect().right).toBeCloseTo(headerRow.getBoundingClientRect().right, 0);
+
+        await expect(scrollbar.getBoundingClientRect().right).toBeLessThanOrEqual(
+            innerRow.getBoundingClientRect().left + 1,
+        );
+        await expect(thumb.getBoundingClientRect().height).toBeCloseTo(24, 0);
+        await expect(canvas.getByText("Reviewed all 16 steps while keeping the turn timeline bounded.")).toBeVisible();
+
+        viewport.scrollTop = viewport.scrollHeight - viewport.clientHeight;
+        viewport.dispatchEvent(new Event("scroll"));
+        await waitFor(async () => {
+            const mask = getComputedStyle(viewport).maskImage || getComputedStyle(viewport).webkitMaskImage;
+            await expect(mask).toContain("rgba(0, 0, 0, 0)");
+            await expect(thumb.getBoundingClientRect().bottom).toBeCloseTo(scrollbar.getBoundingClientRect().bottom, 1);
+        });
     },
 };
 
