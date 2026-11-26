@@ -82,10 +82,10 @@ describe("folderLabel", () => {
 });
 
 describe("session list helpers", () => {
-    it("orders by modification time and then by id", () => {
-        const older = summary("b", { modifiedAtMs: 1_000 });
-        const newer = summary("c", { modifiedAtMs: 5_000 });
-        const tieA = summary("a", { modifiedAtMs: 5_000 });
+    it("orders by creation time and then by id, regardless of activity", () => {
+        const older = summary("b", { createdAtMs: 1_000, modifiedAtMs: 9_000 });
+        const newer = summary("c", { createdAtMs: 5_000, modifiedAtMs: 1_000 });
+        const tieA = summary("a", { createdAtMs: 5_000, modifiedAtMs: 3_000 });
 
         expect(sortSessions([older, newer, tieA]).map((session) => session.id)).toEqual(["a", "c", "b"]);
     });
@@ -143,11 +143,31 @@ describe("buildWorkspaceModel", () => {
 
     it("moves pinned sessions out of their folders and keeps them filtered", () => {
         const sessions = [
-            summary("pin-old", { cwd: "/only-pinned", name: "Older pin", modifiedAtMs: 1_000 }),
-            summary("pin-new", { cwd: "/home/u/pivia", name: "Newer pin", modifiedAtMs: 5_000 }),
-            summary("pin-tie-a", { cwd: "/home/u/pivia", name: "Pin tie A", modifiedAtMs: 3_000 }),
-            summary("pin-tie-b", { cwd: "/home/u/pivia", name: "Pin tie B", modifiedAtMs: 3_000 }),
-            summary("regular", { cwd: "/home/u/pivia", name: "Regular", modifiedAtMs: 2_000 }),
+            summary("pin-old", {
+                cwd: "/only-pinned",
+                name: "Older pin",
+                createdAtMs: 1_000,
+                modifiedAtMs: 9_000,
+            }),
+            summary("pin-new", {
+                cwd: "/home/u/pivia",
+                name: "Newer pin",
+                createdAtMs: 5_000,
+                modifiedAtMs: 1_000,
+            }),
+            summary("pin-tie-a", {
+                cwd: "/home/u/pivia",
+                name: "Pin tie A",
+                createdAtMs: 3_000,
+                modifiedAtMs: 7_000,
+            }),
+            summary("pin-tie-b", {
+                cwd: "/home/u/pivia",
+                name: "Pin tie B",
+                createdAtMs: 3_000,
+                modifiedAtMs: 1_000,
+            }),
+            summary("regular", { cwd: "/home/u/pivia", name: "Regular", createdAtMs: 2_000 }),
         ];
 
         const model = buildWorkspaceModel({
@@ -167,12 +187,12 @@ describe("buildWorkspaceModel", () => {
         expect(model.folders[0]?.sessions.map((row) => row.id)).toEqual(["regular"]);
     });
 
-    it("groups by cwd and orders folders and rows newest first", () => {
+    it("groups by cwd and orders folders and rows by newest creation first", () => {
         const sessions = [
-            summary("old", { cwd: "/home/u/alpha", name: "Alpha", modifiedAtMs: 1_500 }),
-            summary("b", { cwd: "/home/u/beta", name: "Beta B", modifiedAtMs: 2_000 }),
-            summary("a", { cwd: "/home/u/beta", name: "Beta A", modifiedAtMs: 2_000 }),
-            summary("oldest", { cwd: "/home/u/beta", name: "Beta Old", modifiedAtMs: 1_000 }),
+            summary("old", { cwd: "/home/u/alpha", name: "Alpha", createdAtMs: 1_500, modifiedAtMs: 9_000 }),
+            summary("b", { cwd: "/home/u/beta", name: "Beta B", createdAtMs: 2_000, modifiedAtMs: 1_000 }),
+            summary("a", { cwd: "/home/u/beta", name: "Beta A", createdAtMs: 2_000, modifiedAtMs: 5_000 }),
+            summary("oldest", { cwd: "/home/u/beta", name: "Beta Old", createdAtMs: 1_000, modifiedAtMs: 8_000 }),
         ];
 
         const model = buildWorkspaceModel({
@@ -190,11 +210,11 @@ describe("buildWorkspaceModel", () => {
         expect(model.folders[1]?.collapsed).toBe(true);
     });
 
-    it("orders folders with the same newest session by cwd", () => {
+    it("orders folders with the same newest creation time by cwd", () => {
         const model = buildWorkspaceModel({
             sessions: [
-                summary("b", { cwd: "/home/u/beta", modifiedAtMs: 1_000 }),
-                summary("a", { cwd: "/home/u/alpha", modifiedAtMs: 1_000 }),
+                summary("b", { cwd: "/home/u/beta", createdAtMs: 1_000, modifiedAtMs: 9_000 }),
+                summary("a", { cwd: "/home/u/alpha", createdAtMs: 1_000, modifiedAtMs: 1_000 }),
             ],
             pins: [],
             query: "",
@@ -205,6 +225,33 @@ describe("buildWorkspaceModel", () => {
         expect(model.folders.map((folder) => folder.cwd)).toEqual(["/home/u/alpha", "/home/u/beta"]);
     });
 
+    it("keeps rows in creation order when activity and attachments change", () => {
+        const older = summary("older", { createdAtMs: 1_000 });
+        const newer = summary("newer", { createdAtMs: 2_000 });
+        const reducer = createCatalogSyncReducer();
+        const before = reducer.applySnapshot(
+            { sessions: [], updatedAtMs: null },
+            { sessions: [newer, older], updatedAtMs: 0 },
+        );
+        const after = reducer.applyDelta(before, {
+            op: "patch",
+            id: sid("older"),
+            patch: {
+                modifiedAtMs: 9_000,
+                messageCount: 2,
+                runtimeState: "streaming",
+                attachedClients: 1,
+            },
+        });
+        const rowIds = (sessions: readonly SessionSummary[]): SessionId[] =>
+            buildWorkspaceModel({ sessions, pins: [], query: "", selectedId: null, collapsed: [] }).folders.flatMap(
+                (folder) => folder.sessions.map((row) => row.id),
+            );
+
+        expect(rowIds(before.sessions)).toEqual([sid("newer"), sid("older")]);
+        expect(rowIds(after.sessions)).toEqual([sid("newer"), sid("older")]);
+    });
+
     it("filters case-insensitively on name, first message and cwd, and expands matches", () => {
         const sessions = [
             summary("one", { cwd: "/home/u/pivia", name: "Parser Rewrite", firstMessage: "unused" }),
@@ -212,13 +259,15 @@ describe("buildWorkspaceModel", () => {
                 cwd: "/home/u/docs",
                 name: null,
                 firstMessage: "Fix PARSER edge case",
-                modifiedAtMs: 2_000,
+                createdAtMs: 2_000,
+                modifiedAtMs: 1_000,
             }),
             summary("three", {
                 cwd: "/home/u/Parser-Lab",
                 name: "Other",
                 firstMessage: "Nothing",
-                modifiedAtMs: 1_500,
+                createdAtMs: 1_500,
+                modifiedAtMs: 9_000,
             }),
             summary("four", { cwd: "/home/u/empty-match", name: "Unrelated", firstMessage: "Nothing" }),
         ];
@@ -296,13 +345,13 @@ describe("sessionRowStatus", () => {
 });
 
 describe("collectKnownCwds", () => {
-    it("deduplicates non-empty cwds ordered by most recently modified session first", () => {
+    it("deduplicates non-empty cwds ordered by most recently created session first", () => {
         const sessions = [
-            summary("a", { cwd: "/repo/old", modifiedAtMs: 1_000 }),
-            summary("b", { cwd: "/repo/new", modifiedAtMs: 5_000 }),
-            summary("c", { cwd: "/repo/old", modifiedAtMs: 3_000 }),
-            summary("d", { cwd: "   ", modifiedAtMs: 9_000 }),
-            summary("e", { cwd: "", modifiedAtMs: 8_000 }),
+            summary("a", { cwd: "/repo/old", createdAtMs: 1_000, modifiedAtMs: 9_000 }),
+            summary("b", { cwd: "/repo/new", createdAtMs: 5_000, modifiedAtMs: 1_000 }),
+            summary("c", { cwd: "/repo/old", createdAtMs: 3_000, modifiedAtMs: 2_000 }),
+            summary("d", { cwd: "   ", createdAtMs: 9_000 }),
+            summary("e", { cwd: "", createdAtMs: 8_000 }),
         ];
 
         expect(collectKnownCwds(sessions)).toEqual(["/repo/new", "/repo/old"]);

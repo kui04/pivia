@@ -52,9 +52,9 @@ export interface FolderSection {
 
 /** Everything the session list renders. */
 export interface WorkspaceModel {
-    /** Pinned sessions, newest first. A pinned session does not also appear under its folder. */
+    /** Pinned sessions, newest created first. A pinned session does not also appear under its folder. */
     readonly pinned: readonly SessionRow[];
-    /** Unpinned sessions grouped by working directory, newest group first. */
+    /** Unpinned sessions grouped by working directory, newest created group first. */
     readonly folders: readonly FolderSection[];
     /** How many sessions the scan returned. */
     readonly total: number;
@@ -109,10 +109,10 @@ function matchesSearch(summary: SessionSummary, needle: string): boolean {
     );
 }
 
-/** Orders sessions newest first, with the id as a stable tiebreak. */
+/** Orders sessions by creation time, newest first, with the id as a stable tiebreak. */
 export function compareSessions(a: SessionSummary, b: SessionSummary): number {
-    if (a.modifiedAtMs !== b.modifiedAtMs) {
-        return b.modifiedAtMs - a.modifiedAtMs;
+    if (a.createdAtMs !== b.createdAtMs) {
+        return b.createdAtMs - a.createdAtMs;
     }
     if (a.id === b.id) {
         return 0;
@@ -213,6 +213,9 @@ function toRow(summary: SessionSummary, pins: ReadonlySet<SessionId>, selectedId
  *
  * A search matches the name, the first-message prefix and the cwd, and it expands every folder so a
  * match never hides inside a collapsed group. Pins only reorder; they never bypass the filter.
+ *
+ * Rows and folders order by creation time, which never changes, so activity and attachment updates
+ * cannot move a session under the user's pointer.
  */
 export function buildWorkspaceModel(input: WorkspaceModelInput): WorkspaceModel {
     const { sessions, pins, query, selectedId, collapsed } = input;
@@ -245,33 +248,36 @@ export function buildWorkspaceModel(input: WorkspaceModelInput): WorkspaceModel 
         }
     }
 
-    const folders: FolderSection[] = [];
+    const sections: { readonly section: FolderSection; readonly newestCreatedAtMs: number }[] = [];
     for (const group of grouped.values()) {
         const sorted = [...group].sort((a, b) => compareSessions(a.summary, b.summary));
         const first = sorted[0];
         if (first === undefined) {
             continue;
         }
-        folders.push({
-            cwd: first.summary.cwd,
-            label: folderLabel(first.summary.cwd),
-            // A search always expands its matches, so only an empty query applies the collapsed set.
-            collapsed: needle === "" && collapsed.includes(first.summary.cwd),
-            sessions: sorted.map((entry) => entry.row),
+        sections.push({
+            newestCreatedAtMs: first.summary.createdAtMs,
+            section: {
+                cwd: first.summary.cwd,
+                label: folderLabel(first.summary.cwd),
+                // A search always expands its matches, so only an empty query applies the collapsed set.
+                collapsed: needle === "" && collapsed.includes(first.summary.cwd),
+                sessions: sorted.map((entry) => entry.row),
+            },
         });
     }
-    folders.sort((a, b) => {
-        const newestA = a.sessions[0]?.modifiedAtMs ?? 0;
-        const newestB = b.sessions[0]?.modifiedAtMs ?? 0;
-        if (newestA !== newestB) {
-            return newestB - newestA;
+    sections.sort((a, b) => {
+        if (a.newestCreatedAtMs !== b.newestCreatedAtMs) {
+            return b.newestCreatedAtMs - a.newestCreatedAtMs;
         }
-        return a.cwd < b.cwd ? -1 : a.cwd > b.cwd ? 1 : 0;
+        const cwdA = a.section.cwd;
+        const cwdB = b.section.cwd;
+        return cwdA < cwdB ? -1 : cwdA > cwdB ? 1 : 0;
     });
 
     return {
         pinned,
-        folders,
+        folders: sections.map((entry) => entry.section),
         total: sessions.length,
         matched: matched.length,
     };
@@ -322,7 +328,7 @@ export function sessionRowStatus(
     }
 }
 
-/** Collects unique non-empty working directories ordered by most recently active session first. */
+/** Collects unique non-empty working directories ordered by most recently created session first. */
 export function collectKnownCwds(sessions: readonly SessionSummary[]): readonly string[] {
     const seen = new Set<string>();
     const cwds: string[] = [];
