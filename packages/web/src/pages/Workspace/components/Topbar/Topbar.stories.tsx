@@ -2,7 +2,7 @@ import { parseSessionId, type SessionId } from "@pivia/protocol";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, within } from "storybook/test";
 
-import type { SelectedSession } from "@/stores/workspace/model";
+import type { SelectedSession } from "@/stores/workspace";
 
 import { Topbar } from "./Topbar";
 import styles from "./Topbar.stories.module.css";

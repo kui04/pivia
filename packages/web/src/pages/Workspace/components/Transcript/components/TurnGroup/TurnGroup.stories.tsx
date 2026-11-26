@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 
-import type { TranscriptTurnItem } from "@/stores/session/transcript";
+import type { TranscriptTurnItem } from "@/stores/session";
 import { requireElement, requireViewport } from "@/storybook/dom";
 import storyFrame from "@/storybook/storyFrame.module.css";
 

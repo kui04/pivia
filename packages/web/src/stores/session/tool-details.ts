@@ -19,6 +19,8 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { assertNever, isFiniteNumber, isImageContent, isRecord } from "@pivia/protocol";
 
+// The CodeBlock barrel also exports the React component and its CSS module. Keep the grammar
+// lookup on the JS-only entry so the store's Node unit tests do not load browser assets.
 import { resolveLanguage } from "@/components/CodeBlock/highlight";
 import { Formatter } from "@/lib";
 

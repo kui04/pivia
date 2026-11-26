@@ -1,9 +1,8 @@
 import type { LucideIcon } from "lucide-react";
 import type { ReactElement, ReactNode } from "react";
 
-import { Disclosure } from "../Disclosure/Disclosure";
-import { useDisclosure } from "../Disclosure/useDisclosure";
-import { RailScrollArea } from "../RailScrollArea/RailScrollArea";
+import { Disclosure, useDisclosure } from "../Disclosure";
+import { RailScrollArea } from "../RailScrollArea";
 import styles from "./CollapsibleBlock.module.css";
 
 /** Props of {@link CollapsibleBlock}. */

@@ -4,17 +4,16 @@ import { Fragment, type ReactElement } from "react";
 
 import { Icon, Markdown } from "@components";
 import { cn, Formatter } from "@/lib";
-import { type TranscriptStep, type TranscriptTurnItem, type TranscriptTurnOutcome } from "@/stores/session/transcript";
+import { type TranscriptStep, type TranscriptTurnItem, type TranscriptTurnOutcome } from "@/stores/session";
 
 import { WORKING_LABEL } from "../../useActivityLabel";
 import { useLiveDuration } from "../../useLiveDuration";
-import { Disclosure } from "../Disclosure/Disclosure";
-import { useDisclosure } from "../Disclosure/useDisclosure";
-import { Notice } from "../Notice/Notice";
-import { RailScrollArea } from "../RailScrollArea/RailScrollArea";
-import { ThinkingBlock } from "../ThinkingBlock/ThinkingBlock";
-import { ToolCallBlock } from "../ToolCallBlock/ToolCallBlock";
-import { WorkingIndicator } from "../WorkingIndicator/WorkingIndicator";
+import { Disclosure, useDisclosure } from "../Disclosure";
+import { Notice } from "../Notice";
+import { RailScrollArea } from "../RailScrollArea";
+import { ThinkingBlock } from "../ThinkingBlock";
+import { ToolCallBlock } from "../ToolCallBlock";
+import { WorkingIndicator } from "../WorkingIndicator";
 import styles from "./TurnGroup.module.css";
 
 /** Props of {@link TurnGroup}. */

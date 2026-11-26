@@ -3,7 +3,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useState } from "react";
 import { expect, fn, waitFor, within } from "storybook/test";
 
-import type { CatalogSyncPhase, SessionRow as SessionRowModel, WorkspaceModel } from "@/stores/workspace/model";
+import type { CatalogSyncPhase, SessionRow as SessionRowModel, WorkspaceModel } from "@/stores/workspace";
 
 import { Sidebar, type SidebarProps } from "./Sidebar";
 import styles from "./Sidebar.stories.module.css";

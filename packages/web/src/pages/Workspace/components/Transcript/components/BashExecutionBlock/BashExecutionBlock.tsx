@@ -5,12 +5,11 @@ import { useState, type ReactElement } from "react";
 import { Icon } from "@components";
 import { useCopyFeedback } from "@/hooks";
 import { cn } from "@/lib";
-import type { TranscriptBashItem, TranscriptBashStatus } from "@/stores/session/transcript";
+import type { TranscriptBashItem, TranscriptBashStatus } from "@/stores/session";
 
 import { useAutoScroll } from "../../useAutoScroll";
-import { Notice } from "../Notice/Notice";
-import { OutputScroller } from "../OutputCard/OutputScroller";
-import { OutputToolbar } from "../OutputCard/OutputToolbar";
+import { Notice } from "../Notice";
+import { OutputScroller, OutputToolbar } from "../OutputCard";
 import styles from "./BashExecutionBlock.module.css";
 
 /** Props of {@link BashExecutionBlock}. */

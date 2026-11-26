@@ -1,9 +1,8 @@
 import { createBrowserRouter, Navigate } from "react-router";
 
-import { AppLayout } from "@/pages/AppLayout/AppLayout";
-import { RouteError } from "@/pages/RouteError/RouteError";
-import { WorkspaceLayout } from "@/pages/Workspace/WorkspaceLayout";
-import { WorkspacePage } from "@/pages/Workspace/WorkspacePage";
+import { AppLayout } from "@/pages/AppLayout";
+import { RouteError } from "@/pages/RouteError";
+import { WorkspaceLayout, WorkspacePage } from "@/pages/Workspace";
 
 /**
  * The route table.

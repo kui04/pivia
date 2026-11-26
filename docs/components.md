@@ -3,9 +3,10 @@
 ## General Rules
 
 - Check the Base UI index at `https://base-ui.com/llms.txt` before you build new UI. Wrap `@base-ui/react/<name>` when a matching primitive exists instead of re-implementing its behaviour.
+- Import a component through its folder barrel: `@components/Icon` or `../IconButton`. The folder's `index.ts` is the single place that names the implementation file; do not import `@components/Icon/Icon` or `../IconButton/IconButton` in a consumer. See [frontend.md](frontend.md#module-entry-points).
 - Base UI owns modal focus trapping, scroll lock, `Escape` handling, focus return, and overlay keyboard navigation across `Menu`, `Dialog`, `AlertDialog`, `Drawer`, `Select`, and `Toast`. Do not re-implement those mechanics in wrappers.
-- Compose class names with `cn` from `packages/web/src/lib/cn.ts`. The app does not use Tailwind, so do not add `tailwind-merge`.
-- Write to the clipboard only through `packages/web/src/lib/clipboard.ts`. It tries `navigator.clipboard.writeText` first and falls back to `execCommand("copy")` in denied or non-secure contexts.
+- Compose class names with `cn` from `@/lib` (`packages/web/src/lib/cn.ts`). The app does not use Tailwind, so do not add `tailwind-merge`.
+- Write to the clipboard only through `Clipboard` from `@/lib` (`packages/web/src/lib/clipboard.ts`). It tries `navigator.clipboard.writeText` first and falls back to `execCommand("copy")` in denied or non-secure contexts.
 - **Optional props**: A prop a parent forwards unchanged declares `| undefined` (`onOpenLink?: ((href: string) => void) | undefined`) so the parent passes the value directly. A prop with a destructuring default may omit `| undefined`. Do not spread a prop conditionally to satisfy `exactOptionalPropertyTypes`; an absent key stays meaningful for wire patches and option objects.
 
 ## Primitives and Layout

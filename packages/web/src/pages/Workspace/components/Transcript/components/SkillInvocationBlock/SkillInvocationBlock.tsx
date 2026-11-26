@@ -2,9 +2,9 @@ import { Sparkles } from "lucide-react";
 import type { ReactElement } from "react";
 
 import { Markdown } from "@components";
-import type { TranscriptSkillItem } from "@/stores/session/transcript";
+import type { TranscriptSkillItem } from "@/stores/session";
 
-import { CollapsibleBlock } from "../CollapsibleBlock/CollapsibleBlock";
+import { CollapsibleBlock } from "../CollapsibleBlock";
 import styles from "./SkillInvocationBlock.module.css";
 
 /** Props of {@link SkillInvocationBlock}. */

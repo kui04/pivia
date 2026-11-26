@@ -15,8 +15,7 @@ import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { IndexedDbAppCache } from "@/lib/cache";
-import { createApiClient, type FetchLike } from "@/lib/transport/http";
-import type { WebSocketLike } from "@/lib/transport/websocket";
+import { createApiClient, type FetchLike, type WebSocketLike } from "@/lib/transport";
 
 import { createAppStores } from "./index";
 

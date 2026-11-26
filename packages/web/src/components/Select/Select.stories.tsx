@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, screen, userEvent, waitFor, within } from "storybook/test";
 
-import { Field } from "../Field/Field";
+import { Field } from "../Field";
 
 import { Select } from "./Select";
 

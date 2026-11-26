@@ -21,8 +21,8 @@ import { useEffect, useRef, useState, type ReactElement } from "react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { expect, userEvent, waitFor, within } from "storybook/test";
 
-import type { WebSocketConstructor, WebSocketLike } from "@/lib/transport/websocket";
-import { createSessionStore } from "@/stores/session/store";
+import type { WebSocketConstructor, WebSocketLike } from "@/lib/transport";
+import { createSessionStore } from "@/stores/session";
 
 import { WorkspacePage } from "./WorkspacePage";
 import styles from "./WorkspacePage.stories.module.css";

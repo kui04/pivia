@@ -3,7 +3,7 @@ import { create } from "zustand";
 
 import type { ClearableCache } from "@/lib/cache";
 import { Log } from "@/lib";
-import { ApiClientError } from "@/lib/transport/http";
+import { ApiClientError } from "@/lib/transport";
 
 /** Authentication states of the single host. */
 export type AuthPhase = "checking" | "unauthenticated" | "authenticated";

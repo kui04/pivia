@@ -1,8 +1,8 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, userEvent, within } from "storybook/test";
 
-import { Field } from "../Field/Field";
-import { Input } from "../Input/Input";
+import { Field } from "../Field";
+import { Input } from "../Input";
 
 import { Fieldset } from "./Fieldset";
 

@@ -2,10 +2,10 @@ import { Puzzle } from "lucide-react";
 import type { ReactElement } from "react";
 
 import { Markdown } from "@components";
-import type { TranscriptCustomItem } from "@/stores/session/transcript";
+import type { TranscriptCustomItem } from "@/stores/session";
 
-import { CollapsibleBlock } from "../CollapsibleBlock/CollapsibleBlock";
-import { ImageAttachments } from "../ImageAttachments/ImageAttachments";
+import { CollapsibleBlock } from "../CollapsibleBlock";
+import { ImageAttachments } from "../ImageAttachments";
 import styles from "./CustomMessageBlock.module.css";
 
 /** Props of {@link CustomMessageBlock}. */

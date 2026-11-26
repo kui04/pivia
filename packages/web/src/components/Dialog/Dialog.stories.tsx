@@ -4,11 +4,11 @@ import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { expect, fn, screen, userEvent, waitFor, within } from "storybook/test";
 
-import { Field } from "../Field/Field";
-import { Form } from "../Form/Form";
-import { IconButton } from "../IconButton/IconButton";
-import { Input } from "../Input/Input";
-import { Select } from "../Select/Select";
+import { Field } from "../Field";
+import { Form } from "../Form";
+import { IconButton } from "../IconButton";
+import { Input } from "../Input";
+import { Select } from "../Select";
 
 import { Dialog, DialogActions, DialogClose, DialogDescription, DialogHeader, DialogTitle } from "./Dialog";
 import styles from "./Dialog.stories.module.css";

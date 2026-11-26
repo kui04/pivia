@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, spyOn, userEvent, waitFor, within } from "storybook/test";
 
 import { cn } from "@/lib";
-import type { TranscriptToolCallStep } from "@/stores/session/transcript";
+import type { TranscriptToolCallStep } from "@/stores/session";
 import { requireElement } from "@/storybook/dom";
 import storyFrame from "@/storybook/storyFrame.module.css";
 

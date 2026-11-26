@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, within } from "storybook/test";
 
-import type { TranscriptSkillItem } from "@/stores/session/transcript";
+import type { TranscriptSkillItem } from "@/stores/session";
 import storyFrame from "@/storybook/storyFrame.module.css";
 
 import { SkillInvocationBlock } from "./SkillInvocationBlock";

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import type { SessionLiveActivity } from "@/stores/session/store";
+import type { SessionLiveActivity } from "@/stores/session";
 
 /**
  * Visible label of the working state.

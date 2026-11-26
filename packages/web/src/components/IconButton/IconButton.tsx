@@ -4,7 +4,7 @@ import type { ComponentProps, ReactNode } from "react";
 
 import { cn } from "@/lib";
 
-import { Icon, type IconSize } from "../Icon/Icon";
+import { Icon, type IconSize } from "../Icon";
 import styles from "./IconButton.module.css";
 
 const radiusClasses = {

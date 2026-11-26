@@ -3,12 +3,15 @@ import { useMemo, type ReactElement } from "react";
 
 import { Button, LoadingIndicator } from "@components";
 import { useSessionStore as defaultSessionStore } from "@/stores";
-import { projectSessionTranscript } from "@/stores/session/projection";
-import type { SessionActivityNotice, SessionLiveActivity } from "@/stores/session/store";
-import { buildTranscript, type TranscriptItem } from "@/stores/session/transcript";
+import {
+    buildTranscript,
+    projectSessionTranscript,
+    type SessionActivityNotice,
+    type SessionLiveActivity,
+    type TranscriptItem,
+} from "@/stores/session";
 
-import { collectQueuedEntries, type QueuedEntry } from "./components/Transcript/components";
-import { Transcript } from "./components/Transcript/Transcript";
+import { collectQueuedEntries, Transcript, type QueuedEntry } from "./components/Transcript";
 import { useWorkspaceSession } from "./useWorkspaceSession";
 import { selectWorkspaceView, type WorkspaceView } from "./workspaceView";
 import styles from "./WorkspacePage.module.css";

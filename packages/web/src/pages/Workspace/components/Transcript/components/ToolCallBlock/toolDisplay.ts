@@ -12,7 +12,7 @@ import {
     type LucideIcon,
 } from "lucide-react";
 
-import type { TranscriptToolKind } from "@/stores/session/transcript";
+import type { TranscriptToolKind } from "@/stores/session";
 
 type ToolDisplay = {
     /** Display label; omitted for generic tools, which show the SDK tool name. */

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { expect, screen, userEvent, waitFor, within } from "storybook/test";
 
-import { IconButton } from "../IconButton/IconButton";
+import { IconButton } from "../IconButton";
 import { imageAlt, imageCaption, imageSrc } from "../Image/imageFixture";
 
 import { Markdown } from "./Markdown";

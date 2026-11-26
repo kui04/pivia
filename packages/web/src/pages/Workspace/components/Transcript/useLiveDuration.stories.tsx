@@ -3,7 +3,7 @@ import { useState, type ReactElement } from "react";
 import { expect, userEvent, waitFor, within } from "storybook/test";
 
 import { Button } from "@components";
-import type { TranscriptTiming } from "@/stores/session/transcript";
+import type { TranscriptTiming } from "@/stores/session";
 
 import { useLiveDuration } from "./useLiveDuration";
 import styles from "./useLiveDuration.stories.module.css";

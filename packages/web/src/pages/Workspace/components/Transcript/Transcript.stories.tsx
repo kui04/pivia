@@ -3,11 +3,11 @@ import { useState } from "react";
 import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 
 import { Button } from "@components";
-import type { TranscriptItem, TranscriptTurnItem } from "@/stores/session/transcript";
+import type { TranscriptItem, TranscriptTurnItem } from "@/stores/session";
 import { requireElement, requireViewport } from "@/storybook/dom";
 
 import { Transcript } from "./Transcript";
-import { collectQueuedEntries } from "./components/TranscriptQueue/queue";
+import { collectQueuedEntries } from "./components";
 import styles from "./Transcript.stories.module.css";
 
 function hasMaskFade(viewport: HTMLElement): boolean {

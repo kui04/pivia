@@ -4,7 +4,7 @@ import type { ComponentProps, ReactNode } from "react";
 
 import { cn } from "@/lib";
 
-import { Icon } from "../Icon/Icon";
+import { Icon } from "../Icon";
 import styles from "./Toast.module.css";
 
 type BaseProviderProps = ComponentProps<typeof BaseToast.Provider>;

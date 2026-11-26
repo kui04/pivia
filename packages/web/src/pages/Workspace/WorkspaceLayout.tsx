@@ -6,19 +6,24 @@ import { Drawer } from "@components";
 import { useMediaQuery, useNow } from "@/hooks";
 import { Clipboard, Log } from "@/lib";
 import { showError, showWarning } from "@/lib/toast";
-import { ApiClientError, apiClient as defaultApiClient, type ApiClient } from "@/lib/transport/http";
-import type { WebSocketConstructor } from "@/lib/transport/websocket";
+import {
+    ApiClientError,
+    apiClient as defaultApiClient,
+    type ApiClient,
+    type WebSocketConstructor,
+} from "@/lib/transport";
 import { useAuthStore as defaultAuthStore, useWorkspaceStore as defaultWorkspaceStore } from "@/stores";
-import { buildWorkspaceModel, collectKnownCwds, selectedSession } from "@/stores/workspace/model";
+import { buildWorkspaceModel, collectKnownCwds, selectedSession } from "@/stores/workspace";
 
 import {
     CreateSessionDialog,
+    SettingsDialog,
+    Sidebar,
+    Topbar,
     type CreateSessionResult,
     type CreateSessionSubmitOptions,
-} from "./components/CreateSessionDialog/CreateSessionDialog";
-import { SettingsDialog, type SettingsAuthAction } from "./components/SettingsDialog/SettingsDialog";
-import { Sidebar } from "./components/Sidebar/Sidebar";
-import { Topbar } from "./components/Topbar/Topbar";
+    type SettingsAuthAction,
+} from "./components";
 import { useWorkspaceSync } from "./useWorkspaceSync";
 import styles from "./WorkspaceLayout.module.css";
 

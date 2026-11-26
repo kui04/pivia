@@ -5,7 +5,7 @@ import { memo, useEffect, useRef, useState, type PointerEvent, type ReactElement
 import { IconButton, Menu, MenuItem } from "@components";
 import { useMediaQuery } from "@/hooks";
 import { Formatter } from "@/lib";
-import { sessionRowStatus, type SessionRow as SessionRowModel } from "@/stores/workspace/model";
+import { sessionRowStatus, type SessionRow as SessionRowModel } from "@/stores/workspace";
 
 import styles from "./SessionRow.module.css";
 

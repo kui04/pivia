@@ -10,11 +10,15 @@ import {
     SyncStreamClient,
 } from "@/lib/sync";
 import { showError } from "@/lib/toast";
-import { apiClient as defaultApiClient, type ApiClient } from "@/lib/transport/http";
-import type { WebSocketConstructor } from "@/lib/transport/websocket";
-import { connectWorkspaceSocket, type WorkspaceSocket } from "@/lib/transport/workspace-socket";
+import {
+    apiClient as defaultApiClient,
+    connectWorkspaceSocket,
+    type ApiClient,
+    type WebSocketConstructor,
+    type WorkspaceSocket,
+} from "@/lib/transport";
 import { useAuthStore as defaultAuthStore, useWorkspaceStore as defaultWorkspaceStore } from "@/stores";
-import { createCatalogSyncReducer, type CatalogSyncState } from "@/stores/workspace/model";
+import { createCatalogSyncReducer, type CatalogSyncState } from "@/stores/workspace";
 
 export { DEFAULT_AUTH_PROBE_THRESHOLD, DEFAULT_RECONNECT_DELAYS_MS };
 

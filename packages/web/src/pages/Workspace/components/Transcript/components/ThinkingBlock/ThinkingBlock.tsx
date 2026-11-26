@@ -2,9 +2,9 @@ import { Brain } from "lucide-react";
 import type { ReactElement } from "react";
 
 import { Markdown } from "@components";
-import type { TranscriptThinkingStep } from "@/stores/session/transcript";
+import type { TranscriptThinkingStep } from "@/stores/session";
 
-import { CollapsibleBlock } from "../CollapsibleBlock/CollapsibleBlock";
+import { CollapsibleBlock } from "../CollapsibleBlock";
 import styles from "./ThinkingBlock.module.css";
 
 /** Props of {@link ThinkingBlock}. */

@@ -1,3 +1,5 @@
+// The folder barrel also exports ToastProvider, whose CSS import would break the Node unit tests
+// that import this module. Keep the manager import on the JS-only entry.
 import { createToastManager } from "@/components/Toast/useToast";
 
 /**

@@ -21,10 +21,10 @@ import remarkMath from "remark-math";
 
 import { cn } from "@/lib";
 
-import { CodeBlock } from "../CodeBlock/CodeBlock";
-import { Image } from "../Image/Image";
-import { ImageViewer } from "../ImageViewer/ImageViewer";
-import { ScrollArea } from "../ScrollArea/ScrollArea";
+import { CodeBlock } from "../CodeBlock";
+import { Image } from "../Image";
+import { ImageViewer } from "../ImageViewer";
+import { ScrollArea } from "../ScrollArea";
 import { remarkCurrency } from "./remark-currency";
 import styles from "./Markdown.module.css";
 

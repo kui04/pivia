@@ -65,8 +65,8 @@ const storageBacking = vi.hoisted(() => {
     return entries;
 });
 
-import type { WebSocketLike } from "@/lib/transport/websocket";
-import { createWorkspaceStore, type WorkspaceCatalogCache } from "@/stores/workspace/store";
+import type { WebSocketLike } from "@/lib/transport";
+import { createWorkspaceStore, type WorkspaceCatalogCache } from "@/stores/workspace";
 
 import { createWorkspaceSyncController } from "./useWorkspaceSync";
 

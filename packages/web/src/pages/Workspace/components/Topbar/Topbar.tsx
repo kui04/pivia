@@ -3,7 +3,7 @@ import { Copy, EllipsisVertical, PanelLeft, X } from "lucide-react";
 import type { ReactElement } from "react";
 
 import { IconButton, Menu, MenuItem } from "@components";
-import type { SelectedSession } from "@/stores/workspace/model";
+import type { SelectedSession } from "@/stores/workspace";
 
 import styles from "./Topbar.module.css";
 

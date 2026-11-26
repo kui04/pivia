@@ -16,14 +16,15 @@ import { create } from "zustand";
 import type { SessionCache } from "@/lib/cache";
 import { Log } from "@/lib";
 import { createReconnectController, type ReconnectController, SyncStreamClient } from "@/lib/sync";
-import { ApiClientError, type ApiClient } from "@/lib/transport/http";
 import {
+    ApiClientError,
     SessionSocket,
     SessionSocketClosedError,
+    type ApiClient,
     type SessionRpcResponseMessage,
     type SessionSocketClose,
-} from "@/lib/transport/session-socket";
-import type { WebSocketConstructor } from "@/lib/transport/websocket";
+    type WebSocketConstructor,
+} from "@/lib/transport";
 
 import {
     applyHydratedEntries,

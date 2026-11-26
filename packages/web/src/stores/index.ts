@@ -1,10 +1,9 @@
 import { appCache, type AppCache } from "@/lib/cache";
-import { apiClient as defaultApiClient, type ApiClient } from "@/lib/transport/http";
-import type { WebSocketConstructor } from "@/lib/transport/websocket";
+import { apiClient as defaultApiClient, type ApiClient, type WebSocketConstructor } from "@/lib/transport";
 
-import { createAuthStore } from "./auth/store";
-import { createSessionStore } from "./session/store";
-import { createWorkspaceStore } from "./workspace/store";
+import { createAuthStore } from "./auth";
+import { createSessionStore } from "./session";
+import { createWorkspaceStore } from "./workspace";
 
 /** Dependencies required to compose and wire the application stores. */
 export interface AppStoresOptions {

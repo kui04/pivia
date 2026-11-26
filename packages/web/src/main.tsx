@@ -7,7 +7,7 @@ import "@/styles/token.css";
 import "@/styles/reset.css";
 import "@/styles/global.css";
 
-import { ToastProvider } from "@/components/Toast/Toast";
+import { ToastProvider } from "@components/Toast";
 import { Log } from "@/lib";
 import { toastManager } from "@/lib/toast";
 import { router } from "./router";

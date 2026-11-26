@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import type { ReactNode } from "react";
 import { expect, fn, screen, userEvent, waitFor, within } from "storybook/test";
 
-import { IconButton } from "../IconButton/IconButton";
+import { IconButton } from "../IconButton";
 
 import { AlertDialog } from "./AlertDialog";
 

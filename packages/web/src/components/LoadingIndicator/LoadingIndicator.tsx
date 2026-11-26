@@ -3,7 +3,7 @@ import type { ComponentProps } from "react";
 
 import { cn } from "@/lib";
 
-import { Icon, type IconSize } from "../Icon/Icon";
+import { Icon, type IconSize } from "../Icon";
 import styles from "./LoadingIndicator.module.css";
 
 type BaseProgressRootProps = Omit<

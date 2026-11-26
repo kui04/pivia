@@ -1,9 +1,9 @@
 import type { ReactElement } from "react";
 
 import { cn } from "@/lib";
-import type { TranscriptUserItem } from "@/stores/session/transcript";
+import type { TranscriptUserItem } from "@/stores/session";
 
-import { ImageAttachments } from "../ImageAttachments/ImageAttachments";
+import { ImageAttachments } from "../ImageAttachments";
 import bubbleStyles from "./Bubble.module.css";
 import styles from "./UserMessage.module.css";
 

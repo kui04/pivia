@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { expect, spyOn, userEvent, waitFor, within } from "storybook/test";
 
-import { IconButton } from "../IconButton/IconButton";
+import { IconButton } from "../IconButton";
 
 import { CodeBlock } from "./CodeBlock";
 

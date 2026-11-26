@@ -11,15 +11,13 @@ import {
     type TranscriptToolCallStep,
     type TranscriptToolPreview,
     type TranscriptToolWarning,
-} from "@/stores/session/transcript";
+} from "@/stores/session";
 
 import { useAutoScroll } from "../../useAutoScroll";
 import { useLiveDuration } from "../../useLiveDuration";
-import { Disclosure } from "../Disclosure/Disclosure";
-import { useDisclosure } from "../Disclosure/useDisclosure";
-import { Notice } from "../Notice/Notice";
-import { OutputScroller } from "../OutputCard/OutputScroller";
-import { OutputToolbar } from "../OutputCard/OutputToolbar";
+import { Disclosure, useDisclosure } from "../Disclosure";
+import { Notice } from "../Notice";
+import { OutputScroller, OutputToolbar } from "../OutputCard";
 import styles from "./ToolCallBlock.module.css";
 import { toolDisplay } from "./toolDisplay";
 

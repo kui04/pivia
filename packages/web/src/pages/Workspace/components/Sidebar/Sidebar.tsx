@@ -4,10 +4,10 @@ import { useId, useRef, useState, type ReactElement } from "react";
 
 import { Button, Icon, IconButton, Input, ScrollArea, VisuallyHidden } from "@components";
 import { cn } from "@/lib";
-import type { CatalogSyncPhase, WorkspaceModel } from "@/stores/workspace/model";
+import type { CatalogSyncPhase, WorkspaceModel } from "@/stores/workspace";
 
-import { FolderSection } from "../FolderSection/FolderSection";
-import { SessionRow } from "../SessionRow/SessionRow";
+import { FolderSection } from "../FolderSection";
+import { SessionRow } from "../SessionRow";
 import styles from "./Sidebar.module.css";
 
 export interface SidebarProps {

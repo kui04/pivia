@@ -3,9 +3,9 @@ import type { ReactElement } from "react";
 
 import { Markdown } from "@components";
 import { cn } from "@/lib";
-import { formatSystemNoteMeta, type TranscriptNoteItem } from "@/stores/session/transcript";
+import { formatSystemNoteMeta, type TranscriptNoteItem } from "@/stores/session";
 
-import { CollapsibleBlock } from "../CollapsibleBlock/CollapsibleBlock";
+import { CollapsibleBlock } from "../CollapsibleBlock";
 import styles from "./SystemNote.module.css";
 
 /** Props of {@link SystemNote}. */

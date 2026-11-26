@@ -4,8 +4,7 @@ import { useCallback, useEffect, useRef, type FocusEvent, type ReactElement } fr
 
 import { Button, Icon, ScrollArea } from "@components";
 import { cn } from "@/lib";
-import type { SessionActivityNotice, SessionLiveActivity } from "@/stores/session/store";
-import type { TranscriptItem } from "@/stores/session/transcript";
+import type { SessionActivityNotice, SessionLiveActivity, TranscriptItem } from "@/stores/session";
 
 import {
     BashExecutionBlock,
@@ -18,7 +17,7 @@ import {
     WorkingIndicator,
     type QueuedEntry,
 } from "./components";
-import { Notice } from "./components/Notice/Notice";
+import { Notice } from "./components/Notice";
 import styles from "./Transcript.module.css";
 import { useActivityLabel } from "./useActivityLabel";
 import { useAutoScroll } from "./useAutoScroll";

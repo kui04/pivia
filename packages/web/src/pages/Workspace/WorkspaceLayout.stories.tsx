@@ -12,12 +12,12 @@ import { useState, type ReactElement } from "react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { expect, fn, waitFor, within } from "storybook/test";
 
-import { ToastProvider } from "@/components/Toast/Toast";
+import { ToastProvider } from "@components/Toast";
 import { toastManager } from "@/lib/toast";
-import type { WebSocketConstructor, WebSocketLike } from "@/lib/transport/websocket";
-import { createAuthStore, type AuthClient } from "@/stores/auth/store";
-import { createSessionStore } from "@/stores/session/store";
-import { createWorkspaceStore, type WorkspaceCatalogCache } from "@/stores/workspace/store";
+import type { WebSocketConstructor, WebSocketLike } from "@/lib/transport";
+import { createAuthStore, type AuthClient } from "@/stores/auth";
+import { createSessionStore } from "@/stores/session";
+import { createWorkspaceStore, type WorkspaceCatalogCache } from "@/stores/workspace";
 
 import { WorkspaceLayout, type WorkspaceApiClient } from "./WorkspaceLayout";
 import { WorkspacePage } from "./WorkspacePage";

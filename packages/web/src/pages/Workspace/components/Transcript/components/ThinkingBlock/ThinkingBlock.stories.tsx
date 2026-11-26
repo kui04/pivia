@@ -3,7 +3,7 @@ import { useState, type ReactElement } from "react";
 import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 
 import { Button } from "@components";
-import type { TranscriptThinkingStep } from "@/stores/session/transcript";
+import type { TranscriptThinkingStep } from "@/stores/session";
 import { requireElement } from "@/storybook/dom";
 import storyFrame from "@/storybook/storyFrame.module.css";
 

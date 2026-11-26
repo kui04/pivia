@@ -1,11 +1,11 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 
-import { Button } from "../Button/Button";
-import { Field } from "../Field/Field";
-import { Fieldset } from "../Fieldset/Fieldset";
-import { Input } from "../Input/Input";
-import { Select } from "../Select/Select";
+import { Button } from "../Button";
+import { Field } from "../Field";
+import { Fieldset } from "../Fieldset";
+import { Input } from "../Input";
+import { Select } from "../Select";
 
 import { Form } from "./Form";
 import styles from "./Form.stories.module.css";

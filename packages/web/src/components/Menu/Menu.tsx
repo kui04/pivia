@@ -3,7 +3,7 @@ import type { ComponentProps, ReactElement, ReactNode } from "react";
 
 import { cn } from "@/lib";
 
-import { Icon } from "../Icon/Icon";
+import { Icon } from "../Icon";
 import styles from "./Menu.module.css";
 
 type PositionerProps = ComponentProps<typeof BaseMenu.Positioner>;

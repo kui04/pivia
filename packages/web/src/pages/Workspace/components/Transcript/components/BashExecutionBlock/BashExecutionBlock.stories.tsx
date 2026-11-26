@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, spyOn, userEvent, waitFor, within } from "storybook/test";
 
-import type { TranscriptBashItem } from "@/stores/session/transcript";
+import type { TranscriptBashItem } from "@/stores/session";
 import storyFrame from "@/storybook/storyFrame.module.css";
 
 import { BashExecutionBlock } from "./BashExecutionBlock";

@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 
-import type { TranscriptNoteItem } from "@/stores/session/transcript";
+import type { TranscriptNoteItem } from "@/stores/session";
 import storyFrame from "@/storybook/storyFrame.module.css";
 
 import { SystemNote } from "./SystemNote";

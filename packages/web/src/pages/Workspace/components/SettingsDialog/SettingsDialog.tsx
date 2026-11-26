@@ -2,7 +2,7 @@ import { assertNever } from "@pivia/protocol";
 import type { ReactElement } from "react";
 
 import { Button, Dialog, DialogActions, DialogDescription, DialogHeader, DialogTitle } from "@components";
-import type { CatalogSyncPhase } from "@/stores/workspace/model";
+import type { CatalogSyncPhase } from "@/stores/workspace";
 
 import styles from "./SettingsDialog.module.css";
 

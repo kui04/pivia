@@ -1,4 +1,4 @@
-import type { EntriesSyncState, SessionConnectionStatus } from "@/stores/session/store";
+import type { EntriesSyncState, SessionConnectionStatus } from "@/stores/session";
 
 /**
  * What the routed chat column shows in one render.

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import type { TranscriptTiming } from "@/stores/session/transcript";
+import type { TranscriptTiming } from "@/stores/session";
 
 /**
  * Elapsed time between two wall-clock samples, clamped so a clock step never shows negative time.

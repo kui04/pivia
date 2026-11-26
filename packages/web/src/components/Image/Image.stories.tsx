@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useState } from "react";
 import { expect, screen, userEvent, waitFor, within } from "storybook/test";
 
-import { ImageViewer } from "../ImageViewer/ImageViewer";
+import { ImageViewer } from "../ImageViewer";
 
 import { imageAlt, imageCaption, imageSrc } from "./imageFixture";
 import { Image } from "./Image";

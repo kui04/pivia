@@ -5,8 +5,8 @@ import { TransformComponent, TransformWrapper, useControls, useTransformComponen
 
 import { cn } from "@/lib";
 
-import { Icon } from "../Icon/Icon";
-import { IconButton } from "../IconButton/IconButton";
+import { Icon } from "../Icon";
+import { IconButton } from "../IconButton";
 import visuallyHidden from "../VisuallyHidden/VisuallyHidden.module.css";
 import styles from "./ImageViewer.module.css";
 

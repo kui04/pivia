@@ -2,7 +2,7 @@ import { parseSessionId, type SessionId } from "@pivia/protocol";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, within } from "storybook/test";
 
-import type { FolderSection as FolderSectionModel, SessionRow as SessionRowModel } from "@/stores/workspace/model";
+import type { FolderSection as FolderSectionModel, SessionRow as SessionRowModel } from "@/stores/workspace";
 
 import { FolderSection } from "./FolderSection";
 import styles from "./FolderSection.stories.module.css";

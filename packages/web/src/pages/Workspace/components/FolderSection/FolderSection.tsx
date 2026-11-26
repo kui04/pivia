@@ -3,9 +3,9 @@ import { FolderClosed, FolderOpen } from "lucide-react";
 import type { ReactElement } from "react";
 
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger, Icon, VisuallyHidden } from "@components";
-import type { FolderSection as FolderSectionModel } from "@/stores/workspace/model";
+import type { FolderSection as FolderSectionModel } from "@/stores/workspace";
 
-import { SessionRow } from "../SessionRow/SessionRow";
+import { SessionRow } from "../SessionRow";
 import styles from "./FolderSection.module.css";
 
 export interface FolderSectionProps {
