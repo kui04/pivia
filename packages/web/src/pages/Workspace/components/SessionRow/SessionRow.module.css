@@ -152,10 +152,14 @@
         /*
          * A running session answers "what is it doing" with a dot instead of a word, so the
          * trailing slot stays narrow and its meaning stays in the accessible name.
+         *
+         * The menu button holds a 16px glyph, while the dot is 8px. The 4px end margin widens the
+         * slot just enough to centre the dot on that glyph instead of its end edge.
          */
         .indicator {
             inline-size: var(--space-8);
             block-size: var(--space-8);
+            margin-inline-end: var(--space-4);
             border: var(--border-width-strong) solid transparent;
             border-radius: var(--shape-corner-full);
             background-color: var(--color-primary);

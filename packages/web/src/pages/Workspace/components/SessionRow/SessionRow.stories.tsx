@@ -109,9 +109,20 @@ export const RuntimeStates: Story = {
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
 
-        await expect(canvas.getByRole("img", { name: "Streaming" })).toBeVisible();
-        await expect(canvas.getByRole("img", { name: "Attached" })).toBeVisible();
-        await expect(canvas.getByRole("img", { name: "Closing" })).toBeVisible();
+        for (const label of ["Streaming", "Attached", "Closing"]) {
+            const dot = canvas.getByRole("img", { name: label });
+            await expect(dot).toBeVisible();
+            const row = dot.closest("li");
+            if (row === null) {
+                throw new Error(`Missing row for the ${label} indicator`);
+            }
+            const menu = within(row).getByRole("button", { name: "Session actions" });
+            const dotBox = dot.getBoundingClientRect();
+            const menuBox = menu.getBoundingClientRect();
+            const dotCenter = dotBox.left + dotBox.width / 2;
+            const menuCenter = menuBox.left + menuBox.width / 2;
+            await expect(Math.abs(dotCenter - menuCenter)).toBeLessThan(1);
+        }
     },
 };
 
