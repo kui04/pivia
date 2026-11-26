@@ -383,7 +383,7 @@ export const NoSessionSelected: Story = {
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
         await expect(await canvas.findByRole("heading", { name: "No session selected" })).toBeVisible();
-        await expect(canvas.getByText("The message composer arrives in a later update.")).toBeVisible();
+        await expect(canvas.queryByRole("textbox", { name: "Message" })).not.toBeInTheDocument();
     },
 };
 
@@ -420,6 +420,7 @@ export const Transcript: Story = {
         await expect(canvas.getByRole("button", { name: "Worked for 4.0s" })).toBeVisible();
         await expect(canvas.getByText("The transcript view is connected to the session store.")).toBeVisible();
         await expect(canvas.getByRole("region", { name: "Transcript" })).toBeVisible();
+        await expect(canvas.getByRole("textbox", { name: "Message" })).toBeEnabled();
     },
 };
 

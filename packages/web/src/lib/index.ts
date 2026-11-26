@@ -9,4 +9,5 @@ export { stripAnsi } from "./ansi";
 export { Clipboard } from "./clipboard";
 export { cn } from "./cn";
 export { Formatter } from "./format";
+export { Fuzzy, type FuzzyMatch } from "./fuzzy";
 export { createLog, Log, type LogLevel, type LogOptions } from "./log";

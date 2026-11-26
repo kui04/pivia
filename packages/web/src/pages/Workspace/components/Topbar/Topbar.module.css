@@ -16,7 +16,7 @@
     gap: var(--space-8);
     /* Keep controls in the top 40px while reaching 100% surface at the 32px stage edge before fading over 16px. */
     min-block-size: calc(var(--space-40) + var(--space-8));
-    padding-inline: var(--space-8) var(--space-4);
+    padding-inline: var(--space-16);
     padding-block-end: var(--space-8);
     margin-block-end: calc(-1 * var(--space-16));
     background-image: linear-gradient(

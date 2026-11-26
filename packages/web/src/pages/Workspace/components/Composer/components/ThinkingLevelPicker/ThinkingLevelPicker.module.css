@@ -1,0 +1,145 @@
+/*
+ * Thinking level picker pill trigger and upward popover.
+ *
+ * The nesting this file styles:
+ *
+ *   .triggerLabel        single-line truncated level label inside PickerPill
+ *   .listbox             role="listbox" level list inside popover
+ *   └─ .option           role="option" thinking level row
+ *       ├─ &[data-lit="true"]
+ *       ├─ .optionLabel
+ *       └─ .checkIcon
+ *   .skeleton            loading placeholder rows
+ *   └─ .skeletonRow
+ *   .statusBox           error message and retry button
+ *   └─ .statusText
+ *
+ * Classes passed to child components stay top-level:
+ *
+ *   .trigger             PickerPill width clamp
+ *   .popup               PopoverContent sizing and flat panel surface
+ *   .scroll              ScrollArea root bounded to popup height
+ *   .viewport            ScrollArea viewport with scroll containment
+ *   .content             ScrollArea content clamped to viewport width
+ */
+.trigger {
+    flex: none;
+    max-inline-size: 8.5rem;
+}
+
+.triggerLabel {
+    min-inline-size: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.popup {
+    display: flex;
+    flex-direction: column;
+    inline-size: 11.5rem;
+    max-block-size: min(15rem, var(--available-height, 15rem));
+    padding: var(--space-8);
+    overflow: hidden;
+    border-radius: var(--shape-corner-large);
+    background-color: var(--color-surface-container);
+    box-shadow: var(--elevation-0);
+}
+
+.scroll {
+    max-block-size: min(14rem, var(--available-height, 14rem));
+}
+
+.viewport {
+    max-block-size: min(14rem, var(--available-height, 14rem));
+    overflow-x: hidden;
+    overscroll-behavior: contain;
+}
+
+.content {
+    display: flex;
+    flex-direction: column;
+    inline-size: 100%;
+    min-inline-size: 0 !important;
+}
+
+.listbox {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    inline-size: 100%;
+    min-inline-size: 0;
+    outline: none;
+
+    .option {
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
+        gap: var(--space-8);
+        inline-size: 100%;
+        min-inline-size: 0;
+        min-block-size: calc(var(--space-32) + var(--space-4));
+        padding: 0 var(--space-8);
+        overflow: hidden;
+        border: var(--border-width) solid transparent;
+        border-radius: var(--shape-corner-small);
+        color: var(--color-on-surface);
+        cursor: default;
+        user-select: none;
+        transition: background-color var(--motion-duration-effects-fast) var(--motion-easing-standard);
+
+        &[data-lit="true"] {
+            background-color: var(--state-hover);
+        }
+
+        .optionLabel {
+            flex: 1;
+            min-inline-size: 0;
+            overflow: hidden;
+            font-size: var(--type-body-medium-size);
+            line-height: var(--type-body-medium-line-height);
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .checkIcon {
+            flex: none;
+            color: var(--color-primary);
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            & {
+                transition: none;
+            }
+        }
+    }
+}
+
+.skeleton {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-6);
+    padding: var(--space-4);
+
+    .skeletonRow {
+        block-size: var(--space-24);
+        border-radius: var(--shape-corner-small);
+        background-color: var(--color-surface-container-highest);
+        opacity: 0.7;
+    }
+}
+
+.statusBox {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-8);
+    padding: var(--space-12) var(--space-8);
+    text-align: center;
+
+    .statusText {
+        color: var(--color-on-surface-variant);
+        font-size: var(--type-body-medium-size);
+        line-height: var(--type-body-medium-line-height);
+    }
+}

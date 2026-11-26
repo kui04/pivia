@@ -1,0 +1,194 @@
+/*
+ * Session message composer card with attachment strip, auto-fitting textarea, and footer controls.
+ *
+ * The nesting this file styles:
+ *
+ *   .card                   rounded flat card surface owning focus-within outline
+ *   ├─ .textarea            auto-sizing multi-line prompt input
+ *   ├─ .fileInput           visually hidden image file input
+ *   └─ .controls            footer row splitting pickers and actions
+ *       ├─ .pickers         model and thinking level pills
+ *       └─ .actions         attach, send/steer, and stop buttons
+ *
+ * Classes passed to child components stay top-level:
+ *
+ *   .inputScroll            ScrollArea root bounding the auto-sizing textarea
+ *   .inputViewport          ScrollArea viewport matching the capped textarea height
+ *   .attachButton           IconButton for picking image files
+ *   .sendButton             primary IconButton for send / steer
+ *   .stopButton             destructive IconButton for aborting streaming
+ */
+.card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    inline-size: 100%;
+    border: var(--border-width) solid var(--color-outline-variant);
+    border-radius: var(--shape-corner-large);
+    background-color: var(--color-surface-container-high);
+    box-shadow: var(--elevation-2);
+    transition:
+        border-color var(--motion-duration-effects-fast) var(--motion-easing-standard),
+        box-shadow var(--motion-duration-effects-fast) var(--motion-easing-standard);
+
+    &:focus-within {
+        border-color: var(--color-outline);
+    }
+
+    .textarea {
+        box-sizing: border-box;
+        display: block;
+        inline-size: 100%;
+        min-block-size: calc(var(--type-body-large-line-height) * 2 + var(--space-12));
+        padding: var(--space-12) var(--space-16) 0;
+        border: 0;
+        outline: none;
+        resize: none;
+        overflow: hidden;
+        background: transparent;
+        color: var(--color-on-surface);
+        font-family: var(--font-sans);
+        font-size: var(--type-body-large-size);
+        font-weight: var(--type-body-large-weight);
+        letter-spacing: var(--type-body-large-tracking);
+        line-height: var(--type-body-large-line-height);
+        field-sizing: content;
+
+        &::placeholder {
+            color: var(--color-on-surface-variant);
+            opacity: 1;
+        }
+
+        &:disabled {
+            color: var(--color-on-surface-variant);
+            cursor: not-allowed;
+        }
+
+        @supports not (field-sizing: content) {
+            & {
+                max-block-size: calc(var(--type-body-large-line-height) * 6 + var(--space-12));
+                overflow-y: auto;
+            }
+        }
+    }
+
+    .fileInput {
+        display: none;
+    }
+
+    .controls {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--space-8);
+        padding: var(--space-10) var(--space-12) var(--space-12);
+
+        .pickers {
+            display: flex;
+            flex: 1;
+            align-items: center;
+            gap: var(--space-8);
+            min-inline-size: 0;
+        }
+
+        .actions {
+            display: flex;
+            flex: none;
+            align-items: center;
+            gap: var(--space-8);
+        }
+    }
+
+    @media (forced-colors: active) {
+        & {
+            border-color: CanvasText;
+        }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        & {
+            transition: none;
+        }
+    }
+}
+
+.inputScroll,
+.inputViewport {
+    max-block-size: calc(var(--type-body-large-line-height) * 6 + var(--space-12));
+}
+
+.attachButton,
+.sendButton,
+.stopButton {
+    min-inline-size: calc(var(--space-32) + var(--space-2));
+    min-block-size: calc(var(--space-32) + var(--space-2));
+}
+
+.attachButton {
+    color: var(--color-on-surface-variant);
+}
+
+/*
+ * IconButton styles `.button:hover:not([data-disabled]):not([aria-pressed="true"])` at (0,4,0),
+ * `.button[data-popup-open]` at (0,3,0), and `.button[data-disabled]` at (0,2,0). Doubling `.sendButton`
+ * and `.stopButton` (`&&`) keeps each rule one class higher so hover, active press, and open tooltips
+ * never strip the primary or error fill.
+ */
+.sendButton {
+    && {
+        background-color: var(--color-primary);
+        color: var(--color-on-primary);
+    }
+
+    &&[data-popup-open]:not([aria-pressed="true"]) {
+        background-color: var(--color-primary);
+        color: var(--color-on-primary);
+    }
+
+    &&:active:not([data-disabled]):not([aria-pressed="true"]) {
+        background-color: var(--color-primary);
+        background-image: linear-gradient(var(--state-pressed), var(--state-pressed));
+        color: var(--color-on-primary);
+    }
+
+    @media (hover: hover) {
+        &&:hover:not([data-disabled]):not([aria-pressed="true"]) {
+            background-color: var(--color-primary);
+            background-image: linear-gradient(var(--state-hover), var(--state-hover));
+            color: var(--color-on-primary);
+        }
+    }
+
+    &&:disabled,
+    &&[data-disabled] {
+        background-color: var(--color-secondary-container);
+        background-image: none;
+        color: var(--color-on-surface-variant);
+    }
+}
+
+.stopButton {
+    && {
+        background-color: var(--color-error);
+        color: var(--color-on-error);
+    }
+
+    &&[data-popup-open]:not([aria-pressed="true"]) {
+        background-color: var(--color-error);
+        color: var(--color-on-error);
+    }
+
+    &&:active:not([data-disabled]):not([aria-pressed="true"]) {
+        background-color: var(--color-error);
+        background-image: linear-gradient(var(--state-pressed), var(--state-pressed));
+        color: var(--color-on-error);
+    }
+
+    @media (hover: hover) {
+        &&:hover:not([data-disabled]):not([aria-pressed="true"]) {
+            background-color: var(--color-error);
+            background-image: linear-gradient(var(--state-hover), var(--state-hover));
+            color: var(--color-on-error);
+        }
+    }
+}

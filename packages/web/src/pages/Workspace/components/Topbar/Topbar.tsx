@@ -1,8 +1,8 @@
 import type { SessionId } from "@pivia/protocol";
-import { Copy, EllipsisVertical, PanelLeft, X } from "lucide-react";
+import { Copy, EllipsisVertical, Minimize2, PanelLeft, Pencil, X } from "lucide-react";
 import type { ReactElement } from "react";
 
-import { IconButton, Menu, MenuItem } from "@components";
+import { IconButton, Menu, MenuItem, MenuSeparator } from "@components";
 import type { SelectedSession } from "@/stores/workspace";
 
 import styles from "./Topbar.module.css";
@@ -11,9 +11,13 @@ export interface TopbarProps {
     readonly session: SelectedSession | null;
     readonly sidebarOpen: boolean;
     readonly closing: boolean;
+    readonly compacting?: boolean | undefined;
+    readonly runtimeReady?: boolean | undefined;
     readonly onToggleSidebar: () => void;
     readonly onCopySessionId: (id: SessionId) => void;
     readonly onCloseSession: (id: SessionId) => void;
+    readonly onRenameSession?: ((session: SelectedSession) => void) | undefined;
+    readonly onCompactSession?: ((id: SessionId) => void) | undefined;
 }
 
 /**
@@ -26,10 +30,16 @@ export function Topbar({
     session,
     sidebarOpen,
     closing,
+    compacting = false,
+    runtimeReady = false,
     onToggleSidebar,
     onCopySessionId,
     onCloseSession,
+    onRenameSession,
+    onCompactSession,
 }: TopbarProps): ReactElement {
+    const hasRuntimeMenuItems = onRenameSession !== undefined || onCompactSession !== undefined;
+
     return (
         <header className={styles.bar}>
             <IconButton
@@ -53,6 +63,35 @@ export function Topbar({
                             </IconButton>
                         }
                     >
+                        {onRenameSession === undefined ? null : (
+                            <MenuItem
+                                icon={<Pencil />}
+                                disabled={!runtimeReady || closing || session.runtimeState === "closing"}
+                                onClick={() => {
+                                    onRenameSession(session);
+                                }}
+                            >
+                                Rename session
+                            </MenuItem>
+                        )}
+                        {onCompactSession === undefined ? null : (
+                            <MenuItem
+                                icon={<Minimize2 />}
+                                disabled={
+                                    !runtimeReady ||
+                                    compacting ||
+                                    closing ||
+                                    session.runtimeState === "compacting" ||
+                                    session.runtimeState === "closing"
+                                }
+                                onClick={() => {
+                                    onCompactSession(session.id);
+                                }}
+                            >
+                                {compacting ? "Compacting context..." : "Compact context"}
+                            </MenuItem>
+                        )}
+                        {hasRuntimeMenuItems ? <MenuSeparator /> : null}
                         <MenuItem
                             icon={<Copy />}
                             onClick={() => {

@@ -1,5 +1,6 @@
 import type { ReactElement } from "react";
 
+import { Button } from "@components";
 import { cn } from "@/lib";
 
 import bubbleStyles from "../UserMessage/Bubble.module.css";
@@ -10,6 +11,10 @@ import styles from "./TranscriptQueue.module.css";
 export type TranscriptQueueProps = {
     /** Visible queued entries in render order; the caller collects them with `collectQueuedEntries`. */
     readonly entries: readonly QueuedEntry[];
+    /** Clears all queued steering and follow-up messages when invoked. */
+    readonly onClearQueue?: (() => void) | undefined;
+    /** Disables the clear button while a `clear_queue` command is in flight. */
+    readonly clearing?: boolean | undefined;
     /** Optional class name on the outer list container. */
     readonly className?: string | undefined;
 };
@@ -48,7 +53,12 @@ function groupSections(entries: readonly QueuedEntry[]): readonly QueueSection[]
  * names the group, so pending entries stay distinguishable from committed turns without repeating
  * a caption under every message.
  */
-export function TranscriptQueue({ entries, className }: TranscriptQueueProps): ReactElement | null {
+export function TranscriptQueue({
+    entries,
+    onClearQueue,
+    clearing = false,
+    className,
+}: TranscriptQueueProps): ReactElement | null {
     if (entries.length === 0) {
         return null;
     }
@@ -69,6 +79,21 @@ export function TranscriptQueue({ entries, className }: TranscriptQueueProps): R
                     ))}
                 </ul>
             ))}
+            {onClearQueue === undefined ? null : (
+                <div className={styles.actions}>
+                    <Button
+                        type="button"
+                        variant="secondary"
+                        size="md"
+                        radius="full"
+                        disabled={clearing}
+                        className={styles.clearButton}
+                        onClick={onClearQueue}
+                    >
+                        {clearing ? "Clearing queue..." : "Clear queue"}
+                    </Button>
+                </div>
+            )}
         </div>
     );
 }

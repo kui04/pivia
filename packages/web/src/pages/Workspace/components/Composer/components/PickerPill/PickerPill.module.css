@@ -1,0 +1,73 @@
+/*
+ * Shared footer pill trigger for composer pickers.
+ *
+ * The markup this file styles (Base UI Button):
+ *
+ *   .pill                    tinted pill button without an outer border
+ *   ├─ &[aria-expanded]      stronger tint while its popover is open
+ *   ├─ &:focus-visible       primary inset ring
+ *   └─ &:disabled            muted inert appearance when the runtime is unavailable
+ */
+.pill {
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-6);
+    min-inline-size: 0;
+    max-inline-size: 100%;
+    min-block-size: calc(var(--space-32) + var(--space-2));
+    padding: var(--space-4) var(--space-12);
+    border: 0;
+    border-radius: var(--shape-corner-full);
+    background-color: var(--color-primary-container);
+    color: var(--color-on-primary-container);
+    font-family: var(--font-sans);
+    font-size: var(--type-label-large-size);
+    font-weight: var(--type-label-large-weight);
+    letter-spacing: var(--type-label-large-tracking);
+    line-height: var(--type-label-large-line-height);
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+    transition: background-color var(--motion-duration-effects-fast) var(--motion-easing-standard);
+
+    @media (hover: hover) {
+        &:hover:not(:disabled) {
+            background-color: color-mix(in srgb, var(--color-primary) 18%, transparent);
+        }
+    }
+
+    &[aria-expanded="true"] {
+        background-color: color-mix(in srgb, var(--color-primary) 22%, transparent);
+    }
+
+    &:focus-visible {
+        outline: var(--border-width-strong) solid var(--color-primary);
+        outline-offset: calc(-1 * var(--border-width-strong));
+    }
+
+    &:disabled {
+        background-color: var(--color-secondary-container);
+        color: var(--color-on-surface-variant);
+        cursor: not-allowed;
+    }
+
+    @media (pointer: coarse) {
+        & {
+            min-block-size: var(--space-40);
+        }
+    }
+
+    @media (forced-colors: active) {
+        & {
+            border: var(--border-width) solid ButtonText;
+        }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        & {
+            transition: none;
+        }
+    }
+}

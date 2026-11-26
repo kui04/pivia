@@ -12,11 +12,16 @@ import {
     type ApiClient,
     type WebSocketConstructor,
 } from "@/lib/transport";
-import { useAuthStore as defaultAuthStore, useWorkspaceStore as defaultWorkspaceStore } from "@/stores";
+import {
+    useAuthStore as defaultAuthStore,
+    useSessionStore as defaultSessionStore,
+    useWorkspaceStore as defaultWorkspaceStore,
+} from "@/stores";
 import { buildWorkspaceModel, collectKnownCwds, selectedSession } from "@/stores/workspace";
 
 import {
     CreateSessionDialog,
+    RenameSessionDialog,
     SettingsDialog,
     Sidebar,
     Topbar,
@@ -40,6 +45,7 @@ export type WorkspaceApiClient = Pick<
 export interface WorkspaceLayoutProps {
     readonly apiClient?: WorkspaceApiClient | undefined;
     readonly workspaceStore?: typeof defaultWorkspaceStore | undefined;
+    readonly sessionStore?: typeof defaultSessionStore | undefined;
     readonly authStore?: typeof defaultAuthStore | undefined;
     readonly WebSocket?: WebSocketConstructor | undefined;
     readonly minRefreshDurationMs?: number | undefined;
@@ -55,6 +61,7 @@ export interface WorkspaceLayoutProps {
 export function WorkspaceLayout(props: WorkspaceLayoutProps = {}): ReactElement {
     const client = props.apiClient ?? defaultApiClient;
     const workspaceStore = props.workspaceStore ?? defaultWorkspaceStore;
+    const sessionStore = props.sessionStore ?? defaultSessionStore;
     const authStore = props.authStore ?? defaultAuthStore;
 
     const { sessionId: rawSessionId } = useParams<{ sessionId?: string }>();
@@ -66,8 +73,16 @@ export function WorkspaceLayout(props: WorkspaceLayoutProps = {}): ReactElement 
     const [drawerOpen, setDrawerOpen] = useState(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [createOpen, setCreateOpen] = useState(false);
+    const [renameSessionId, setRenameSessionId] = useState<SessionId | null>(null);
+    const [renamePending, setRenamePending] = useState(false);
+    const [renameError, setRenameError] = useState<string | null>(null);
+    const [compactingIds, setCompactingIds] = useState<ReadonlySet<SessionId>>(() => new Set());
     const [signingOut, setSigningOut] = useState(false);
     const [closingIds, setClosingIds] = useState<ReadonlySet<SessionId>>(() => new Set());
+
+    const activeSessionId = sessionStore((state) => state.sessionId);
+    const activeSessionStatus = sessionStore((state) => state.status);
+    const activeSessionState = sessionStore((state) => state.state);
 
     const authRequired = authStore((state) => state.authRequired);
     const clearAuthError = authStore((state) => state.clearError);
@@ -218,6 +233,75 @@ export function WorkspaceLayout(props: WorkspaceLayoutProps = {}): ReactElement 
         [handleCloseSession],
     );
 
+    const activeRuntimeReady = current !== null && activeSessionId === current.id && activeSessionStatus === "open";
+
+    const handleCompactSession = useCallback(
+        (id: SessionId) => {
+            if (!activeRuntimeReady || activeSessionId !== id || compactingIds.has(id)) {
+                return;
+            }
+            setCompactingIds((prev) => new Set(prev).add(id));
+            void sessionStore
+                .getState()
+                .sendCommand({ type: "compact" })
+                .then((response) => {
+                    if (!response.success) {
+                        showError({
+                            id: `session-compact-${id}`,
+                            title: "Cannot compact session",
+                            description: response.error,
+                        });
+                    }
+                })
+                .catch((error: unknown) => {
+                    const message = error instanceof Error ? error.message : String(error);
+                    showError({
+                        id: `session-compact-${id}`,
+                        title: "Cannot compact session",
+                        description: message,
+                    });
+                })
+                .finally(() => {
+                    setCompactingIds((prev) => {
+                        const next = new Set(prev);
+                        next.delete(id);
+                        return next;
+                    });
+                });
+        },
+        [activeRuntimeReady, activeSessionId, compactingIds, sessionStore],
+    );
+
+    const handleRenameSubmit = useCallback(
+        async (nextName: string) => {
+            if (current === null || current.id !== renameSessionId || renamePending) {
+                return;
+            }
+            if (!activeRuntimeReady) {
+                setRenameError("Session is not connected.");
+                return;
+            }
+            setRenamePending(true);
+            setRenameError(null);
+            try {
+                const response = await sessionStore.getState().sendCommand({
+                    type: "set_session_name",
+                    name: nextName,
+                });
+                if (!response.success) {
+                    setRenameError(response.error);
+                    return;
+                }
+                setRenameSessionId(null);
+            } catch (error) {
+                setRenameError(error instanceof Error ? error.message : String(error));
+            } finally {
+                setRenamePending(false);
+            }
+        },
+        [activeRuntimeReady, current, renamePending, renameSessionId, sessionStore],
+    );
+
     const handleSignOut = useCallback(async () => {
         if (signingOut) {
             return;
@@ -303,6 +387,10 @@ export function WorkspaceLayout(props: WorkspaceLayoutProps = {}): ReactElement 
                     session={current}
                     sidebarOpen={narrow ? drawerOpen : sidebarOpen}
                     closing={current !== null && closingIds.has(current.id)}
+                    compacting={
+                        (current !== null && compactingIds.has(current.id)) || activeSessionState?.isCompacting === true
+                    }
+                    runtimeReady={activeRuntimeReady}
                     onToggleSidebar={() => {
                         if (narrow) {
                             setDrawerOpen((open) => !open);
@@ -312,6 +400,11 @@ export function WorkspaceLayout(props: WorkspaceLayoutProps = {}): ReactElement 
                     }}
                     onCopySessionId={handleCopySessionId}
                     onCloseSession={handleCloseSessionClick}
+                    onRenameSession={(target) => {
+                        setRenameError(null);
+                        setRenameSessionId(target.id);
+                    }}
+                    onCompactSession={handleCompactSession}
                 />
                 <Outlet />
             </div>
@@ -332,6 +425,18 @@ export function WorkspaceLayout(props: WorkspaceLayoutProps = {}): ReactElement 
                 narrow={narrow}
                 onListDirectories={handleListDirectories}
                 onCreate={handleCreateSession}
+            />
+            <RenameSessionDialog
+                open={renameSessionId !== null && current !== null && current.id === renameSessionId}
+                onOpenChange={(open) => {
+                    if (!open) {
+                        setRenameSessionId(null);
+                    }
+                }}
+                initialName={current?.named ? current.title : ""}
+                pending={renamePending}
+                error={renameError}
+                onSubmit={handleRenameSubmit}
             />
         </div>
     );

@@ -1,11 +1,11 @@
 /*
  * The workspace chat column hosting the session transcript, its status states and the bottom
- * composer slot.
+ * floating composer band.
  *
  * The nesting this file styles:
  *
  *   .page
- *   ├─ .stage                    flexible transcript stage above the composer slot
+ *   ├─ .stage                    flexible transcript stage above the composer band
  *   │   ├─ .centered             centered container for empty, loading and error states
  *   │   │   ├─ .title            state heading
  *   │   │   ├─ .text             explanatory body copy
@@ -13,8 +13,9 @@
  *   │   │   └─ .actions          retry row
  *   │   └─ .statusBar            non-blocking synchronization banner above the transcript
  *   │       └─ .statusText
- *   └─ .composerArea             bottom lane reserved for the composer
- *       └─ .composerSlot
+ *   └─ .composerBand             bottom lane holding the overhanging fade and composer card
+ *       ├─ .composerFade         upward surface-to-transparent gradient over scrolling transcript
+ *       └─ .composerColumn       centered max-width column aligned with Transcript
  *
  * Classes passed to child components stay top-level so CSS Modules keep one class of specificity:
  *
@@ -112,19 +113,31 @@
         }
     }
 
-    .composerArea {
+    .composerBand {
+        position: relative;
+        z-index: 2;
         flex: none;
-        padding: var(--space-12) var(--space-16) max(var(--space-12), var(--kb-inset, 0px));
-        border-block-start: var(--border-width) solid var(--color-outline-variant);
+        padding-block: 0 max(var(--space-16), var(--kb-inset, 0px));
 
-        .composerSlot {
-            color: var(--color-on-surface-variant);
-            font-family: var(--font-sans);
-            font-size: var(--type-label-large-size);
-            font-weight: var(--type-label-large-weight);
-            letter-spacing: var(--type-label-large-tracking);
-            line-height: var(--type-label-large-line-height);
-            text-align: center;
+        .composerFade {
+            position: absolute;
+            inset-inline: 0;
+            inset-block-end: 100%;
+            block-size: var(--space-24);
+            pointer-events: none;
+            background-image: linear-gradient(
+                to top,
+                var(--color-surface) 0%,
+                color-mix(in srgb, var(--color-surface) 45%, transparent) 55%,
+                transparent 100%
+            );
+        }
+
+        .composerColumn {
+            inline-size: 100%;
+            max-inline-size: var(--content-max-width);
+            margin-inline: auto;
+            padding-inline: var(--space-16);
         }
     }
 }

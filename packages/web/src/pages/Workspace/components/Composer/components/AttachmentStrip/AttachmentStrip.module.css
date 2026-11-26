@@ -1,0 +1,167 @@
+/*
+ * Horizontal scrolling strip of staged image attachment cards with ImageViewer preview.
+ *
+ * The nesting this file styles:
+ *
+ *   .strip                               relative wrapper owning horizontal scroll edges
+ *   ├─ .list                             flex row of staged image cards
+ *   │   └─ .card                         64px tall attachment card with Image trigger, metadata, and remove action
+ *   │       └─ .meta                     two-line metadata column
+ *   │           ├─ .name                 truncated file name
+ *   │           └─ .subtitle             formatted byte size
+ *   └─ .edge                             horizontal overflow gradient + nudge button wrapper
+ *       ├─ &[data-side="left"]
+ *       └─ &[data-side="right"]
+ *
+ * Classes passed to child components stay top-level:
+ *
+ *   .scroll                              ScrollArea root inside .strip (hides scrollbars; wheel scrolls sideways)
+ *   └─ [data-slot="scroll-area-scrollbar"]
+ *   .imageTrigger                        Image button around one staged thumbnail
+ *   .thumb                               48px square preview image inside .imageTrigger
+ *   .removeButton                        trailing IconButton inside .card
+ *   .nudgeButton                         IconButton inside .edge
+ */
+.strip {
+    position: relative;
+    min-inline-size: 0;
+    overflow: hidden;
+
+    .list {
+        display: flex;
+        gap: var(--space-8);
+        margin: 0;
+        padding: var(--space-12) var(--space-16) 0;
+        list-style: none;
+
+        .card {
+            position: relative;
+            display: flex;
+            flex: none;
+            align-items: center;
+            gap: var(--space-10);
+            inline-size: 14.5rem;
+            block-size: var(--space-64);
+            padding: 0 var(--space-32) 0 var(--space-8);
+            overflow: hidden;
+            border: var(--border-width) solid var(--color-outline-variant);
+            border-radius: var(--shape-corner-medium);
+            background-color: var(--color-surface);
+
+            .meta {
+                display: flex;
+                flex: 1;
+                flex-direction: column;
+                justify-content: center;
+                gap: var(--space-2);
+                min-inline-size: 0;
+
+                .name,
+                .subtitle {
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    white-space: nowrap;
+                }
+
+                .name {
+                    color: var(--color-on-surface);
+                    font-size: var(--type-label-large-size);
+                    font-weight: var(--type-label-large-weight);
+                    line-height: var(--type-label-large-line-height);
+                }
+
+                .subtitle {
+                    color: var(--color-on-surface-variant);
+                    font-size: var(--type-label-medium-size);
+                    font-weight: var(--type-label-medium-weight);
+                    line-height: var(--type-label-medium-line-height);
+                }
+            }
+        }
+    }
+
+    .edge {
+        position: absolute;
+        inset-block: var(--space-12) 0;
+        z-index: 2;
+        display: flex;
+        align-items: center;
+        inline-size: var(--space-40);
+        pointer-events: none;
+
+        &[data-side="left"] {
+            inset-inline-start: 0;
+            justify-content: flex-start;
+            padding-inline-start: var(--space-8);
+            background-image: linear-gradient(
+                to right,
+                var(--color-surface-container-high) 0%,
+                var(--color-surface-container-high) 45%,
+                transparent 100%
+            );
+        }
+
+        &[data-side="right"] {
+            inset-inline-end: 0;
+            justify-content: flex-end;
+            padding-inline-end: var(--space-8);
+            background-image: linear-gradient(
+                to left,
+                var(--color-surface-container-high) 0%,
+                var(--color-surface-container-high) 45%,
+                transparent 100%
+            );
+        }
+    }
+}
+
+.scroll {
+    min-inline-size: 0;
+
+    [data-slot="scroll-area-scrollbar"] {
+        display: none;
+    }
+}
+
+.imageTrigger {
+    flex: none;
+    inline-size: var(--space-48);
+    block-size: var(--space-48);
+    border-radius: var(--shape-corner-small);
+}
+
+.thumb {
+    inline-size: 100%;
+    block-size: 100%;
+    border-radius: var(--shape-corner-small);
+    object-fit: cover;
+}
+
+.removeButton {
+    position: absolute;
+    inset-block-start: var(--space-6);
+    inset-inline-end: var(--space-6);
+    min-inline-size: var(--space-24);
+    min-block-size: var(--space-24);
+}
+
+.nudgeButton {
+    && {
+        pointer-events: auto;
+        border: var(--border-width) solid var(--color-outline-variant);
+        background-color: var(--color-surface-container-highest);
+        box-shadow: var(--elevation-1);
+    }
+
+    &&[data-popup-open]:not([aria-pressed="true"]),
+    &&:active:not([data-disabled]):not([aria-pressed="true"]) {
+        background-color: var(--color-surface-container-highest);
+    }
+
+    @media (hover: hover) {
+        &&:hover:not([data-disabled]):not([aria-pressed="true"]) {
+            background-color: var(--color-surface-container-highest);
+            background-image: linear-gradient(var(--state-hover), var(--state-hover));
+        }
+    }
+}

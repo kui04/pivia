@@ -8,13 +8,15 @@
  * The nesting this file styles:
  *
  *   .root
- *   └─ .list
- *       └─ .item
- *           └─ .badge            one queue label attached to the group's last bubble
+ *   ├─ .list
+ *   │   └─ .item
+ *   │       └─ .badge            one queue label attached to the group's last bubble
+ *   └─ .actions                  right-aligned queue controls row
  *
  * Classes passed to child components stay top-level so CSS Modules keep one class of specificity:
  *
  *   .queued                  pending prompt surface on the shared bubble geometry
+ *   .clearButton             compact secondary Button clearing all queued entries
  *
  * Bubble geometry and typography live in ../UserMessage/Bubble.module.css.
  */
@@ -63,4 +65,16 @@
     letter-spacing: var(--type-label-medium-tracking);
     line-height: var(--type-label-medium-line-height);
     white-space: nowrap;
+}
+
+.actions {
+    display: flex;
+    justify-content: flex-end;
+}
+
+.clearButton {
+    min-block-size: var(--space-32);
+    padding: var(--space-4) var(--space-10);
+    font-size: var(--type-label-medium-size);
+    line-height: var(--type-label-medium-line-height);
 }

@@ -23,15 +23,20 @@ const meta = {
         session,
         sidebarOpen: true,
         closing: false,
+        runtimeReady: true,
         onToggleSidebar: fn(),
         onCopySessionId: fn(),
         onCloseSession: fn(),
+        onRenameSession: fn(),
+        onCompactSession: fn(),
     },
     argTypes: {
         session: { control: false },
         onToggleSidebar: { control: false },
         onCopySessionId: { control: false },
         onCloseSession: { control: false },
+        onRenameSession: { control: false },
+        onCompactSession: { control: false },
     },
     decorators: [
         (Story) => (
@@ -79,6 +84,14 @@ export const SelectedSessionStory: Story = {
         await userEvent.click(canvas.getByRole("button", { name: "Session actions" }));
         await userEvent.click(await within(document.body).findByRole("menuitem", { name: "Copy session ID" }));
         await expect(args.onCopySessionId).toHaveBeenCalledWith(session.id);
+
+        await userEvent.click(canvas.getByRole("button", { name: "Session actions" }));
+        await userEvent.click(await within(document.body).findByRole("menuitem", { name: "Rename session" }));
+        await expect(args.onRenameSession).toHaveBeenCalledWith(session);
+
+        await userEvent.click(canvas.getByRole("button", { name: "Session actions" }));
+        await userEvent.click(await within(document.body).findByRole("menuitem", { name: "Compact context" }));
+        await expect(args.onCompactSession).toHaveBeenCalledWith(session.id);
 
         await userEvent.click(canvas.getByRole("button", { name: "Session actions" }));
         await userEvent.click(await within(document.body).findByRole("menuitem", { name: "Close session" }));

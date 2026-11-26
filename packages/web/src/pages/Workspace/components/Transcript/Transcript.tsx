@@ -34,6 +34,10 @@ export type TranscriptProps = {
     activityNotice?: SessionActivityNotice | null | undefined;
     /** Queued steering and follow-up entries rendered at the bottom of the transcript. */
     queuedEntries?: readonly QueuedEntry[] | undefined;
+    /** Clears all queued steering and follow-up entries. */
+    onClearQueue?: (() => void) | undefined;
+    /** Disables queue clearing while a `clear_queue` command is in flight. */
+    clearingQueue?: boolean | undefined;
     /** Applies top and bottom CSS mask fades directly on the viewport. Disable when surrounding chrome owns the fades. */
     edgeFade?: boolean | undefined;
     /** Accessible name for the scroll region. Defaults to "Transcript". */
@@ -58,6 +62,8 @@ export function Transcript({
     liveActivity,
     activityNotice = null,
     queuedEntries,
+    onClearQueue,
+    clearingQueue = false,
     edgeFade = true,
     label = "Transcript",
     labelledBy,
@@ -182,7 +188,9 @@ export function Transcript({
                             {activityNotice.message}
                         </Notice>
                     ) : null}
-                    {queuedEntries !== undefined ? <TranscriptQueue entries={queuedEntries} /> : null}
+                    {queuedEntries !== undefined ? (
+                        <TranscriptQueue entries={queuedEntries} onClearQueue={onClearQueue} clearing={clearingQueue} />
+                    ) : null}
                 </div>
             </ScrollArea>
 

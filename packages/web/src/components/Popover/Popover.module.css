@@ -1,0 +1,52 @@
+/*
+ * Anchored floating popover built on Base UI Popover.
+ *
+ * The markup this file styles (Base UI renders it):
+ *
+ *   .positioner           portaled above the anchor
+ *   └─ :where(.popup)     Base UI Popover.Popup, merged with caller class via :where()
+ */
+.positioner {
+    z-index: var(--z-dropdown);
+    outline: none;
+
+    :where(.popup) {
+        box-sizing: border-box;
+        max-inline-size: var(--available-width);
+        max-block-size: var(--available-height);
+        padding: var(--space-8);
+        border: var(--border-width) solid var(--color-outline-variant);
+        border-radius: var(--shape-corner-medium);
+        outline: none;
+        background-color: var(--color-surface-container-high);
+        color: var(--color-on-surface);
+        box-shadow: var(--elevation-2);
+        font-family: var(--font-sans);
+        transform-origin: var(--transform-origin);
+        transition:
+            opacity var(--motion-duration-effects-fast) var(--motion-easing-standard),
+            scale var(--motion-duration-effects-fast) var(--motion-easing-standard);
+
+        &[data-starting-style],
+        &[data-ending-style] {
+            opacity: 0;
+            scale: 0.96;
+        }
+
+        &[data-instant] {
+            transition: none;
+        }
+
+        @media (forced-colors: active) {
+            & {
+                border-color: CanvasText;
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            & {
+                transition: none;
+            }
+        }
+    }
+}

@@ -31,6 +31,21 @@ export { Input, type InputProps } from "./Input";
 export { LoadingIndicator, type LoadingIndicatorProps } from "./LoadingIndicator";
 export { Markdown, type MarkdownProps } from "./Markdown";
 export { Menu, MenuItem, MenuSeparator, type MenuItemProps, type MenuProps, type MenuSeparatorProps } from "./Menu";
+export {
+    Popover,
+    PopoverClose,
+    PopoverContent,
+    PopoverDescription,
+    PopoverTitle,
+    PopoverTrigger,
+    type PopoverChangeEventDetails,
+    type PopoverCloseProps,
+    type PopoverContentProps,
+    type PopoverDescriptionProps,
+    type PopoverProps,
+    type PopoverTitleProps,
+    type PopoverTriggerProps,
+} from "./Popover";
 export { ScrollArea, type ScrollAreaProps } from "./ScrollArea";
 export { Select, type SelectOption, type SelectProps } from "./Select";
 export { ToastProvider, createToastManager, useToast, type ToastPosition, type ToastProviderProps } from "./Toast";

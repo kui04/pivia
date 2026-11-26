@@ -1,7 +1,8 @@
 import { assertNever } from "@pivia/protocol";
-import { useMemo, type ReactElement } from "react";
+import { useCallback, useMemo, useState, type ReactElement } from "react";
 
 import { Button, LoadingIndicator } from "@components";
+import { showError, showWarning, toastManager } from "@/lib/toast";
 import { useSessionStore as defaultSessionStore } from "@/stores";
 import {
     buildTranscript,
@@ -11,6 +12,7 @@ import {
     type TranscriptItem,
 } from "@/stores/session";
 
+import { Composer } from "./components";
 import { collectQueuedEntries, Transcript, type QueuedEntry } from "./components/Transcript";
 import { useWorkspaceSession } from "./useWorkspaceSession";
 import { selectWorkspaceView, type WorkspaceView } from "./workspaceView";
@@ -43,6 +45,8 @@ interface StageProps {
     readonly liveActivity: SessionLiveActivity;
     readonly activityNotice: SessionActivityNotice | null;
     readonly queuedEntries: readonly QueuedEntry[];
+    readonly clearingQueue: boolean;
+    readonly onClearQueue?: (() => void) | undefined;
     readonly onOpenLink: (href: string) => void;
     readonly onRetryEntriesSync: () => void;
 }
@@ -55,6 +59,8 @@ function renderStage({
     liveActivity,
     activityNotice,
     queuedEntries,
+    clearingQueue,
+    onClearQueue,
     onOpenLink,
     onRetryEntriesSync,
 }: StageProps): ReactElement {
@@ -117,6 +123,8 @@ function renderStage({
                         liveActivity={liveActivity}
                         activityNotice={activityNotice}
                         queuedEntries={queuedEntries}
+                        onClearQueue={onClearQueue}
+                        clearingQueue={clearingQueue}
                         edgeFade={false}
                         className={styles.transcript}
                         onOpenLink={onOpenLink}
@@ -132,31 +140,35 @@ function renderStage({
  * The routed workspace column.
  *
  * Connects the session store to the route, projects the active branch with
- * `projectSessionTranscript`, and renders the loading, empty, synchronization-error and transcript
- * states around it. The message composer slot stays a placeholder until the composer arrives.
+ * `projectSessionTranscript`, and renders the transcript stage above the session composer.
  */
 export function WorkspacePage(props: WorkspacePageProps = {}): ReactElement {
     const sessionStore = props.sessionStore ?? defaultSessionStore;
     const onOpenLink = props.onOpenLink ?? openExternalLink;
     const route = useWorkspaceSession({ sessionStore });
 
+    const [clearingQueue, setClearingQueue] = useState(false);
+
     const status = sessionStore((state) => state.status);
     const activeSessionId = sessionStore((state) => state.sessionId);
+    const sessionState = sessionStore((state) => state.state);
     const entries = sessionStore((state) => state.entries);
     const entriesSync = sessionStore((state) => state.entriesSync);
     const liveMessage = sessionStore((state) => state.liveMessage);
     const liveToolExecutions = sessionStore((state) => state.liveToolExecutions);
     const liveActivity = sessionStore((state) => state.liveActivity);
     const activityNotice = sessionStore((state) => state.activityNotice);
-    const runtimeStreaming = sessionStore((state) => state.state?.isStreaming ?? null);
-    const steeringMessages = sessionStore((state) => state.state?.steeringMessages ?? EMPTY_QUEUE);
-    const followUpMessages = sessionStore((state) => state.state?.followUpMessages ?? EMPTY_QUEUE);
+    const runtimeStreaming = sessionState?.isStreaming ?? null;
+    const steeringMessages = sessionState?.steeringMessages ?? EMPTY_QUEUE;
+    const followUpMessages = sessionState?.followUpMessages ?? EMPTY_QUEUE;
     const lastError = sessionStore((state) => state.lastError);
     const retryEntriesSync = sessionStore((state) => state.retryEntriesSync);
+    const sendCommand = sessionStore((state) => state.sendCommand);
 
     const routeMatchesStore = route.kind === "session" && activeSessionId === route.sessionId;
     const terminalStatus = status === "error" || status === "closed";
     const connectedRuntime = status === "open" || status === "reconnecting";
+    const composerConnected = routeMatchesStore && status === "open";
     // The runtime can still append a result while an open/reconnecting socket reports a stream or
     // message. A terminal or cached connecting session never triggers a live spinner pre-snapshot.
     const runtimeActive = connectedRuntime && (runtimeStreaming === true || liveMessage.kind === "streaming");
@@ -198,11 +210,46 @@ export function WorkspacePage(props: WorkspacePageProps = {}): ReactElement {
         hasTranscript: items.length > 0 || hasVisibleActivity,
     });
 
-    const composerArea = (
-        <div className={styles.composerArea}>
-            <p className={styles.composerSlot}>The message composer arrives in a later update.</p>
-        </div>
+    const handleNotify = useCallback(
+        (notice: { readonly tone: "info" | "warning" | "error"; readonly message: string }) => {
+            if (notice.tone === "error") {
+                showError({ id: "composer-error", title: "Composer error", description: notice.message });
+            } else if (notice.tone === "warning") {
+                showWarning({ id: "composer-warning", title: notice.message });
+            } else {
+                toastManager.add({
+                    id: "composer-info",
+                    type: "info",
+                    priority: "low",
+                    title: notice.message,
+                });
+            }
+        },
+        [],
     );
+
+    const handleClearQueue = useCallback(() => {
+        if (!composerConnected || clearingQueue) {
+            return;
+        }
+        setClearingQueue(true);
+        void sendCommand({ type: "clear_queue" })
+            .then((response) => {
+                if (!response.success) {
+                    showError({ id: "clear-queue", title: "Cannot clear queue", description: response.error });
+                }
+            })
+            .catch((error: unknown) => {
+                showError({
+                    id: "clear-queue",
+                    title: "Cannot clear queue",
+                    description: error instanceof Error ? error.message : String(error),
+                });
+            })
+            .finally(() => {
+                setClearingQueue(false);
+            });
+    }, [clearingQueue, composerConnected, sendCommand]);
 
     if (route.kind === "invalid") {
         return (
@@ -216,7 +263,6 @@ export function WorkspacePage(props: WorkspacePageProps = {}): ReactElement {
                         <code className={styles.id}>{route.raw}</code>
                     </div>
                 </div>
-                {composerArea}
             </section>
         );
     }
@@ -232,7 +278,6 @@ export function WorkspacePage(props: WorkspacePageProps = {}): ReactElement {
                         </p>
                     </div>
                 </div>
-                {composerArea}
             </section>
         );
     }
@@ -248,11 +293,25 @@ export function WorkspacePage(props: WorkspacePageProps = {}): ReactElement {
                     liveActivity: effectiveActivity,
                     activityNotice: effectiveNotice,
                     queuedEntries,
+                    clearingQueue,
+                    onClearQueue: composerConnected ? handleClearQueue : undefined,
                     onOpenLink,
                     onRetryEntriesSync: retryEntriesSync,
                 })}
             </div>
-            {composerArea}
+            <div className={styles.composerBand}>
+                <div className={styles.composerFade} aria-hidden="true" />
+                <div className={styles.composerColumn}>
+                    <Composer
+                        key={route.sessionId}
+                        sessionId={route.sessionId}
+                        state={routeMatchesStore ? sessionState : null}
+                        connected={composerConnected}
+                        onSendCommand={sendCommand}
+                        onNotify={handleNotify}
+                    />
+                </div>
+            </div>
         </section>
     );
 }

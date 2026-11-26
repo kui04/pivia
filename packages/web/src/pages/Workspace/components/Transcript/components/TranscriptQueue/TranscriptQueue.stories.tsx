@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, within } from "storybook/test";
+import { expect, fn, userEvent, within } from "storybook/test";
 
 import storyFrame from "@/storybook/storyFrame.module.css";
 
@@ -69,6 +69,18 @@ export const SteeringAndFollowUp: Story = {
 
         await expect(canvas.getByText(/Once the suite passes, summarize the diff:/)).toBeVisible();
         await expect(canvas.getByText(/2\. Web component updates across packages\./)).toBeVisible();
+    },
+};
+
+export const WithClearAction: Story = {
+    args: {
+        onClearQueue: fn(),
+    },
+    play: async ({ canvasElement, args }) => {
+        const canvas = within(canvasElement);
+        const clearButton = canvas.getByRole("button", { name: "Clear queue" });
+        await userEvent.click(clearButton);
+        await expect(args.onClearQueue).toHaveBeenCalledTimes(1);
     },
 };
 

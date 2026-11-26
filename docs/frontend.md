@@ -9,7 +9,7 @@ Component conventions live in [components.md](components.md). Frontend code live
 
 ## Module Entry Points
 
-- Every component folder owns an `index.ts` barrel: the design system under `components/<Name>/`, the workspace components under `pages/Workspace/components/<Name>/`, and the transcript components under `pages/Workspace/components/Transcript/components/<Name>/`. Import the folder, not its implementation file: `@components/Icon`, `../IconButton`, `@components/Toast`. The folder barrel is the only place that joins the folder name to its implementation file.
+- Every component folder owns an `index.ts` barrel: the design system under `components/<Name>/`, the workspace components under `pages/Workspace/components/<Name>/`, the composer components under `pages/Workspace/components/Composer/components/<Name>/`, and the transcript components under `pages/Workspace/components/Transcript/components/<Name>/`. Import the folder, not its implementation file: `@components/Icon`, `../IconButton`, `@components/Toast`. The folder barrel is the only place that joins the folder name to its implementation file.
 - The public app-wide barrels are `@components`, `@/hooks`, `@/lib`, and `@/stores`. `@components` re-exports the design system; `@components/<Name>` reaches one component folder. `@/stores` is the composition root only; import domain factories and types from `@/stores/auth`, `@/stores/session`, or `@/stores/workspace`.
 - Feature modules follow the same rule. Import the transcript view and its queue helpers from `pages/Workspace/components/Transcript`, workspace shell components from `pages/Workspace/components`, and route pages from their folder barrels such as `@/pages/Workspace`. Do not add a `pages/index.ts` aggregate; each route stays explicit in `router.tsx`.
 - Subsystem entry points are `@/lib/cache`, `@/lib/sync`, and `@/lib/transport`. Import their public types and functions from the barrel instead of a file inside the subsystem.
@@ -52,7 +52,7 @@ CSS Modules use native nesting (no preprocessor). Follow these rules:
 
 ## Formatting
 
-- Component-free display helpers live in `packages/web/src/lib/` and are re-exported from `packages/web/src/lib/index.ts`; import them via `@/lib`. `Formatter` groups the duration, byte size, USD cost, token count and relative age formatters, and `Clipboard` owns clipboard writes. They take plain values and return strings so components and stores share one output. Domain-specific message composition (for example a compaction note or a truncation warning) stays with the store that owns the data.
+- Component-free display helpers live in `packages/web/src/lib/` and are re-exported from `packages/web/src/lib/index.ts`; import them via `@/lib`. `Formatter` groups the duration, byte size, USD cost, token count and relative age formatters, `Fuzzy` exposes pi-tui-compatible fuzzy matching and filtering, and `Clipboard` owns clipboard text writes and image file reads. They take plain values and return strings so components and stores share one output. Domain-specific message composition (for example a compaction note or a truncation warning) stays with the store that owns the data.
 
 ## State, Cache, and Transport
 
