@@ -5,6 +5,9 @@
  *
  *   .positioner           portaled after the modal that holds the menu
  *   └─ :where(.popup)     Base UI Menu.Popup, with the caller's class; :where keeps its specificity
+ *       └─ .scroller      ScrollArea root, bounded by the available height
+ *           └─ .viewport  ScrollArea viewport, the scroll container
+ *               └─ .content  ScrollArea content, carrying the popup padding
  *   .item                 Base UI Menu.Item, on the same element as .destructive
  *   ├─ &[data-highlighted]
  *   ├─ &[data-disabled]   greys the icon and the shortcut too
@@ -32,11 +35,8 @@
     :where(.popup) {
         min-width: var(--anchor-width);
         max-width: var(--available-width);
-        max-block-size: min(22rem, var(--available-height));
-        padding: var(--space-4);
-        overflow-y: auto;
-        overscroll-behavior: contain;
-        scroll-padding-block: var(--space-4);
+        padding: 0;
+        overflow: hidden;
         border: var(--border-width) solid var(--color-outline-variant);
         border-radius: var(--shape-corner-small);
         outline: none;
@@ -60,6 +60,25 @@
             transition: none;
         }
     }
+}
+
+/*
+ * The popup bounds the scroll area, not the other way around: the custom bars replace the native
+ * bar and the popup keeps its rounded clip. The viewport carries the maximum height so short
+ * menus stay compact while long menus scroll.
+ */
+.scroller {
+    max-block-size: min(22rem, var(--available-height));
+}
+
+.viewport {
+    max-block-size: min(22rem, var(--available-height));
+    overscroll-behavior: contain;
+    scroll-padding-block: var(--space-4);
+}
+
+.content {
+    padding: var(--space-4);
 }
 
 /*

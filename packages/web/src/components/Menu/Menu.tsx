@@ -4,6 +4,7 @@ import type { ComponentProps, ReactElement, ReactNode } from "react";
 import { cn } from "@/lib";
 
 import { Icon } from "../Icon";
+import { ScrollArea } from "../ScrollArea";
 import styles from "./Menu.module.css";
 
 type PositionerProps = ComponentProps<typeof BaseMenu.Positioner>;
@@ -46,7 +47,15 @@ export function Menu({
             <BaseMenu.Portal>
                 <BaseMenu.Positioner side={side} align={align} sideOffset={sideOffset} className={styles.positioner}>
                     <BaseMenu.Popup data-slot="menu-popup" className={cn(styles.popup, className)}>
-                        {children}
+                        <ScrollArea
+                            label="Menu"
+                            className={styles.scroller}
+                            viewportClassName={styles.viewport}
+                            contentClassName={styles.content}
+                            viewportTabIndex={-1}
+                        >
+                            {children}
+                        </ScrollArea>
                     </BaseMenu.Popup>
                 </BaseMenu.Positioner>
             </BaseMenu.Portal>

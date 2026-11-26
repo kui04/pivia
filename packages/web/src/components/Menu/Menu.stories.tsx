@@ -120,8 +120,19 @@ export const ManyItems: Story = {
         await userEvent.click(canvas.getByRole("button", { name: "Message actions" }));
 
         const menu = await screen.findByRole("menu");
-        await waitFor(() => expect(menu.scrollHeight).toBeGreaterThan(menu.clientHeight));
+        const viewport = menu.querySelector<HTMLElement>("[data-slot='scroll-area-viewport']");
+
+        if (viewport === null) {
+            throw new Error("The menu did not render a scroll area");
+        }
+
+        await waitFor(() => expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight));
+        await expect(getComputedStyle(menu).overflowY).toBe("hidden");
         await expect(within(menu).getByRole("menuitem", { name: "Action 20" })).toBeInTheDocument();
+
+        // End moves the highlight to the last item and the menu scrolls the custom viewport to it.
+        await userEvent.keyboard("{End}");
+        await waitFor(() => expect(viewport.scrollTop).toBeGreaterThan(0));
     },
 };
 

@@ -26,6 +26,11 @@ export type ScrollAreaProps = {
     style?: CSSProperties | undefined;
     /** The scrollable element, for reading, changing or observing the scroll position. */
     viewportRef?: Ref<HTMLDivElement> | undefined;
+    /**
+     * Overrides the viewport's tab index. Pass `-1` when a surrounding popup already owns the
+     * keyboard entry point, such as a menu whose arrow keys move the highlight.
+     */
+    viewportTabIndex?: number | undefined;
 };
 
 /**
@@ -54,6 +59,7 @@ export function ScrollArea({
     contentClassName,
     style,
     viewportRef,
+    viewportTabIndex,
 }: ScrollAreaProps) {
     return (
         <BaseScrollArea.Root data-slot="scroll-area" className={cn(styles.root, className)} style={style}>
@@ -63,6 +69,9 @@ export function ScrollArea({
                 role={landmark ? "region" : "group"}
                 aria-label={labelledBy === undefined ? label : undefined}
                 aria-labelledby={labelledBy}
+                // Keep Base UI's automatic tab index unless the caller overrides it; an explicit
+                // undefined would replace the computed value during prop merging.
+                {...(viewportTabIndex === undefined ? {} : { tabIndex: viewportTabIndex })}
                 className={cn(styles.viewport, viewportClassName)}
             >
                 <BaseScrollArea.Content data-slot="scroll-area-content" className={contentClassName}>
