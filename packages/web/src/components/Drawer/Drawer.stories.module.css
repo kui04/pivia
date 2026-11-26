@@ -5,9 +5,7 @@
  *
  *   .panel
  *   ├─ .title
- *   ├─ .text
- *   └─ .scroller
- *       └─ .row
+ *   └─ .text
  */
 .panel {
     display: flex;
@@ -30,25 +28,5 @@
         letter-spacing: var(--type-body-medium-tracking);
         line-height: var(--type-body-medium-line-height);
         text-wrap: pretty;
-    }
-
-    .scroller {
-        max-block-size: 10rem;
-        overflow-y: auto;
-        border: var(--border-width) solid var(--color-outline-variant);
-        border-radius: var(--shape-corner-small);
-
-        .row {
-            margin: 0;
-            padding: var(--space-4) var(--space-8);
-            border-block-end: var(--border-width) solid var(--color-outline-variant);
-            color: var(--color-on-surface);
-            font-size: var(--type-body-medium-size);
-            line-height: var(--type-body-medium-line-height);
-
-            &:last-child {
-                border-block-end: 0;
-            }
-        }
     }
 }

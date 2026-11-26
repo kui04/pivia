@@ -1,19 +1,11 @@
-import { parseSessionId, type SessionId } from "@pivia/protocol";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, within } from "storybook/test";
 
+import { sid } from "@/storybook/ids";
 import type { SessionRow as SessionRowModel } from "@/stores/workspace";
 
 import { SessionRow } from "./SessionRow";
 import styles from "./SessionRow.stories.module.css";
-
-function sid(raw: string): SessionId {
-    const parsed = parseSessionId(raw);
-    if (parsed === null) {
-        throw new Error(`Invalid story session id: ${raw}`);
-    }
-    return parsed;
-}
 
 const NOW = Date.parse("2026-01-03T12:00:00.000Z");
 
@@ -98,34 +90,27 @@ export const Selected: Story = {
     },
 };
 
-export const StreamingRuntime: Story = {
-    args: {
-        session: { ...session, runtimeState: "streaming", attachedClients: 1 },
-    },
+export const RuntimeStates: Story = {
+    render: (args) => (
+        <>
+            <SessionRow
+                {...args}
+                session={{
+                    ...args.session,
+                    id: sid("session-stream"),
+                    runtimeState: "streaming",
+                    attachedClients: 1,
+                }}
+            />
+            <SessionRow {...args} session={{ ...args.session, id: sid("session-attached"), attachedClients: 1 }} />
+            <SessionRow {...args} session={{ ...args.session, id: sid("session-closing"), runtimeState: "closing" }} />
+        </>
+    ),
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
+
         await expect(canvas.getByRole("img", { name: "Streaming" })).toBeVisible();
-        await expect(canvas.queryByText("2h")).not.toBeInTheDocument();
-    },
-};
-
-export const AttachedRuntime: Story = {
-    args: {
-        session: { ...session, attachedClients: 1 },
-    },
-    play: async ({ canvasElement }) => {
-        const canvas = within(canvasElement);
         await expect(canvas.getByRole("img", { name: "Attached" })).toBeVisible();
-        await expect(canvas.queryByText("2h")).not.toBeInTheDocument();
-    },
-};
-
-export const ClosingRuntime: Story = {
-    args: {
-        session: { ...session, runtimeState: "closing" },
-    },
-    play: async ({ canvasElement }) => {
-        const canvas = within(canvasElement);
         await expect(canvas.getByRole("img", { name: "Closing" })).toBeVisible();
     },
 };

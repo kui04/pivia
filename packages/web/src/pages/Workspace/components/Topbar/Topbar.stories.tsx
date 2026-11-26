@@ -1,19 +1,11 @@
-import { parseSessionId, type SessionId } from "@pivia/protocol";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, within } from "storybook/test";
 
+import { sid } from "@/storybook/ids";
 import type { SelectedSession } from "@/stores/workspace";
 
 import { Topbar } from "./Topbar";
 import styles from "./Topbar.stories.module.css";
-
-function sid(raw: string): SessionId {
-    const parsed = parseSessionId(raw);
-    if (parsed === null) {
-        throw new Error(`Invalid story session id: ${raw}`);
-    }
-    return parsed;
-}
 
 const session: SelectedSession = {
     id: sid("session-a1"),

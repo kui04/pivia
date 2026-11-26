@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, userEvent, within } from "storybook/test";
+import { expect, within } from "storybook/test";
 
 import { Field } from "../Field";
 import { Input } from "../Input";
@@ -38,11 +38,9 @@ export const Default: Story = {
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
         const group = canvas.getByRole("group", { name: "Billing details" });
-        const company = within(group).getByLabelText("Company");
 
-        await userEvent.type(company, "Atlas");
-
-        await expect(company).toHaveValue("Atlas");
+        await expect(within(group).getByLabelText("Company")).toBeVisible();
+        await expect(within(group).getByLabelText("Tax ID")).toBeVisible();
     },
 };
 

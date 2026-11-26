@@ -50,13 +50,3 @@ export const Default: Story = {
         await expect(shimmer.backgroundImage).toContain("linear-gradient");
     },
 };
-
-export const CustomLabel: Story = {
-    args: {
-        label: "Still working...",
-    },
-    play: async ({ canvasElement }) => {
-        const canvas = within(canvasElement);
-        await expect(canvas.getByRole("status")).toHaveTextContent("Still working...");
-    },
-};

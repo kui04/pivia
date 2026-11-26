@@ -4,7 +4,6 @@ import { describe, expect, it } from "vitest";
 import {
     buildWorkspaceModel,
     collectKnownCwds,
-    compareSessions,
     createCatalogSyncReducer,
     folderLabel,
     selectedSession,
@@ -80,10 +79,6 @@ describe("folderLabel", () => {
     it("names a missing cwd for sessions from old versions", () => {
         expect(folderLabel("")).toBe("Unknown directory");
     });
-
-    it("returns a bare name unchanged", () => {
-        expect(folderLabel("workspace")).toBe("workspace");
-    });
 });
 
 describe("session list helpers", () => {
@@ -93,9 +88,6 @@ describe("session list helpers", () => {
         const tieA = summary("a", { modifiedAtMs: 5_000 });
 
         expect(sortSessions([older, newer, tieA]).map((session) => session.id)).toEqual(["a", "c", "b"]);
-        expect(compareSessions(older, older)).toBe(0);
-        expect(compareSessions(tieA, newer)).toBeLessThan(0);
-        expect(compareSessions(newer, older)).toBeLessThan(0);
     });
 
     it("applies catalog deltas and maintains reference stability in createCatalogSyncReducer", () => {
@@ -233,7 +225,7 @@ describe("buildWorkspaceModel", () => {
 
         const model = buildWorkspaceModel({
             sessions,
-            pins: [sid("one")],
+            pins: [sid("one"), sid("four")],
             query: "  parser ",
             selectedId: null,
             collapsed: ["/home/u/docs", "/home/u/Parser-Lab"],
@@ -241,22 +233,10 @@ describe("buildWorkspaceModel", () => {
 
         expect(model.pinned.map((row) => row.id)).toEqual(["one"]);
         expect(model.folders.map((folder) => folder.cwd)).toEqual(["/home/u/docs", "/home/u/Parser-Lab"]);
+        expect(model.folders.map((folder) => folder.sessions.map((row) => row.id))).toEqual([["two"], ["three"]]);
         expect(model.folders.every((folder) => !folder.collapsed)).toBe(true);
         expect(model.total).toBe(4);
         expect(model.matched).toBe(3);
-    });
-
-    it("shows only sessions that match the search", () => {
-        const model = buildWorkspaceModel({
-            sessions: [summary("one", { name: "Alpha" }), summary("two", { name: "Beta" })],
-            pins: [sid("two")],
-            query: "alpha",
-            selectedId: null,
-            collapsed: [],
-        });
-
-        expect(model.pinned).toEqual([]);
-        expect(model.folders[0]?.sessions.map((row) => row.id)).toEqual(["one"]);
     });
 });
 

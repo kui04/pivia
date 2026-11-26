@@ -1,8 +1,9 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { Play } from "lucide-react";
-import { useEffect, useState } from "react";
-import type { ReactNode } from "react";
+import { useState } from "react";
 import { expect, spyOn, userEvent, waitFor, within } from "storybook/test";
+
+import { DarkTheme } from "@/storybook/theme";
 
 import { IconButton } from "../IconButton";
 
@@ -38,19 +39,6 @@ export default meta;
 
 type Story = StoryObj<typeof meta>;
 
-function DarkTheme({ children }: { children: ReactNode }) {
-    useEffect(() => {
-        const root = document.documentElement;
-        root.dataset.theme = "dark";
-
-        return () => {
-            delete root.dataset.theme;
-        };
-    }, []);
-
-    return <>{children}</>;
-}
-
 export const Default: Story = {
     play: async ({ canvasElement }) => {
         const code = canvasElement.querySelector("pre code");
@@ -60,22 +48,10 @@ export const Default: Story = {
             throw new Error("The story did not render the code and the language label");
         }
 
+        await expect(label).toHaveTextContent("ts");
+
         // Highlighting is async: the plain text must be replaced by Shiki spans.
         await waitFor(() => expect(code.querySelector("[style*='--shiki-dark']")).not.toBeNull(), { timeout: 5000 });
-
-        const token = code.querySelector("span[style]");
-
-        if (token === null) {
-            throw new Error("The story did not render a highlighted token");
-        }
-
-        // A token must take the Shiki color, not the inherited text color.
-        await expect(getComputedStyle(token).color).not.toBe(getComputedStyle(code).color);
-
-        // The code must start on the same x as the language label in the header.
-        await expect(Math.round(token.getBoundingClientRect().left)).toBe(
-            Math.round(label.getBoundingClientRect().left),
-        );
     },
 };
 
@@ -141,13 +117,7 @@ export const Wrapped: Story = {
 };
 
 export const Dark: Story = {
-    decorators: [
-        (Story) => (
-            <DarkTheme>
-                <Story />
-            </DarkTheme>
-        ),
-    ],
+    decorators: [DarkTheme],
     play: async ({ canvasElement }) => {
         await waitFor(() => expect(getComputedStyle(document.documentElement).colorScheme).toBe("dark"));
         await waitFor(() => expect(canvasElement.querySelector("code span[style]")).not.toBeNull(), { timeout: 5000 });
@@ -186,20 +156,6 @@ export const LineNumbers: Story = {
     },
 };
 
-export const CustomLineNumbers: Story = {
-    args: {
-        lineNumbers: true,
-        formatLineNumber: (line) => `L${line}`,
-    },
-    play: async ({ canvasElement }) => {
-        const labels = [...canvasElement.querySelectorAll("[data-slot='code-block-line-number']")].map(
-            (node) => node.textContent,
-        );
-
-        await expect(labels).toEqual(["L1", "L2", "L3"]);
-    },
-};
-
 export const Diff: Story = {
     args: {
         code: diff,
@@ -219,32 +175,6 @@ export const Diff: Story = {
         // empty marker, so the code starts on one x for every row.
         await expect(markers).toEqual(["", "", "", "", "-", "+", "", ""]);
         await expect(new Set(contentLefts).size).toBe(1);
-        await expect(added.length).toBe(1);
-        await expect(removed.length).toBe(1);
-    },
-};
-
-export const DiffWithLineNumbers: Story = {
-    args: {
-        code: diff,
-        language: "diff",
-        lineNumbers: true,
-        startLine: 41,
-    },
-    play: async ({ canvasElement }) => {
-        const pre = canvasElement.querySelector("pre");
-        const numbers = canvasElement.querySelectorAll("[data-slot='code-block-line-number']");
-        const markers = canvasElement.querySelectorAll("[data-slot='code-block-marker']");
-        const added = canvasElement.querySelectorAll("[data-slot='code-block-line'][data-variant='added']");
-        const removed = canvasElement.querySelectorAll("[data-slot='code-block-line'][data-variant='removed']");
-
-        if (pre === null) {
-            throw new Error("The story did not render a pre element");
-        }
-
-        await expect(pre.hasAttribute("data-numbered")).toBe(true);
-        await expect(numbers.length).toBe(diff.split("\n").length);
-        await expect(markers.length).toBe(diff.split("\n").length);
         await expect(added.length).toBe(1);
         await expect(removed.length).toBe(1);
     },

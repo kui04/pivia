@@ -1,7 +1,6 @@
 import {
     initialSyncSeq,
     nextSyncSeq,
-    parseSessionId,
     parseSyncEpoch,
     type SessionId,
     type SessionSummary,
@@ -14,6 +13,7 @@ import { expect, fn, waitFor, within } from "storybook/test";
 
 import { ToastProvider } from "@components/Toast";
 import { toastManager } from "@/lib/toast";
+import { sid } from "@/storybook/ids";
 import type { WebSocketConstructor, WebSocketLike } from "@/lib/transport";
 import { createAuthStore, type AuthClient } from "@/stores/auth";
 import { createSessionStore } from "@/stores/session";
@@ -22,14 +22,6 @@ import { createWorkspaceStore, type WorkspaceCatalogCache } from "@/stores/works
 import { WorkspaceLayout, type WorkspaceApiClient } from "./WorkspaceLayout";
 import { WorkspacePage } from "./WorkspacePage";
 import styles from "./WorkspaceLayout.stories.module.css";
-
-function sid(raw: string): SessionId {
-    const parsed = parseSessionId(raw);
-    if (parsed === null) {
-        throw new Error(`Invalid story session id: ${raw}`);
-    }
-    return parsed;
-}
 
 const S1 = sid("session-1");
 const S2 = sid("session-2");

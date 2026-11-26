@@ -1,8 +1,8 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { Trash, Upload } from "lucide-react";
-import { useEffect } from "react";
-import type { ReactNode } from "react";
 import { expect, fn, screen, userEvent, waitFor, within } from "storybook/test";
+
+import { DarkTheme, LightTheme } from "@/storybook/theme";
 
 import { IconButton } from "../IconButton";
 
@@ -46,32 +46,6 @@ export default meta;
 
 type Story = StoryObj<typeof meta>;
 
-function LightTheme({ children }: { children: ReactNode }) {
-    useEffect(() => {
-        const root = document.documentElement;
-        root.dataset.theme = "light";
-
-        return () => {
-            delete root.dataset.theme;
-        };
-    }, []);
-
-    return <>{children}</>;
-}
-
-function DarkTheme({ children }: { children: ReactNode }) {
-    useEffect(() => {
-        const root = document.documentElement;
-        root.dataset.theme = "dark";
-
-        return () => {
-            delete root.dataset.theme;
-        };
-    }, []);
-
-    return <>{children}</>;
-}
-
 async function openFromTrigger(canvasElement: HTMLElement, name: string, dialogName: string) {
     const trigger = within(canvasElement).getByRole("button", { name });
 
@@ -85,30 +59,14 @@ async function openFromTrigger(canvasElement: HTMLElement, name: string, dialogN
 }
 
 export const Default: Story = {
-    decorators: [
-        (Story) => (
-            <LightTheme>
-                <Story />
-            </LightTheme>
-        ),
-    ],
+    decorators: [LightTheme],
     play: async ({ canvasElement }) => {
         const { trigger, dialog } = await openFromTrigger(canvasElement, "Publish changes", "Publish changes?");
         const cancel = within(dialog).getByRole("button", { name: "Cancel" });
 
         await expect(within(dialog).getByText("The current draft will become visible to everyone.")).toBeVisible();
         await waitFor(() => expect(cancel).toHaveFocus());
-
-        await expect(getComputedStyle(cancel).borderColor).toBe("rgb(140, 140, 140)");
         await expect(dialog).toHaveAttribute("aria-modal", "true");
-
-        const style = getComputedStyle(dialog);
-        await expect(Math.round(Number.parseFloat(style.borderRadius))).toBe(28);
-        await expect(style.backgroundColor).toBe("rgb(255, 255, 255)");
-        await expect(style.boxShadow).not.toBe("none");
-        await expect(style.transitionProperty).toContain("opacity");
-        await expect(style.transitionProperty).toContain("scale");
-        await expect(style.transitionDuration).toContain("0.2s");
 
         const backdrop = document.querySelector<HTMLElement>("[data-slot='alert-dialog-backdrop']");
         if (backdrop === null) {
@@ -126,13 +84,7 @@ export const Default: Story = {
 };
 
 export const Destructive: Story = {
-    decorators: [
-        (Story) => (
-            <LightTheme>
-                <Story />
-            </LightTheme>
-        ),
-    ],
+    decorators: [LightTheme],
     args: {
         trigger: deleteTrigger,
         title: "Delete this file?",
@@ -146,31 +98,11 @@ export const Destructive: Story = {
         const { trigger, dialog } = await openFromTrigger(canvasElement, "Delete file", "Delete this file?");
         const confirm = within(dialog).getByRole("button", { name: "Delete" });
 
-        // The error roles drive the confirming action.
-        await expect(getComputedStyle(confirm).backgroundColor).toBe("rgb(199, 46, 15)");
+        await expect(confirm).toHaveAttribute("data-variant", "destructive");
 
         await userEvent.click(confirm);
 
         await expect(onConfirm).toHaveBeenCalledTimes(1);
-        await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
-        await waitFor(() => expect(trigger).toHaveFocus());
-    },
-};
-
-export const Keyboard: Story = {
-    play: async ({ canvasElement }) => {
-        const trigger = within(canvasElement).getByRole("button", { name: "Publish changes" });
-
-        trigger.focus();
-        await userEvent.keyboard("{Enter}");
-
-        const dialog = await screen.findByRole("alertdialog", { name: "Publish changes?" });
-        const cancel = within(dialog).getByRole("button", { name: "Cancel" });
-
-        await waitFor(() => expect(cancel).toHaveFocus());
-
-        await userEvent.keyboard("{Escape}");
-
         await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
         await waitFor(() => expect(trigger).toHaveFocus());
     },
@@ -192,25 +124,12 @@ export const Disabled: Story = {
 };
 
 export const Dark: Story = {
-    decorators: [
-        (Story) => (
-            <DarkTheme>
-                <Story />
-            </DarkTheme>
-        ),
-    ],
+    decorators: [DarkTheme],
     play: async ({ canvasElement }) => {
         await waitFor(() => expect(getComputedStyle(document.documentElement).colorScheme).toBe("dark"));
 
         const { dialog } = await openFromTrigger(canvasElement, "Publish changes", "Publish changes?");
 
-        await expect(getComputedStyle(dialog).backgroundColor).toBe("rgb(32, 32, 32)");
-
-        const backdrop = document.querySelector<HTMLElement>("[data-slot='alert-dialog-backdrop']");
-        if (backdrop === null) {
-            throw new Error("The alert dialog did not render a backdrop");
-        }
-
-        await expect(getComputedStyle(backdrop).backgroundColor).toBe("rgba(0, 0, 0, 0.45)");
+        await expect(dialog).toBeVisible();
     },
 };

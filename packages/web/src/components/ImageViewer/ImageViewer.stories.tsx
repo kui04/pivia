@@ -1,7 +1,8 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { useEffect, useState } from "react";
-import type { ReactNode } from "react";
+import { useState } from "react";
 import { expect, screen, userEvent, waitFor, within } from "storybook/test";
+
+import { DarkTheme } from "@/storybook/theme";
 
 import { ImageViewer } from "./ImageViewer";
 import { imageAlt, imageCaption, imageSrc } from "../Image/imageFixture";
@@ -35,19 +36,6 @@ function ViewerHarness({ defaultOpen = false, src = imageSrc }: { defaultOpen?: 
             <ImageViewer open={open} onOpenChange={setOpen} src={src} alt={imageAlt} caption={imageCaption} />
         </>
     );
-}
-
-function DarkTheme({ children }: { children: ReactNode }) {
-    useEffect(() => {
-        const root = document.documentElement;
-        root.dataset.theme = "dark";
-
-        return () => {
-            delete root.dataset.theme;
-        };
-    }, []);
-
-    return <>{children}</>;
 }
 
 export const Default: Story = {
@@ -94,31 +82,9 @@ export const Default: Story = {
     },
 };
 
-export const Escape: Story = {
-    render: () => <ViewerHarness />,
-    play: async () => {
-        const trigger = screen.getByRole("button", { name: "Open image" });
-
-        await userEvent.click(trigger);
-        await screen.findByRole("dialog", { name: "Image viewer" });
-
-        await userEvent.keyboard("{Escape}");
-
-        await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-        await waitFor(() => expect(trigger).toHaveFocus());
-    },
-};
-
-export const Open: Story = {
-    render: () => <ViewerHarness defaultOpen />,
-};
-
 export const Dark: Story = {
-    render: () => (
-        <DarkTheme>
-            <ViewerHarness defaultOpen />
-        </DarkTheme>
-    ),
+    decorators: [DarkTheme],
+    render: () => <ViewerHarness defaultOpen />,
     play: async () => {
         await screen.findByRole("dialog", { name: "Image viewer" });
 

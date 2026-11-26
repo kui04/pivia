@@ -38,39 +38,23 @@ export const Primary: Story = {
     },
 };
 
-export const Secondary: Story = {
-    args: {
-        variant: "secondary",
-        children: "Load from file",
-    },
-    play: async ({ canvasElement }) => {
-        const button = within(canvasElement).getByRole("button", { name: "Load from file" });
-
-        await expect(button).toHaveAttribute("data-variant", "secondary");
-    },
+export const Variants: Story = {
+    render: () => (
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-12)" }}>
+            <Button>Primary</Button>
+            <Button variant="secondary">Secondary</Button>
+            <Button variant="ghost">Ghost</Button>
+        </div>
+    ),
 };
 
-export const Ghost: Story = {
-    args: {
-        variant: "ghost",
-        children: "Cancel",
-    },
-    play: async ({ canvasElement }) => {
-        const button = within(canvasElement).getByRole("button", { name: "Cancel" });
-
-        await expect(button).toHaveAttribute("data-variant", "ghost");
-    },
-};
-
-export const Large: Story = {
-    args: {
-        size: "lg",
-    },
-    play: async ({ canvasElement }) => {
-        const button = within(canvasElement).getByRole("button", { name: "Connect" });
-
-        await expect(button).toHaveAttribute("data-size", "lg");
-    },
+export const Sizes: Story = {
+    render: () => (
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-12)" }}>
+            <Button size="md">Medium</Button>
+            <Button size="lg">Large</Button>
+        </div>
+    ),
 };
 
 export const Radii: Story = {

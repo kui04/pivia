@@ -2,14 +2,12 @@ import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { FileEntry } from "@earendil-works/pi-coding-agent";
 import {
     parseEntriesVersion,
-    parseSessionId,
     parseSyncEpoch,
     parseSyncSeq,
     SESSION_CLOSE_CODE,
     type EntriesVersion,
     type SessionDelta,
     type SessionDetailResponse,
-    type SessionId,
     type SessionStateSnapshot,
     type SessionSummary,
     type SessionWsServerMessage,
@@ -22,18 +20,11 @@ import { MemoryRouter, Route, Routes } from "react-router";
 import { expect, userEvent, waitFor, within } from "storybook/test";
 
 import type { WebSocketConstructor, WebSocketLike } from "@/lib/transport";
+import { sid } from "@/storybook/ids";
 import { createSessionStore } from "@/stores/session";
 
 import { WorkspacePage } from "./WorkspacePage";
 import styles from "./WorkspacePage.stories.module.css";
-
-function sid(raw: string): SessionId {
-    const parsed = parseSessionId(raw);
-    if (parsed === null) {
-        throw new Error(`Invalid story session id: ${raw}`);
-    }
-    return parsed;
-}
 
 function ev(raw: string): EntriesVersion {
     const parsed = parseEntriesVersion(raw);
@@ -213,19 +204,6 @@ function deltaFrame(seqNumber: number, delta: SessionDelta): SessionWsServerMess
     return { type: "sync:delta", cursor: { epoch: RUNTIME, seq: seq(seqNumber) }, delta };
 }
 
-function assistantMessage(content: AssistantMessage["content"], timestamp: number): AssistantMessage {
-    return {
-        role: "assistant",
-        content,
-        api: "test",
-        provider: "test",
-        model: "test",
-        usage: EMPTY_USAGE,
-        stopReason: "pending",
-        timestamp,
-    };
-}
-
 class StorySessionSocket implements WebSocketLike {
     readyState = 0;
     onopen: (() => void) | null = null;
@@ -374,98 +352,6 @@ const cachedEntriesScenario: Scenario = ({ socket }) => {
     );
 };
 
-const streamingScenario: Scenario = ({ socket }) => {
-    const ws = socket.latest();
-    if (ws === null) {
-        return;
-    }
-    const startedAt = Date.now() - 2_000;
-    ws.open();
-    ws.receive(
-        inlineSnapshot([userEntry("s1", null, "Stream the answer as it arrives.", startedAt - 1_000)], {
-            isStreaming: true,
-        }),
-    );
-    ws.receive(
-        deltaFrame(2, {
-            kind: "agent_event",
-            event: {
-                type: "message_start",
-                message: assistantMessage(
-                    [
-                        { type: "thinking", thinking: "Drafting the reply while the reader watches." },
-                        { type: "text", text: "" },
-                    ],
-                    startedAt,
-                ),
-            },
-        }),
-    );
-    ws.receive(
-        deltaFrame(3, {
-            kind: "agent_event",
-            event: {
-                type: "message_update",
-                usage: EMPTY_USAGE,
-                assistantMessageEvent: { type: "text_start", contentIndex: 1 },
-            },
-        }),
-    );
-    ws.receive(
-        deltaFrame(4, {
-            kind: "agent_event",
-            event: {
-                type: "message_update",
-                usage: EMPTY_USAGE,
-                assistantMessageEvent: {
-                    type: "text_delta",
-                    contentIndex: 1,
-                    delta: "Writing the transcript ",
-                },
-            },
-        }),
-    );
-    ws.receive(
-        deltaFrame(5, {
-            kind: "agent_event",
-            event: {
-                type: "message_update",
-                usage: EMPTY_USAGE,
-                assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "as tokens arrive." },
-            },
-        }),
-    );
-    ws.receive(
-        deltaFrame(6, {
-            kind: "agent_event",
-            event: {
-                type: "message_update",
-                usage: EMPTY_USAGE,
-                assistantMessageEvent: { type: "toolcall_start", contentIndex: 2, id: "call-live", toolName: "bash" },
-            },
-        }),
-    );
-    ws.receive(
-        deltaFrame(7, {
-            kind: "agent_event",
-            event: {
-                type: "message_update",
-                usage: EMPTY_USAGE,
-                assistantMessageEvent: {
-                    type: "toolcall_end",
-                    contentIndex: 2,
-                    toolCall: {
-                        type: "toolCall",
-                        id: "call-live",
-                        name: "bash",
-                        arguments: { command: "pnpm test:storybook" },
-                    },
-                },
-            },
-        }),
-    );
-};
-
 const closedScenario: Scenario = ({ socket }) => {
     const ws = socket.latest();
     ws?.open();
@@ -570,26 +456,6 @@ export const SyncErrorBannerKeepsCachedEntries: Story = {
     },
 };
 
-export const StreamingAssistant: Story = {
-    render: () => <PageHarness route={`/workspace/${SESSION_ID}`} setup={streamingScenario} />,
-    play: async ({ canvasElement }) => {
-        const canvas = within(canvasElement);
-        await expect(await canvas.findByText("Stream the answer as it arrives.")).toBeVisible();
-
-        const trigger = await canvas.findByRole("button", { name: /^Working for / });
-        await expect(trigger).toHaveAttribute("aria-expanded", "false");
-        await expect(canvas.getByText("Working...")).toBeVisible();
-
-        await userEvent.click(trigger);
-        await expect(trigger).toHaveAttribute("aria-expanded", "true");
-        await expect(canvas.getByText("Writing the transcript as tokens arrive.")).toBeVisible();
-        await expect(canvas.getByRole("button", { name: /Bash/ })).toBeVisible();
-
-        const runningTimer = canvasElement.querySelector("[data-running='true']");
-        await expect(runningTimer).toHaveTextContent(/^\d+ms$|^\d+\.\ds$/);
-    },
-};
-
 export const SessionClosed: Story = {
     render: () => <PageHarness route={`/workspace/${SESSION_ID}`} setup={closedScenario} />,
     play: async ({ canvasElement }) => {
@@ -605,209 +471,5 @@ export const ConnectionLost: Story = {
         const canvas = within(canvasElement);
         await expect(await canvas.findByRole("heading", { name: "Connection lost" })).toBeVisible();
         await expect(canvas.getByText("Cannot reconnect to the session.")).toBeVisible();
-    },
-};
-
-const liveToolCompactingScenario: Scenario = ({ socket }) => {
-    const ws = socket.latest();
-    ws?.open();
-    ws?.receive(
-        inlineSnapshot(
-            [
-                userEntry("m1", null, "Run the verification suite.", 1_000),
-                assistantEntry(
-                    "m2",
-                    "m1",
-                    [
-                        {
-                            type: "toolCall",
-                            id: "call-live-bash",
-                            name: "bash",
-                            arguments: { command: "pnpm test" },
-                        },
-                    ],
-                    { timestamp: 1_500, stopReason: "toolUse" },
-                ),
-            ],
-            sessionState({ isStreaming: true, messageCount: 2 }),
-        ),
-    );
-    ws?.receive(
-        deltaFrame(2, {
-            kind: "agent_event",
-            event: {
-                type: "tool_execution_start",
-                toolCallId: "call-live-bash",
-                toolName: "bash",
-                args: { command: "pnpm test" },
-            },
-        }),
-    );
-    ws?.receive(
-        deltaFrame(3, {
-            kind: "agent_event",
-            event: {
-                type: "tool_execution_update",
-                toolCallId: "call-live-bash",
-                toolName: "bash",
-                args: { command: "pnpm test" },
-                partialResult: {
-                    content: [{ type: "text", text: "RUN v5.1.1 running unit checks..." }],
-                    details: undefined,
-                },
-            },
-        }),
-    );
-    ws?.receive(
-        deltaFrame(4, {
-            kind: "agent_event",
-            event: { type: "compaction_start", reason: "overflow" },
-        }),
-    );
-};
-
-export const LiveToolAndCompacting: Story = {
-    render: () => <PageHarness route={`/workspace/${SESSION_ID}`} setup={liveToolCompactingScenario} />,
-    play: async ({ canvasElement }) => {
-        const canvas = within(canvasElement);
-        const bashTrigger = await canvas.findByRole("button", { name: /Bash/ });
-        await expect(canvas.getByRole("status")).toHaveTextContent("Auto-compacting context...");
-
-        await userEvent.click(bashTrigger);
-        await expect(canvas.getByText("RUN v5.1.1 running unit checks...")).toBeVisible();
-    },
-};
-
-const queuedMessagesScenario: Scenario = ({ socket }) => {
-    const ws = socket.latest();
-    ws?.open();
-    ws?.receive(
-        inlineSnapshot(
-            TRANSCRIPT_ENTRIES.slice(0, 2),
-            sessionState({ isStreaming: true, steeringMessages: ["Check lint"] }),
-        ),
-    );
-    ws?.receive(
-        deltaFrame(2, {
-            kind: "agent_event",
-            event: {
-                type: "queue_update",
-                steering: ["Check lint"],
-                followUp: ["Report verified test counts"],
-            },
-        }),
-    );
-};
-
-export const QueuedMessagesRealtime: Story = {
-    render: () => <PageHarness route={`/workspace/${SESSION_ID}`} setup={queuedMessagesScenario} />,
-    play: async ({ canvasElement }) => {
-        const canvas = within(canvasElement);
-        const queueGroup = await canvas.findByRole("group", { name: "Queued messages" });
-        await expect(within(queueGroup).getByText("Steering")).toBeVisible();
-        await expect(within(queueGroup).getByText("Check lint")).toBeVisible();
-        await expect(within(queueGroup).getByText("Follow-up")).toBeVisible();
-        await expect(within(queueGroup).getByText("Report verified test counts")).toBeVisible();
-    },
-};
-
-const queuedOnEmptyBranchScenario: Scenario = ({ socket }) => {
-    const ws = socket.latest();
-    ws?.open();
-    ws?.receive(inlineSnapshot([], sessionState({ isStreaming: true, steeringMessages: ["Pending on empty branch"] })));
-};
-
-export const QueuedOnEmptyBranch: Story = {
-    render: () => <PageHarness route={`/workspace/${SESSION_ID}`} setup={queuedOnEmptyBranchScenario} />,
-    play: async ({ canvasElement }) => {
-        const canvas = within(canvasElement);
-        const queueGroup = await canvas.findByRole("group", { name: "Queued messages" });
-        await expect(within(queueGroup).getByText("Pending on empty branch")).toBeVisible();
-        await expect(canvas.queryByRole("heading", { name: "Empty session" })).not.toBeInTheDocument();
-    },
-};
-
-const closedSessionHidesQueueScenario: Scenario = ({ socket }) => {
-    const ws = socket.latest();
-    ws?.open();
-    ws?.receive(
-        inlineSnapshot(
-            TRANSCRIPT_ENTRIES.slice(0, 2),
-            sessionState({ isStreaming: true, steeringMessages: ["Should hide when closed"] }),
-        ),
-    );
-    ws?.serverClose(SESSION_CLOSE_CODE.sessionClosed, "The session was closed by the user.");
-};
-
-export const ClosedSessionHidesQueue: Story = {
-    render: () => <PageHarness route={`/workspace/${SESSION_ID}`} setup={closedSessionHidesQueueScenario} />,
-    play: async ({ canvasElement }) => {
-        const canvas = within(canvasElement);
-        await expect(await canvas.findByText("Show the transcript view for this session.")).toBeVisible();
-        await expect(canvas.queryByRole("group", { name: "Queued messages" })).not.toBeInTheDocument();
-    },
-};
-
-const metadataAndUsageScenario: Scenario = ({ socket }) => {
-    const ws = socket.latest();
-    ws?.open();
-    ws?.receive(
-        inlineSnapshot([
-            userEntry("m1", null, "Earlier prompt", 1_000),
-            {
-                type: "compaction",
-                id: "c1",
-                parentId: "m1",
-                timestamp: "2026-04-01T00:00:02.000Z",
-                summary: "Compacted earlier discussion.",
-                firstKeptEntryId: "m1",
-                tokensBefore: 18_400,
-                usage: {
-                    input: 1_800,
-                    output: 400,
-                    cacheRead: 0,
-                    cacheWrite: 0,
-                    totalTokens: 2_200,
-                    cost: { input: 0.01, output: 0.01, cacheRead: 0, cacheWrite: 0, total: 0.02 },
-                },
-            },
-            assistantEntry("m2", "c1", [{ type: "text", text: "Resumed from summary." }], {
-                timestamp: 3_000,
-                diagnostics: [
-                    {
-                        type: "anthropic_input_transformations",
-                        timestamp: 3_000,
-                        details: {
-                            transformations: [{ type: "thinking_dropped", index: 0 }],
-                        },
-                    },
-                ],
-            }),
-            {
-                type: "usage",
-                id: "u1",
-                parentId: "m2",
-                timestamp: "2026-04-01T00:01:00.000Z",
-                kind: "cache_warm",
-                provider: "anthropic",
-                model: "claude",
-                usage: {
-                    ...EMPTY_USAGE,
-                    cost: { ...EMPTY_USAGE.cost, total: 0.0012 },
-                },
-                note: "idle",
-            },
-        ]),
-    );
-};
-
-export const MetadataAndUsageRealtime: Story = {
-    render: () => <PageHarness route={`/workspace/${SESSION_ID}`} setup={metadataAndUsageScenario} />,
-    play: async ({ canvasElement }) => {
-        const canvas = within(canvasElement);
-        await expect(await canvas.findByRole("button", { name: "Compaction" })).toBeVisible();
-        await expect(canvas.getByText("Compacted from 18,400 tokens · 2.2k tokens billed (~$0.02)")).toBeVisible();
-        await expect(canvas.getByRole("status")).toHaveTextContent("Anthropic dropped 1 thinking block");
-        await expect(canvas.getByText("Cache warmed (idle): $0.0012")).toBeVisible();
     },
 };

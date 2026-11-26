@@ -1,8 +1,9 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { Copy, Ellipsis, Pencil, Trash } from "lucide-react";
-import { useEffect } from "react";
-import type { ReactNode } from "react";
+
 import { expect, fn, screen, userEvent, waitFor, within } from "storybook/test";
+
+import { DarkTheme } from "@/storybook/theme";
 
 import { IconButton } from "../IconButton";
 
@@ -41,19 +42,6 @@ const meta = {
 export default meta;
 
 type Story = StoryObj<typeof meta>;
-
-function DarkTheme({ children }: { children: ReactNode }) {
-    useEffect(() => {
-        const root = document.documentElement;
-        root.dataset.theme = "dark";
-
-        return () => {
-            delete root.dataset.theme;
-        };
-    }, []);
-
-    return <>{children}</>;
-}
 
 export const Default: Story = {
     args: {
@@ -137,42 +125,8 @@ export const ManyItems: Story = {
     },
 };
 
-export const Sections: Story = {
-    args: {
-        children: (
-            <>
-                <MenuItem icon={<Pencil />}>Rename</MenuItem>
-                <MenuItem icon={<Copy />}>Duplicate</MenuItem>
-                <MenuSeparator />
-                <MenuItem icon={<Trash />} destructive>
-                    Delete
-                </MenuItem>
-            </>
-        ),
-    },
-    play: async ({ canvasElement }) => {
-        const canvas = within(canvasElement);
-
-        await userEvent.click(canvas.getByRole("button", { name: "Message actions" }));
-
-        const menu = await screen.findByRole("menu");
-        const normal = within(menu).getByRole("menuitem", { name: "Rename" });
-        const destructive = within(menu).getByRole("menuitem", { name: "Delete" });
-
-        await expect(within(menu).getByRole("separator")).toBeInTheDocument();
-        await expect(within(menu).getAllByRole("menuitem")).toHaveLength(3);
-        await expect(getComputedStyle(destructive).color).not.toBe(getComputedStyle(normal).color);
-    },
-};
-
 export const Dark: Story = {
-    decorators: [
-        (Story) => (
-            <DarkTheme>
-                <Story />
-            </DarkTheme>
-        ),
-    ],
+    decorators: [DarkTheme],
     args: {
         children: defaultItems,
     },

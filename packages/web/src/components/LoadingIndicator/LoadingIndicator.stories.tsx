@@ -1,25 +1,13 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { useEffect } from "react";
 import type { ReactNode } from "react";
 import { expect, waitFor, within } from "storybook/test";
+
+import { DarkTheme } from "@/storybook/theme";
 
 import { LoadingIndicator } from "./LoadingIndicator";
 
 function Row({ children }: { children: ReactNode }) {
     return <div style={{ display: "flex", alignItems: "center", gap: "var(--space-16)" }}>{children}</div>;
-}
-
-function DarkTheme({ children }: { children: ReactNode }) {
-    useEffect(() => {
-        const root = document.documentElement;
-        root.dataset.theme = "dark";
-
-        return () => {
-            delete root.dataset.theme;
-        };
-    }, []);
-
-    return <>{children}</>;
 }
 
 const meta = {
@@ -112,17 +100,6 @@ export const Sizes: Story = {
     },
 };
 
-export const CustomLabel: Story = {
-    args: {
-        label: "Loading projects",
-    },
-    play: async ({ canvasElement }) => {
-        const canvas = within(canvasElement);
-
-        await expect(canvas.getByRole("progressbar", { name: "Loading projects" })).toBeInTheDocument();
-    },
-};
-
 export const LabelledBy: Story = {
     render: () => (
         <div>
@@ -140,13 +117,7 @@ export const LabelledBy: Story = {
 };
 
 export const Dark: Story = {
-    decorators: [
-        (Story) => (
-            <DarkTheme>
-                <Story />
-            </DarkTheme>
-        ),
-    ],
+    decorators: [DarkTheme],
     play: async ({ canvasElement }) => {
         await waitFor(() => expect(getComputedStyle(document.documentElement).colorScheme).toBe("dark"));
 

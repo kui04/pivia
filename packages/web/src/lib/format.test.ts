@@ -20,12 +20,6 @@ describe("Formatter.duration", () => {
         expect(Formatter.duration(7_380_000)).toBe("2h 3m");
         expect(Formatter.duration(7_383_000)).toBe("2h 3m 3s");
     });
-
-    it("reads negative and non-finite input as zero", () => {
-        expect(Formatter.duration(-5)).toBe("0ms");
-        expect(Formatter.duration(Number.NaN)).toBe("0ms");
-        expect(Formatter.duration(Number.POSITIVE_INFINITY)).toBe("0ms");
-    });
 });
 
 describe("Formatter.byteSize", () => {
@@ -34,11 +28,6 @@ describe("Formatter.byteSize", () => {
         expect(Formatter.byteSize(50 * 1024)).toBe("50.0KB");
         expect(Formatter.byteSize(2 * 1024 * 1024)).toBe("2.0MB");
     });
-
-    it("reads negative and non-finite input as zero bytes", () => {
-        expect(Formatter.byteSize(-1)).toBe("0B");
-        expect(Formatter.byteSize(Number.NaN)).toBe("0B");
-    });
 });
 
 describe("Formatter.usdCost", () => {
@@ -46,7 +35,6 @@ describe("Formatter.usdCost", () => {
         expect(Formatter.usdCost(0.000456)).toBe("$0.00046");
         expect(Formatter.usdCost(0.025)).toBe("$0.03");
         expect(Formatter.usdCost(0)).toBe("$0.0");
-        expect(Formatter.usdCost(-1)).toBe("$0.0");
     });
 });
 
@@ -58,11 +46,6 @@ describe("Formatter.compactTokenCount", () => {
         expect(Formatter.compactTokenCount(12_400)).toBe("12k");
         expect(Formatter.compactTokenCount(1_500_000)).toBe("1.5M");
         expect(Formatter.compactTokenCount(12_000_000)).toBe("12M");
-    });
-
-    it("reads negative and non-finite input as zero", () => {
-        expect(Formatter.compactTokenCount(-1)).toBe("0");
-        expect(Formatter.compactTokenCount(Number.NaN)).toBe("0");
     });
 });
 
@@ -77,5 +60,15 @@ describe("Formatter.relativeAge", () => {
         expect(Formatter.relativeAge(now - 86_400_000, now)).toBe("1d");
         expect(Formatter.relativeAge(now - 7 * 86_400_000, now)).toBe("1w");
         expect(Formatter.relativeAge(now - 365 * 86_400_000, now)).toBe("1y");
+    });
+});
+
+describe("Formatter invalid input", () => {
+    it("reads negative and non-finite input as zero", () => {
+        expect(Formatter.duration(-5)).toBe("0ms");
+        expect(Formatter.duration(Number.POSITIVE_INFINITY)).toBe("0ms");
+        expect(Formatter.byteSize(Number.NaN)).toBe("0B");
+        expect(Formatter.usdCost(-1)).toBe("$0.0");
+        expect(Formatter.compactTokenCount(Number.NaN)).toBe("0");
     });
 });

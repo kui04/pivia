@@ -1,20 +1,13 @@
-import { parseSessionId, type SessionId } from "@pivia/protocol";
+import { type SessionId } from "@pivia/protocol";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useState } from "react";
 import { expect, fn, waitFor, within } from "storybook/test";
 
+import { sid } from "@/storybook/ids";
 import type { CatalogSyncPhase, SessionRow as SessionRowModel, WorkspaceModel } from "@/stores/workspace";
 
 import { Sidebar, type SidebarProps } from "./Sidebar";
 import styles from "./Sidebar.stories.module.css";
-
-function sid(raw: string): SessionId {
-    const parsed = parseSessionId(raw);
-    if (parsed === null) {
-        throw new Error(`Invalid story session id: ${raw}`);
-    }
-    return parsed;
-}
 
 const NOW = Date.parse("2026-01-03T12:00:00.000Z");
 

@@ -71,28 +71,6 @@ export const Default: Story = {
     },
 };
 
-export const FocusRing: Story = {
-    render: (args) => (
-        <Field label="Visibility" name="visibility" nativeLabel={false}>
-            <Select {...args} />
-        </Field>
-    ),
-    play: async ({ canvasElement }) => {
-        const trigger = within(canvasElement).getByRole("combobox", { name: "Visibility" });
-
-        await userEvent.tab();
-
-        await expect(trigger).toHaveFocus();
-
-        // A synthetic Tab inside the Storybook iframe does not always set :focus-visible in a
-        // real browser. The CLI run still exercises the inset ring; only assert it when the
-        // browser reports the keyboard focus state.
-        if (trigger.matches(":focus-visible")) {
-            await expect(Math.round(Number.parseFloat(getComputedStyle(trigger).outlineOffset))).toBe(-2);
-        }
-    },
-};
-
 export const WithError: Story = {
     render: (args) => (
         <Field

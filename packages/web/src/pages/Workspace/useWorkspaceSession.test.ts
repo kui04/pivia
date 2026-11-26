@@ -99,24 +99,20 @@ describe("attachWorkspaceSession", () => {
         expect(store.disconnect).toHaveBeenCalledTimes(2);
     });
 
-    it("disconnects without connecting for an invalid route segment", () => {
-        const store = fakeStore();
+    it("disconnects without connecting when the route has no usable segment", () => {
+        const invalidStore = fakeStore();
+        const invalidDetach = attachWorkspaceSession(invalidStore, { kind: "invalid", raw: "not valid" });
 
-        const detach = attachWorkspaceSession(store, { kind: "invalid", raw: "not valid" });
-
-        expect(store.connect).not.toHaveBeenCalled();
-        expect(store.disconnect).toHaveBeenCalledOnce();
+        expect(invalidStore.connect).not.toHaveBeenCalled();
+        expect(invalidStore.disconnect).toHaveBeenCalledOnce();
         expect(() => {
-            detach();
+            invalidDetach();
         }).not.toThrow();
-    });
 
-    it("disconnects without connecting when the route has no session", () => {
-        const store = fakeStore();
+        const emptyStore = fakeStore();
+        attachWorkspaceSession(emptyStore, { kind: "none" });
 
-        attachWorkspaceSession(store, { kind: "none" });
-
-        expect(store.connect).not.toHaveBeenCalled();
-        expect(store.disconnect).toHaveBeenCalledOnce();
+        expect(emptyStore.connect).not.toHaveBeenCalled();
+        expect(emptyStore.disconnect).toHaveBeenCalledOnce();
     });
 });

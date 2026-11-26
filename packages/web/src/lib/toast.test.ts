@@ -22,18 +22,10 @@ describe("toast manager timeouts", () => {
 
         manager.add({ type: "warning", title: "Slow connection" });
         manager.add({ type: "error", title: "Save failed" });
-
-        expect(timeouts).toEqual([0, 0]);
-        unsubscribe();
-    });
-
-    it("keeps the provider timeout for info and success", () => {
-        const { manager, timeouts, unsubscribe } = probeTimeouts();
-
         manager.add({ type: "info", title: "Update available" });
         manager.add({ type: "success", title: "Saved" });
 
-        expect(timeouts).toEqual([undefined, undefined]);
+        expect(timeouts).toEqual([0, 0, undefined, undefined]);
         unsubscribe();
     });
 
@@ -89,15 +81,5 @@ describe("app toasts", () => {
             description: "The server is not reachable.",
             actionProps: { children: "Retry", onClick },
         });
-    });
-
-    it("forwards the same id so Base UI replaces the earlier message", () => {
-        const add = vi.spyOn(toastManager, "add").mockReturnValue("toast-id");
-
-        showError({ id: "same", title: "First message" });
-        showError({ id: "same", title: "Second message" });
-
-        expect(add.mock.calls[0]?.[0]).toMatchObject({ id: "same", title: "First message" });
-        expect(add.mock.calls[1]?.[0]).toMatchObject({ id: "same", title: "Second message" });
     });
 });

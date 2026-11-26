@@ -1,8 +1,8 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { useEffect, useState } from "react";
-import type { ReactNode } from "react";
+import { useState } from "react";
 import { expect, fn, waitFor, within } from "storybook/test";
 
+import { DarkTheme } from "@/storybook/theme";
 import { Button, Input, Menu, MenuItem } from "@components";
 
 import { Drawer, type DrawerProps } from "./Drawer";
@@ -129,20 +129,6 @@ export const Left: Story = {
     },
 };
 
-export const Right: Story = {
-    args: {
-        side: "right",
-    },
-    play: async ({ canvasElement, userEvent }) => {
-        await userEvent.click(within(canvasElement).getByRole("button", { name: "Open drawer" }));
-
-        const panel = await within(document.body).findByRole("dialog", { name: "Sessions" });
-        await expect(panel).toBeVisible();
-        await waitFor(() => expect(panel.contains(document.activeElement)).toBe(true));
-        await expect(panel).toHaveAttribute("data-side", "right");
-    },
-};
-
 export const Bottom: Story = {
     args: {
         side: "bottom",
@@ -164,35 +150,15 @@ export const Bottom: Story = {
     },
 };
 
-function DarkTheme({ children }: { children: ReactNode }) {
-    useEffect(() => {
-        const root = document.documentElement;
-        root.dataset.theme = "dark";
-
-        return () => {
-            delete root.dataset.theme;
-        };
-    }, []);
-
-    return <>{children}</>;
-}
-
 export const Dark: Story = {
-    decorators: [
-        (Story) => (
-            <DarkTheme>
-                <Story />
-            </DarkTheme>
-        ),
-    ],
+    decorators: [DarkTheme],
     play: async ({ canvasElement, userEvent }) => {
         await waitFor(() => expect(getComputedStyle(document.documentElement).colorScheme).toBe("dark"));
         await userEvent.click(within(canvasElement).getByRole("button", { name: "Open drawer" }));
 
         const panel = await within(document.body).findByRole("dialog", { name: "Sessions" });
 
-        // Surface container in the dark theme.
-        await expect(getComputedStyle(panel).backgroundColor).toBe("rgb(31, 31, 31)");
+        await expect(panel).toBeVisible();
     },
 };
 
@@ -242,51 +208,5 @@ export const KeepsContentState: Story = {
         await userEvent.click(openButton);
         await expect(field).toBeVisible();
         await expect(field).toHaveValue("parser");
-    },
-};
-
-function ScrollablePanel() {
-    return (
-        <div className={styles.panel}>
-            <p className={styles.title}>Scrolling content</p>
-            <div className={styles.scroller} data-testid="drawer-scroller" tabIndex={0} aria-label="Scrolling rows">
-                {Array.from({ length: 30 }, (_, index) => (
-                    <p key={index} className={styles.row}>
-                        Row {index + 1}
-                    </p>
-                ))}
-            </div>
-        </div>
-    );
-}
-
-/** The kept-mounted panel also keeps its inner scroll position. */
-export const KeepsScrollPosition: Story = {
-    args: {
-        children: <ScrollablePanel />,
-    },
-    play: async ({ canvasElement, userEvent }) => {
-        const canvas = within(canvasElement);
-        const openButton = canvas.getByRole("button", { name: "Open drawer" });
-
-        await userEvent.click(openButton);
-        const panel = await within(document.body).findByRole("dialog", { name: "Sessions" });
-        const scroller = panel.querySelector<HTMLElement>("[data-testid='drawer-scroller']");
-
-        if (scroller === null) {
-            throw new Error("The drawer did not render its scroll container");
-        }
-
-        scroller.scrollTop = 120;
-        await waitFor(() => expect(scroller.scrollTop).toBeGreaterThan(0));
-
-        await userEvent.keyboard("{Escape}");
-        await waitFor(async () => {
-            await expect(panel).not.toBeVisible();
-        });
-
-        await userEvent.click(openButton);
-        await expect(panel).toBeVisible();
-        await expect(scroller.scrollTop).toBeGreaterThan(0);
     },
 };

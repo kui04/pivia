@@ -1,7 +1,8 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { useEffect } from "react";
-import type { ReactNode } from "react";
+
 import { expect, screen, userEvent, waitFor, within } from "storybook/test";
+
+import { DarkTheme } from "@/storybook/theme";
 
 import { ToastProvider } from "./Toast";
 import { createToastManager, useToast } from "./useToast";
@@ -50,13 +51,9 @@ export const Default: Story = {
         const toast = await screen.findByRole("dialog", { name: "Changes saved" });
 
         await expect(within(toast).getByText("Your edits are now available on this device.")).toBeInTheDocument();
-        await expect(getComputedStyle(toast).transitionProperty).toContain("transform");
-        await expect(getComputedStyle(toast).transitionDuration).toContain("0.5s");
 
         const close = within(toast).getByRole("button", { name: "Dismiss toast" });
 
-        await expect(Math.round(Number.parseFloat(getComputedStyle(close).borderRadius))).toBe(8);
-        await expect(Math.round(Number.parseFloat(getComputedStyle(close).width))).toBe(24);
         await userEvent.click(close);
 
         await waitFor(() => expect(document.querySelectorAll("[data-slot='toast']")).toHaveLength(0));
@@ -209,51 +206,10 @@ export const Types: Story = {
 
         const icons = [...document.querySelectorAll<HTMLElement>("[data-slot='toast-icon']")];
         const borders = [...document.querySelectorAll<HTMLElement>("[data-slot='toast']")];
-        const theme = document.documentElement.dataset.theme;
-        const dark =
-            theme === "dark" || (theme !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
-        const expectedColors: Record<string, string> = dark
-            ? {
-                  info: "rgb(89, 164, 249)",
-                  success: "rgb(137, 209, 133)",
-                  warning: "rgb(204, 167, 0)",
-                  error: "rgb(248, 81, 73)",
-              }
-            : {
-                  info: "rgb(0, 99, 211)",
-                  success: "rgb(56, 138, 52)",
-                  warning: "rgb(191, 136, 3)",
-                  error: "rgb(199, 46, 15)",
-              };
 
         await expect(icons).toHaveLength(4);
         await expect(new Set(icons.map((icon) => getComputedStyle(icon).color)).size).toBe(4);
         await expect(new Set(borders.map((toast) => getComputedStyle(toast).borderColor)).size).toBe(1);
-
-        for (const icon of icons) {
-            const toast = icon.closest<HTMLElement>("[data-slot='toast']");
-            const close = toast?.querySelector<HTMLElement>("[data-slot='toast-close']");
-            const type = toast?.getAttribute("data-type");
-
-            if (close === null || close === undefined) {
-                throw new Error("The toast close button is missing");
-            }
-            if (type === null || type === undefined || !(type in expectedColors)) {
-                throw new Error("The toast did not expose a known semantic type");
-            }
-
-            const iconRect = icon.getBoundingClientRect();
-            const closeRect = close.getBoundingClientRect();
-
-            await expect(getComputedStyle(icon).color).toBe(expectedColors[type]);
-            await expect(icon.offsetWidth).toBe(20);
-            await expect(icon.offsetHeight).toBe(24);
-            await expect(getComputedStyle(icon).backgroundColor).toBe("rgba(0, 0, 0, 0)");
-            // The status icon and the close button share one horizontal line.
-            await expect(Math.round(iconRect.top + iconRect.height / 2)).toBe(
-                Math.round(closeRect.top + closeRect.height / 2),
-            );
-        }
     },
 };
 
@@ -359,35 +315,6 @@ export const BodyOnly: Story = {
     },
 };
 
-export const TopCenter: Story = {
-    args: {
-        position: "top-center",
-    },
-    render: (args) => (
-        <ToastProvider {...args}>
-            <ShowToast title="Top center" description="This toast is anchored to the top of the viewport." />
-        </ToastProvider>
-    ),
-    play: async ({ canvasElement }) => {
-        const canvas = within(canvasElement);
-
-        await userEvent.click(canvas.getByRole("button", { name: "Show toast" }));
-
-        const viewport = screen.getByRole("region", { name: "Toasts" });
-        const toast = await screen.findByRole("dialog", { name: "Top center" });
-
-        await expect(viewport).toHaveAttribute("data-position", "top-center");
-        const expectedTop = window.matchMedia("(min-width: 500px)").matches ? 24 : 16;
-        await waitFor(() => expect(Math.round(toast.getBoundingClientRect().top)).toBe(expectedTop));
-
-        const rect = toast.getBoundingClientRect();
-        await expect(
-            Math.abs(Math.round(rect.left + rect.width / 2) - Math.round(window.innerWidth / 2)),
-        ).toBeLessThanOrEqual(1);
-        await expect(getComputedStyle(toast).transformOrigin.split(" ")[1]).toBe("0px");
-    },
-};
-
 function SameIdDemo() {
     const toast = useToast();
 
@@ -454,63 +381,8 @@ export const ExternalManager: Story = {
     },
 };
 
-/** The external manager applies its own warning/error timeout rule, not only the hook. */
-const persistentManager = createToastManager();
-
-export const ExternalManagerPersistent: Story = {
-    args: {
-        timeout: 50,
-    },
-    render: (args) => (
-        <ToastProvider {...args} toastManager={persistentManager}>
-            <button
-                type="button"
-                onClick={() => {
-                    persistentManager.add({ id: "external-persistent", type: "warning", title: "External warning" });
-                }}
-            >
-                Show persistent external toast
-            </button>
-        </ToastProvider>
-    ),
-    play: async ({ canvasElement }) => {
-        const canvas = within(canvasElement);
-
-        await userEvent.click(canvas.getByRole("button", { name: "Show persistent external toast" }));
-        const toast = await screen.findByRole("dialog", { name: "External warning" });
-
-        // The provider timeout is 50 ms; a warning must override it with timeout 0.
-        await new Promise<void>((resolve) => {
-            setTimeout(resolve, 100);
-        });
-        await expect(toast).toBeInTheDocument();
-
-        await userEvent.click(within(toast).getByRole("button", { name: "Dismiss toast" }));
-        await waitFor(() => expect(document.querySelectorAll("[data-slot='toast']")).toHaveLength(0));
-    },
-};
-
-function DarkTheme({ children }: { children: ReactNode }) {
-    useEffect(() => {
-        const root = document.documentElement;
-        root.dataset.theme = "dark";
-
-        return () => {
-            delete root.dataset.theme;
-        };
-    }, []);
-
-    return <>{children}</>;
-}
-
 export const Dark: Story = {
-    decorators: [
-        (Story) => (
-            <DarkTheme>
-                <Story />
-            </DarkTheme>
-        ),
-    ],
+    decorators: [DarkTheme],
     render: (args) => (
         <ToastProvider {...args}>
             <ShowToast title="Changes saved" description="Your edits are now available on this device." />

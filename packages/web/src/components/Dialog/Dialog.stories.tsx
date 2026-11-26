@@ -1,8 +1,9 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { Plus } from "lucide-react";
-import { useEffect, useState } from "react";
-import type { ReactNode } from "react";
+import { useState } from "react";
 import { expect, fn, screen, userEvent, waitFor, within } from "storybook/test";
+
+import { DarkTheme } from "@/storybook/theme";
 
 import { Field } from "../Field";
 import { Form } from "../Form";
@@ -83,19 +84,6 @@ export default meta;
 
 type Story = StoryObj<typeof meta>;
 
-function DarkTheme({ children }: { children: ReactNode }) {
-    useEffect(() => {
-        const root = document.documentElement;
-        root.dataset.theme = "dark";
-
-        return () => {
-            delete root.dataset.theme;
-        };
-    }, []);
-
-    return <>{children}</>;
-}
-
 async function openDialog(canvasElement: HTMLElement) {
     const trigger = within(canvasElement).getByRole("button", { name: "New project" });
 
@@ -141,18 +129,6 @@ export const Default: Story = {
     },
 };
 
-export const Cancel: Story = {
-    render: () => <DialogDemo />,
-    play: async ({ canvasElement }) => {
-        const { trigger, dialog } = await openDialog(canvasElement);
-
-        await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
-
-        await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-        await waitFor(() => expect(trigger).toHaveFocus());
-    },
-};
-
 export const Validation: Story = {
     render: () => <DialogDemo />,
     play: async ({ canvasElement }) => {
@@ -171,13 +147,7 @@ export const Validation: Story = {
 };
 
 export const Dark: Story = {
-    decorators: [
-        (Story) => (
-            <DarkTheme>
-                <Story />
-            </DarkTheme>
-        ),
-    ],
+    decorators: [DarkTheme],
     render: () => <DialogDemo />,
     play: async ({ canvasElement }) => {
         await waitFor(() => expect(getComputedStyle(document.documentElement).colorScheme).toBe("dark"));

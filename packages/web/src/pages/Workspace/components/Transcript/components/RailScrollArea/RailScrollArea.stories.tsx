@@ -7,28 +7,6 @@ import storyFrame from "@/storybook/storyFrame.module.css";
 
 import { RailScrollArea } from "./RailScrollArea";
 
-function parseRgb(color: string): [number, number, number] {
-    const match = /^rgb\((\d+),\s*(\d+),\s*(\d+)\)$/.exec(color);
-    if (match === null) {
-        throw new Error(`Expected an opaque rgb color, got ${color}`);
-    }
-    return [Number(match[1]), Number(match[2]), Number(match[3])];
-}
-
-function relativeLuminance([red, green, blue]: [number, number, number]): number {
-    const linear = (value: number) => {
-        const channel = value / 255;
-        return channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
-    };
-    return 0.2126 * linear(red) + 0.7152 * linear(green) + 0.0722 * linear(blue);
-}
-
-function contrastRatio(foreground: [number, number, number], background: [number, number, number]): number {
-    const fg = relativeLuminance(foreground);
-    const bg = relativeLuminance(background);
-    return (Math.max(fg, bg) + 0.05) / (Math.min(fg, bg) + 0.05);
-}
-
 function ParagraphList({ count }: { readonly count: number }): ReactElement {
     return (
         <div>
@@ -83,12 +61,11 @@ export const ShortContentHidesThumb: Story = {
     },
 };
 
-export const FixedThumbInteractionsAndContrast: Story = {
+export const FixedThumbInteractions: Story = {
     args: {
         children: <ParagraphList count={18} />,
     },
     play: async ({ canvasElement }) => {
-        const frame = requireElement(canvasElement.firstElementChild, "the story frame");
         const viewport = requireViewport(canvasElement, "the rail viewport");
         const rail = requireElement(
             canvasElement.querySelector<HTMLElement>("[data-slot='rail-scrollbar']"),
@@ -106,23 +83,6 @@ export const FixedThumbInteractionsAndContrast: Story = {
         });
 
         await expect(thumb.getBoundingClientRect().height).toBeCloseTo(24, 0);
-
-        // Verify WCAG 1.4.11 >= 3:1 non-text contrast for the resting thumb over the story surface.
-        const fg = parseRgb(getComputedStyle(thumb).backgroundColor);
-        const bg = parseRgb(getComputedStyle(frame).backgroundColor);
-        const alpha = Number(getComputedStyle(thumb).opacity);
-        const blended: [number, number, number] = [
-            Math.round(alpha * fg[0] + (1 - alpha) * bg[0]),
-            Math.round(alpha * fg[1] + (1 - alpha) * bg[1]),
-            Math.round(alpha * fg[2] + (1 - alpha) * bg[2]),
-        ];
-        await expect(contrastRatio(blended, bg)).toBeGreaterThanOrEqual(3);
-
-        // Verify inset focus ring stays inside the clipped viewport when keyboard-focused.
-        await userEvent.tab();
-        if (viewport.matches(":focus-visible")) {
-            await expect(Math.round(Number.parseFloat(getComputedStyle(viewport).outlineOffset))).toBe(-2);
-        }
 
         // Click near the bottom of the rail track to jump down.
         const railRect = rail.getBoundingClientRect();

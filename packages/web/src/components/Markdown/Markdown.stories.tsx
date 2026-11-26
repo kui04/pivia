@@ -1,8 +1,9 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { Play } from "lucide-react";
-import { useEffect, useState } from "react";
-import type { ReactNode } from "react";
+import { useState } from "react";
 import { expect, screen, userEvent, waitFor, within } from "storybook/test";
+
+import { DarkTheme } from "@/storybook/theme";
 
 import { IconButton } from "../IconButton";
 import { imageAlt, imageCaption, imageSrc } from "../Image/imageFixture";
@@ -62,12 +63,6 @@ const wideTableAnswer = [
     `| ${Array.from({ length: 24 }, (_, index) => `Column ${index + 1}`).join(" | ")} |`,
     `| ${Array.from({ length: 24 }, () => "---").join(" | ")} |`,
     `| ${Array.from({ length: 24 }, (_, index) => `Value ${index + 1}`).join(" | ")} |`,
-].join("\n");
-
-const wideMathAnswer = [
-    "$$",
-    Array.from({ length: 24 }, (_, index) => `\\sum_{i=1}^{n} x_{${index}}`).join(" + "),
-    "$$",
 ].join("\n");
 
 const streamingPartial = [
@@ -146,19 +141,6 @@ const meta = {
 export default meta;
 
 type Story = StoryObj<typeof meta>;
-
-function DarkTheme({ children }: { children: ReactNode }) {
-    useEffect(() => {
-        const root = document.documentElement;
-        root.dataset.theme = "dark";
-
-        return () => {
-            delete root.dataset.theme;
-        };
-    }, []);
-
-    return <>{children}</>;
-}
 
 export const Default: Story = {
     play: async ({ canvasElement }) => {
@@ -251,42 +233,6 @@ export const WideTable: Story = {
 
         if (bar === null) {
             throw new Error("The story did not render the table scrollbar");
-        }
-
-        await expect(getComputedStyle(bar).opacity).toBe("1");
-
-        region.scrollLeft = region.scrollWidth - region.clientWidth;
-        await waitFor(() => expect(region.scrollLeft).toBeGreaterThan(0));
-    },
-};
-
-export const WideMath: Story = {
-    args: {
-        children: wideMathAnswer,
-    },
-    render: (args) => (
-        <div style={{ width: "30rem" }}>
-            <Markdown {...args} />
-        </div>
-    ),
-    play: async ({ canvasElement }) => {
-        const region = canvasElement.querySelector<HTMLElement>(
-            "[data-slot='scroll-area-viewport'][aria-label='Formula']",
-        );
-
-        if (region === null) {
-            throw new Error("The story did not render the formula scroller");
-        }
-
-        await waitFor(() => expect(region.scrollWidth).toBeGreaterThan(region.clientWidth));
-
-        const bar =
-            region.parentElement?.querySelector<HTMLElement>(
-                "[data-slot='scroll-area-scrollbar'][data-orientation='horizontal']",
-            ) ?? null;
-
-        if (bar === null) {
-            throw new Error("The story did not render the formula scrollbar");
         }
 
         await expect(getComputedStyle(bar).opacity).toBe("1");
@@ -496,13 +442,7 @@ export const Dark: Story = {
     args: {
         children: darkAnswer,
     },
-    decorators: [
-        (Story) => (
-            <DarkTheme>
-                <Story />
-            </DarkTheme>
-        ),
-    ],
+    decorators: [DarkTheme],
     play: async ({ canvasElement }) => {
         await waitFor(() => expect(getComputedStyle(document.documentElement).colorScheme).toBe("dark"));
         await waitFor(

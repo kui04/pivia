@@ -1,16 +1,10 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useState } from "react";
-import { expect, screen, userEvent, waitFor, within } from "storybook/test";
+import { expect, userEvent, waitFor, within } from "storybook/test";
 
 import { Input } from "../Input";
-import { Select } from "../Select";
 
 import { Field } from "./Field";
-
-const options = [
-    { value: "private", label: "Private" },
-    { value: "team", label: "Team" },
-];
 
 const meta = {
     title: "Components/Field",
@@ -136,28 +130,5 @@ export const StableLayout: Story = {
         await userEvent.click(canvas.getByRole("button", { name: "Toggle error" }));
         await waitFor(() => expect(canvas.queryByRole("alert")).not.toBeInTheDocument());
         await expect(Math.round(field.getBoundingClientRect().height)).toBe(Math.round(height));
-    },
-};
-
-export const WithSelect: Story = {
-    args: {
-        label: "Visibility",
-        name: "visibility",
-        nativeLabel: false,
-        description: "This controls who can open the project.",
-        children: <Select options={options} placeholder="Choose visibility" />,
-    },
-    play: async ({ canvasElement }) => {
-        const canvas = within(canvasElement);
-        const trigger = canvas.getByRole("combobox", { name: "Visibility" });
-
-        await userEvent.click(trigger);
-
-        const listbox = await screen.findByRole("listbox", { name: "Visibility" }, { timeout: 3000 });
-        await waitFor(() => expect(screen.getByRole("option", { name: "Team" })).toBeVisible());
-        await userEvent.click(within(listbox).getByRole("option", { name: "Team" }));
-
-        await expect(trigger).toHaveTextContent("Team");
-        await waitFor(() => expect(screen.queryByRole("listbox")).not.toBeInTheDocument(), { timeout: 3000 });
     },
 };

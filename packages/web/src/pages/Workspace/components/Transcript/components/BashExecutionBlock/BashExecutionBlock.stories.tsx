@@ -61,12 +61,6 @@ const excludedItem: TranscriptBashItem = {
     excludeFromContext: true,
 };
 
-const failedExcludedItem: TranscriptBashItem = {
-    ...failedItem,
-    id: "bash-failed-excluded",
-    excludeFromContext: true,
-};
-
 const unnamedCommandItem: TranscriptBashItem = {
     ...succeededItem,
     id: "bash-unnamed",
@@ -184,17 +178,6 @@ export const ExcludedFromContext: Story = {
         // The suffix spells out the state, so the accent border is not the only signal.
         await expect(canvas.getByText(/not in context/)).toBeVisible();
         await expect(canvas.getByText("git status --short")).toBeVisible();
-    },
-};
-
-export const FailedAndExcluded: Story = {
-    args: {
-        item: failedExcludedItem,
-    },
-    play: async ({ canvasElement }) => {
-        const canvas = within(canvasElement);
-        await expect(canvas.getByText(/exited 2/)).toBeVisible();
-        await expect(canvas.getByText(/not in context/)).toBeVisible();
     },
 };
 

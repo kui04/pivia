@@ -3,15 +3,12 @@ import { describe, expect, it } from "vitest";
 import { measureScrollEdges } from "./useAutoScroll";
 
 describe("measureScrollEdges", () => {
-    it("hides fades when the viewport is collapsed or unmeasured", () => {
+    it("hides fades when there is nothing to scroll", () => {
         expect(measureScrollEdges({ scrollTop: 40, clientHeight: 0, scrollHeight: 400 })).toEqual({
             fadeTop: false,
             fadeBottom: false,
             atBottom: true,
         });
-    });
-
-    it("hides fades when the content fits inside the viewport", () => {
         expect(measureScrollEdges({ scrollTop: 0, clientHeight: 200, scrollHeight: 200 })).toEqual({
             fadeTop: false,
             fadeBottom: false,

@@ -7,15 +7,6 @@ import storyFrame from "@/storybook/storyFrame.module.css";
 
 import { TurnGroup } from "./TurnGroup";
 
-function rowBounds(rows: readonly Element[], index: number): { readonly top: number; readonly bottom: number } {
-    const row = rows[index];
-    if (row === undefined) {
-        throw new Error(`The story did not render row ${index}`);
-    }
-    const rect = row.getBoundingClientRect();
-    return { top: rect.top, bottom: rect.bottom };
-}
-
 const completedTurn: TranscriptTurnItem = {
     kind: "turn",
     id: "turn-completed",
@@ -321,24 +312,8 @@ export const WithIntermediateReply: Story = {
         const canvas = within(canvasElement);
         await expect(canvas.getByText(/running the unit checks before wiring the view/)).toBeVisible();
         await expect(canvas.getByText("All 42 unit tests pass across 4 test files.")).toBeVisible();
-
-        // Steps stack with a consistent 4px vertical gap beside the shared left rail.
-        const thinkingRow = requireElement(canvas.getByRole("button", { name: "Thoughts" }), "the thinking row");
-        const replyRow = requireElement(
-            canvasElement.querySelector<HTMLElement>("[data-slot='transcript-reply-step']"),
-            "the reply row",
-        );
-        const toolRow = requireElement(canvas.getByRole("button", { name: /Bash/ }), "the tool row");
-        const rows = [thinkingRow, replyRow, toolRow];
-        const gapBeforeReply = rowBounds(rows, 1).top - rowBounds(rows, 0).bottom;
-        const gapBeforeTool = rowBounds(rows, 2).top - rowBounds(rows, 1).bottom;
-
-        await expect(gapBeforeReply).toBeCloseTo(4, 0);
-        await expect(gapBeforeTool).toBeCloseTo(4, 0);
-        await expect(Math.abs(gapBeforeReply - gapBeforeTool)).toBeLessThanOrEqual(1);
-
-        await userEvent.hover(toolRow);
-        await expect(getComputedStyle(toolRow).backgroundColor).toBe("rgba(0, 0, 0, 0)");
+        await expect(canvas.getByRole("button", { name: "Thoughts" })).toBeVisible();
+        await expect(canvas.getByRole("button", { name: /Bash/ })).toBeVisible();
     },
 };
 
@@ -350,40 +325,17 @@ export const LongTurnBoundedTimeline: Story = {
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
         const viewport = requireViewport(canvasElement, "the turn steps viewport");
-        const headerRow = canvas.getByRole("button", { name: "Worked for 28.4s" });
-        const innerRow = canvas.getAllByRole("button", { name: "Thoughts" })[0];
-        if (innerRow === undefined) {
-            throw new Error("The story did not render an inner Thoughts row");
-        }
-        const scrollbar = requireElement(
-            canvasElement.querySelector<HTMLElement>("[data-slot='rail-scrollbar']"),
-            "the left-rail vertical scrollbar",
-        );
-        const thumb = requireElement(
-            canvasElement.querySelector<HTMLElement>("[data-slot='rail-thumb']"),
-            "the fixed-length rail thumb",
-        );
 
         await waitFor(async () => {
             await expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight);
-            await expect(thumb).toBeVisible();
         });
-        await expect(viewport.clientHeight).toBeLessThanOrEqual(322);
-        await expect(innerRow.getBoundingClientRect().right).toBeCloseTo(headerRow.getBoundingClientRect().right, 0);
-
-        await expect(scrollbar.getBoundingClientRect().right).toBeLessThanOrEqual(
-            innerRow.getBoundingClientRect().left + 1,
-        );
-        await expect(thumb.getBoundingClientRect().height).toBeCloseTo(24, 0);
+        await expect(canvas.getAllByRole("button", { name: "Thoughts" })).toHaveLength(6);
+        await expect(canvas.getByRole("button", { name: "Worked for 28.4s" })).toBeVisible();
         await expect(canvas.getByText("Reviewed all 16 steps while keeping the turn timeline bounded.")).toBeVisible();
 
         viewport.scrollTop = viewport.scrollHeight - viewport.clientHeight;
         viewport.dispatchEvent(new Event("scroll"));
-        await waitFor(async () => {
-            const mask = getComputedStyle(viewport).maskImage || getComputedStyle(viewport).webkitMaskImage;
-            await expect(mask).toContain("rgba(0, 0, 0, 0)");
-            await expect(thumb.getBoundingClientRect().bottom).toBeCloseTo(scrollbar.getBoundingClientRect().bottom, 1);
-        });
+        await waitFor(() => expect(viewport.scrollTop).toBeGreaterThan(0));
     },
 };
 

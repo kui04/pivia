@@ -74,69 +74,49 @@ export const Sizes: Story = {
     },
 };
 
-export const GlyphSize: Story = {
+export const Overrides: Story = {
     render: () => (
-        <Row>
-            <Icon glyphSize={12}>
-                <Search />
-            </Icon>
-            <Icon glyphSize={20}>
-                <Search />
-            </Icon>
-        </Row>
-    ),
-};
-
-export const Padding: Story = {
-    render: () => (
-        <Row>
-            <Icon padding={0}>
-                <X />
-            </Icon>
-            <Icon padding={8}>
-                <X />
-            </Icon>
-        </Row>
-    ),
-};
-
-export const PaddingInlineStart: Story = {
-    render: () => (
-        <Row>
-            <Icon
-                style={
-                    {
-                        "--icon-padding-inline-start": "0px",
-                    } as CSSProperties
-                }
-            >
-                <Check />
-            </Icon>
-        </Row>
-    ),
-    play: async ({ canvasElement }) => {
-        const box = canvasElement.querySelector("span");
-        if (box === null) {
-            throw new Error("The story did not render an icon box");
-        }
-
-        // Only the start padding is removed, so the 24px box becomes 20px wide.
-        await expect(Math.round(box.getBoundingClientRect().width)).toBe(20);
-    },
-};
-
-export const BoxSize: Story = {
-    render: () => (
-        <Row>
-            <Icon boxSize={32}>
-                <Check />
-            </Icon>
-            <Icon boxSize={40}>
-                <Check />
-            </Icon>
-        </Row>
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-16)" }}>
+            <Row>
+                <Icon glyphSize={12}>
+                    <Search />
+                </Icon>
+                <Icon glyphSize={20}>
+                    <Search />
+                </Icon>
+            </Row>
+            <Row>
+                <Icon padding={0}>
+                    <X />
+                </Icon>
+                <Icon padding={8}>
+                    <X />
+                </Icon>
+            </Row>
+            <Row>
+                <Icon boxSize={32}>
+                    <Check />
+                </Icon>
+                <Icon boxSize={40}>
+                    <Check />
+                </Icon>
+            </Row>
+            <Row>
+                <Icon
+                    style={
+                        {
+                            "--icon-padding-inline-start": "0px",
+                        } as CSSProperties
+                    }
+                >
+                    <Check />
+                </Icon>
+            </Row>
+        </div>
     ),
     play: async ({ canvasElement }) => {
-        await expect(boxWidths(canvasElement)).toEqual([32, 40]);
+        // Only the start padding drops on the last icon, so its 24px box becomes 20px wide.
+        await expect(boxWidths(canvasElement)).toEqual([20, 28, 16, 32, 32, 40, 20]);
+        await expect(glyphWidths(canvasElement)).toEqual([12, 20, 16, 16, 16, 16, 16]);
     },
 };

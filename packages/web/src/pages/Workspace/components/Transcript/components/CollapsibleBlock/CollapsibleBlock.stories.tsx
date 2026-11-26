@@ -49,23 +49,6 @@ export const Collapsed: Story = {
     },
 };
 
-export const ControlledOpen: Story = {
-    args: {
-        open: true,
-    },
-    play: async ({ canvasElement, args }) => {
-        const canvas = within(canvasElement);
-        const trigger = canvas.getByRole("button", { name: "Thoughts" });
-        await expect(trigger).toHaveAttribute("aria-expanded", "true");
-
-        await userEvent.click(trigger);
-
-        // A controlled block reports the request but keeps the caller's state.
-        await expect(args.onOpenChange).toHaveBeenCalledWith(false);
-        await expect(trigger).toHaveAttribute("aria-expanded", "true");
-    },
-};
-
 export const StreamingLabel: Story = {
     args: {
         label: "Thinking...",

@@ -13,7 +13,6 @@
  *   .paragraph   inside .stack, and alone in .dynamic
  *   .row         inside .content
  *   └─ .card
- *   .overrideViewport  className of the viewport, to prove caller specificity
  */
 .frame {
     box-sizing: border-box;
@@ -27,10 +26,6 @@
 
 .content {
     padding: var(--space-12);
-}
-
-.overrideViewport {
-    width: 80%;
 }
 
 .dynamic {

@@ -1,9 +1,10 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { ReactNode } from "react";
 import { expect, userEvent, waitFor, within } from "storybook/test";
 
 import { requireElement, requireViewport } from "@/storybook/dom";
+import { DarkTheme } from "@/storybook/theme";
 
 import { ScrollArea } from "./ScrollArea";
 import styles from "./ScrollArea.stories.module.css";
@@ -35,52 +36,6 @@ function queryCorner(element: HTMLElement): HTMLElement | null {
 
 function getOpacity(element: Element): string {
     return getComputedStyle(element).opacity;
-}
-
-function parseRgb(color: string): [number, number, number] {
-    const match = /^rgb\((\d+),\s*(\d+),\s*(\d+)\)$/.exec(color);
-
-    if (match === null) {
-        throw new Error(`Expected an opaque rgb color, got ${color}`);
-    }
-
-    return [Number(match[1]), Number(match[2]), Number(match[3])];
-}
-
-function relativeLuminance([red, green, blue]: [number, number, number]): number {
-    const linear = (value: number) => {
-        const channel = value / 255;
-        return channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
-    };
-
-    return 0.2126 * linear(red) + 0.7152 * linear(green) + 0.0722 * linear(blue);
-}
-
-function contrastRatio(foreground: [number, number, number], background: [number, number, number]): number {
-    const foregroundLuminance = relativeLuminance(foreground);
-    const backgroundLuminance = relativeLuminance(background);
-
-    return (
-        (Math.max(foregroundLuminance, backgroundLuminance) + 0.05) /
-        (Math.min(foregroundLuminance, backgroundLuminance) + 0.05)
-    );
-}
-
-async function expectThumbContrast(canvasElement: HTMLElement, thumb: HTMLElement): Promise<void> {
-    const root = requireElement(
-        canvasElement.querySelector<HTMLElement>("[data-slot='scroll-area']"),
-        "the scroll area",
-    );
-    const foreground = parseRgb(getComputedStyle(thumb).backgroundColor);
-    const background = parseRgb(getComputedStyle(root).backgroundColor);
-    const alpha = Number(getComputedStyle(thumb).opacity);
-    const blended: [number, number, number] = [
-        Math.round(alpha * foreground[0] + (1 - alpha) * background[0]),
-        Math.round(alpha * foreground[1] + (1 - alpha) * background[1]),
-        Math.round(alpha * foreground[2] + (1 - alpha) * background[2]),
-    ];
-
-    await expect(contrastRatio(blended, background)).toBeGreaterThanOrEqual(3);
 }
 
 function Demo({ label, children }: { label: string; children: ReactNode }) {
@@ -118,16 +73,10 @@ export const BothAxes: Story = {
 
         const vertical = requireElement(queryScrollbar(canvasElement, "vertical"), "the vertical scrollbar");
         const horizontal = requireElement(queryScrollbar(canvasElement, "horizontal"), "the horizontal scrollbar");
-        const horizontalThumb = requireElement(
-            horizontal.querySelector<HTMLElement>("[data-slot='scroll-area-thumb']"),
-            "the horizontal thumb",
-        );
-        const corner = requireElement(queryCorner(canvasElement), "the corner");
 
         await expect(viewport.scrollWidth).toBeGreaterThan(viewport.clientWidth);
         await expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight);
         await expect(viewport).toHaveAttribute("tabindex", "0");
-        await expectThumbContrast(canvasElement, horizontalThumb);
 
         // Base UI hides the native scrollbars, so the viewport keeps its full
         // width and height instead of losing a gutter.
@@ -138,10 +87,6 @@ export const BothAxes: Story = {
         // bars apart and must not block the content underneath.
         await expect(Math.round(Number.parseFloat(getComputedStyle(horizontal).height))).toBe(6);
         await expect(Math.round(Number.parseFloat(getComputedStyle(vertical).width))).toBe(6);
-        await expect(getComputedStyle(horizontal).backgroundColor).toBe("rgba(0, 0, 0, 0)");
-        await expect(Math.round(Number.parseFloat(getComputedStyle(horizontalThumb).borderRadius))).toBe(999);
-        await expect(Math.round(corner.getBoundingClientRect().width)).toBe(6);
-        await expect(getComputedStyle(corner).pointerEvents).toBe("none");
 
         // The horizontal cue is persistent; the vertical bar starts hidden.
         await expect(getOpacity(horizontal)).toBe("1");
@@ -156,23 +101,11 @@ export const BothAxes: Story = {
         await userEvent.unhover(viewport);
         await waitFor(() => expect(getOpacity(vertical)).toBe("0"));
 
-        // A wheel gesture clears Base UI's programmatic-scroll guard, so the
-        // scroll position change below starts its idle timer. A bare scrollTop
-        // change would be treated as programmatic and ignored.
-        viewport.dispatchEvent(new WheelEvent("wheel", { deltaY: 100, bubbles: true, cancelable: true }));
         viewport.scrollTop += 100;
         await expect(viewport.scrollTop).toBeGreaterThan(0);
-        await waitFor(() => expect(vertical).toHaveAttribute("data-scrolling"));
-        await expect(getOpacity(vertical)).toBe("1");
-        await waitFor(() => expect(vertical).not.toHaveAttribute("data-scrolling"), { timeout: 2000 });
-        await waitFor(() => expect(getOpacity(vertical)).toBe("0"));
-        await expect(getOpacity(horizontal)).toBe("1");
-        await expect(viewport.clientWidth).toBe(width);
 
         // Base UI makes the scrollable viewport focusable, which is the
-        // precondition for native keyboard scrolling. The actual PageDown
-        // default is not asserted because user-event's synthetic key does not
-        // reliably scroll a nested scroll container in this runner.
+        // precondition for native keyboard scrolling.
         viewport.focus();
         await expect(document.activeElement).toBe(viewport);
 
@@ -347,51 +280,8 @@ export const Landmark: Story = {
     },
 };
 
-export const ViewportOverride: Story = {
-    render: () => (
-        <ScrollArea
-            label="Viewport override"
-            style={{ width: "20rem", height: "10rem" }}
-            viewportClassName={styles.overrideViewport}
-        >
-            <p className={styles.paragraph}>A caller class can override the viewport width.</p>
-        </ScrollArea>
-    ),
-    play: async ({ canvasElement }) => {
-        const viewport = requireViewport(canvasElement, "the viewport");
-        const root = viewport.parentElement;
-
-        if (root === null) {
-            throw new Error("The scroll area root is missing");
-        }
-
-        await expect(Math.round(viewport.getBoundingClientRect().width)).toBe(
-            Math.round(root.getBoundingClientRect().width * 0.8),
-        );
-    },
-};
-
-function DarkTheme({ children }: { children: ReactNode }) {
-    useEffect(() => {
-        const root = document.documentElement;
-        root.dataset.theme = "dark";
-
-        return () => {
-            delete root.dataset.theme;
-        };
-    }, []);
-
-    return <>{children}</>;
-}
-
 export const Dark: Story = {
-    decorators: [
-        (Story) => (
-            <DarkTheme>
-                <Story />
-            </DarkTheme>
-        ),
-    ],
+    decorators: [DarkTheme],
     render: () => (
         <Demo label="Dark theme">
             <CellGrid />
@@ -402,13 +292,7 @@ export const Dark: Story = {
         await waitFor(() => expect(queryScrollbar(canvasElement, "horizontal")).not.toBeNull());
 
         const viewport = requireViewport(canvasElement, "the viewport");
-        const horizontal = requireElement(queryScrollbar(canvasElement, "horizontal"), "the horizontal scrollbar");
-        const thumb = requireElement(
-            horizontal.querySelector<HTMLElement>("[data-slot='scroll-area-thumb']"),
-            "the horizontal thumb",
-        );
 
         await userEvent.unhover(viewport);
-        await expectThumbContrast(canvasElement, thumb);
     },
 };

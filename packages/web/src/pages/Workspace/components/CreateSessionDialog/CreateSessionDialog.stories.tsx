@@ -1,8 +1,9 @@
-import { parseSessionId, type DirectoryListResponse, type SessionId, type SessionSummary } from "@pivia/protocol";
+import type { DirectoryListResponse, SessionSummary } from "@pivia/protocol";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useEffect, useState } from "react";
 import { expect, fn, waitFor, within } from "storybook/test";
 
+import { sid } from "@/storybook/ids";
 import { Button } from "@components";
 
 import {
@@ -11,14 +12,6 @@ import {
     type CreateSessionResult,
     type CreateSessionSubmitOptions,
 } from "./CreateSessionDialog";
-
-function sid(raw: string): SessionId {
-    const parsed = parseSessionId(raw);
-    if (parsed === null) {
-        throw new Error(`Invalid story session id: ${raw}`);
-    }
-    return parsed;
-}
 
 const createdSession: SessionSummary = {
     id: sid("session-created"),

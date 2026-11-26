@@ -60,18 +60,15 @@ describe("selectWorkspaceView", () => {
         ).toEqual({ kind: "syncError", message: "Cannot read" });
     });
 
-    it("reports a terminal connection state only without rows", () => {
+    it("reports a terminal connection state without rows and drops the entry retry", () => {
+        const entriesSync = { kind: "error", message: "Cannot read" } as const;
+
         expect(selectWorkspaceView(input({ status: "closed" }))).toEqual({ kind: "terminalError", closed: true });
         expect(selectWorkspaceView(input({ status: "error" }))).toEqual({ kind: "terminalError", closed: false });
         expect(selectWorkspaceView(input({ status: "closed", hasTranscript: true }))).toEqual({
             kind: "transcript",
             syncError: null,
         });
-    });
-
-    it("never offers an entry retry once the session is terminal", () => {
-        const entriesSync = { kind: "error", message: "Cannot read" } as const;
-
         expect(selectWorkspaceView(input({ status: "closed", hasTranscript: true, entriesSync }))).toEqual({
             kind: "transcript",
             syncError: null,
