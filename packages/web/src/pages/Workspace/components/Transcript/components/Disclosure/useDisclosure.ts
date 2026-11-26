@@ -1,11 +1,4 @@
-import { useId, useState } from "react";
-
-/** Expanded state and ARIA wiring shared by transcript disclosure rows. */
-export type DisclosureControl = {
-    readonly open: boolean;
-    readonly toggle: () => void;
-    readonly panelId: string;
-};
+import { useCallback, useState } from "react";
 
 /** Options of {@link useDisclosure}. */
 export type UseDisclosureOptions = {
@@ -13,32 +6,31 @@ export type UseDisclosureOptions = {
     readonly defaultOpen?: boolean | undefined;
     /** Controlled expanded state. */
     readonly open?: boolean | undefined;
-    /** Called when the user toggles the row. */
+    /** Called when Base UI reports an open-state change. */
     readonly onOpenChange?: ((open: boolean) => void) | undefined;
 };
 
 /**
- * Drive one disclosure row's expanded state and its panel id.
- *
- * A controlled row reports the requested state but keeps the caller's value; an uncontrolled row
- * owns the state. Both share the id that links the trigger to its panel.
+ * Mirror Base UI `Collapsible` open state for callers whose scroll observers or lazy formatting
+ * depend on whether the panel is currently open.
  */
-export function useDisclosure({
-    defaultOpen = false,
-    open: controlledOpen,
-    onOpenChange,
-}: UseDisclosureOptions = {}): DisclosureControl {
+export function useDisclosure({ defaultOpen = false, open: controlledOpen, onOpenChange }: UseDisclosureOptions = {}): {
+    readonly open: boolean;
+    readonly onOpenChange: (nextOpen: boolean) => void;
+} {
     const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen);
-    const panelId = useId();
-    const open = controlledOpen ?? uncontrolledOpen;
+    const isControlled = controlledOpen !== undefined;
+    const open = isControlled ? controlledOpen : uncontrolledOpen;
 
-    const toggle = (): void => {
-        const next = !open;
-        if (controlledOpen === undefined) {
-            setUncontrolledOpen(next);
-        }
-        onOpenChange?.(next);
-    };
+    const handleOpenChange = useCallback(
+        (nextOpen: boolean) => {
+            if (!isControlled) {
+                setUncontrolledOpen(nextOpen);
+            }
+            onOpenChange?.(nextOpen);
+        },
+        [isControlled, onOpenChange],
+    );
 
-    return { open, toggle, panelId };
+    return { open, onOpenChange: handleOpenChange };
 }

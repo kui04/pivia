@@ -2,7 +2,7 @@ import type { SessionId } from "@pivia/protocol";
 import { FolderClosed, FolderOpen } from "lucide-react";
 import type { ReactElement } from "react";
 
-import { Icon, VisuallyHidden } from "@components";
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger, Icon, VisuallyHidden } from "@components";
 import type { FolderSection as FolderSectionModel } from "@/stores/workspace/model";
 
 import { SessionRow } from "../SessionRow/SessionRow";
@@ -36,22 +36,23 @@ export function FolderSection({
     onCloseSession,
 }: FolderSectionProps): ReactElement {
     return (
-        <section className={styles.section}>
+        <Collapsible
+            open={!folder.collapsed}
+            onOpenChange={() => {
+                onToggle();
+            }}
+            render={<section />}
+            className={styles.section}
+        >
             <h2 className={styles.heading}>
-                <button
-                    type="button"
-                    className={styles.toggle}
-                    aria-expanded={!folder.collapsed}
-                    title={folder.cwd || undefined}
-                    onClick={onToggle}
-                >
+                <CollapsibleTrigger className={styles.toggle} title={folder.cwd || undefined}>
                     <Icon className={styles.folder}>{folder.collapsed ? <FolderClosed /> : <FolderOpen />}</Icon>
                     <span className={styles.label}>{folder.label}</span>
                     {folder.cwd === "" ? null : <VisuallyHidden>, {folder.cwd}</VisuallyHidden>}
-                </button>
+                </CollapsibleTrigger>
             </h2>
-            <div className={styles.collapse} data-collapsed={folder.collapsed}>
-                <ul className={styles.list} inert={folder.collapsed}>
+            <CollapsiblePanel>
+                <ul className={styles.list}>
                     {folder.sessions.map((session) => (
                         <SessionRow
                             key={session.id}
@@ -65,7 +66,7 @@ export function FolderSection({
                         />
                     ))}
                 </ul>
-            </div>
-        </section>
+            </CollapsiblePanel>
+        </Collapsible>
     );
 }

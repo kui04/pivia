@@ -3,6 +3,14 @@ export { Button, type ButtonProps, type ButtonRadius, type ButtonSize, type Butt
 export { Checkbox, type CheckboxProps } from "./Checkbox/Checkbox";
 export { CodeBlock, type CodeBlockProps } from "./CodeBlock/CodeBlock";
 export {
+    Collapsible,
+    CollapsiblePanel,
+    CollapsibleTrigger,
+    type CollapsiblePanelProps,
+    type CollapsibleProps,
+    type CollapsibleTriggerProps,
+} from "./Collapsible/Collapsible";
+export {
     Dialog,
     DialogActions,
     DialogClose,

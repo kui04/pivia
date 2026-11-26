@@ -1,16 +1,13 @@
 import { ChevronRight, type LucideIcon } from "lucide-react";
 import type { ReactElement, ReactNode } from "react";
 
-import { Icon } from "@components";
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger, Icon } from "@components";
 import { cn } from "@/lib";
 
 import styles from "./Disclosure.module.css";
-import type { DisclosureControl } from "./useDisclosure";
 
 /** Props of {@link Disclosure}. */
 export type DisclosureProps = {
-    /** Expanded state returned by {@link useDisclosure}. */
-    control: DisclosureControl;
     /** Leading decorative icon. */
     icon: LucideIcon;
     /** Primary row text; it is also the trigger's accessible name. */
@@ -25,6 +22,12 @@ export type DisclosureProps = {
     tone?: "neutral" | "accent" | "primary" | "error" | undefined;
     /** True while the label still streams; animates the label text. */
     streaming?: boolean | undefined;
+    /** Initial expanded state for uncontrolled usage. */
+    defaultOpen?: boolean | undefined;
+    /** Controlled expanded state. */
+    open?: boolean | undefined;
+    /** Called when Base UI toggles the row. */
+    onOpenChange?: ((open: boolean) => void) | undefined;
     /** Optional class name on the outer container. */
     className?: string | undefined;
     /** Panel body. The caller owns its layout and any bounded scroller. */
@@ -32,14 +35,13 @@ export type DisclosureProps = {
 };
 
 /**
- * Shared disclosure shell for transcript rows: trigger, animated panel and inert wiring.
+ * Shared disclosure shell for transcript rows: trigger and animated Base UI collapsible panel.
  *
- * The header owns the icon, label, optional summary and trailing meta. The panel animates from
- * `0fr` to `1fr` and stays inert while closed. Callers supply the body, so a thinking block can
- * scroll its Markdown while a turn group lays out its timeline.
+ * The header owns the icon, label, optional summary and trailing meta. Base UI `Collapsible` owns
+ * the open/closed ARIA wiring, height transition and unmount lifecycle. Callers supply the body, so
+ * a thinking block can scroll its Markdown while a turn group lays out its timeline.
  */
 export function Disclosure({
-    control,
     icon: LeadingIcon,
     label,
     summary,
@@ -47,20 +49,23 @@ export function Disclosure({
     metaRunning = false,
     tone = "neutral",
     streaming = false,
+    defaultOpen,
+    open,
+    onOpenChange,
     className,
     children,
 }: DisclosureProps): ReactElement {
-    const { open, toggle, panelId } = control;
-
     return (
-        <div className={cn(styles.root, className)} data-tone={tone}>
-            <button
-                type="button"
-                className={styles.trigger}
-                aria-expanded={open}
-                aria-controls={panelId}
-                onClick={toggle}
-            >
+        <Collapsible
+            open={open}
+            defaultOpen={defaultOpen}
+            onOpenChange={(nextOpen) => {
+                onOpenChange?.(nextOpen);
+            }}
+            className={cn(styles.root, className)}
+            data-tone={tone}
+        >
+            <CollapsibleTrigger className={styles.trigger}>
                 <Icon size="no-container" className={styles.icon}>
                     <LeadingIcon strokeWidth={1.75} />
                 </Icon>
@@ -73,16 +78,12 @@ export function Disclosure({
                         {meta}
                     </span>
                 ) : null}
-                <Icon size="no-container" className={styles.chevron} data-open={open ? "true" : undefined}>
+                <Icon size="no-container" className={styles.chevron}>
                     <ChevronRight strokeWidth={1.75} />
                 </Icon>
-            </button>
+            </CollapsibleTrigger>
 
-            <div id={panelId} className={styles.collapse} data-open={open ? "true" : undefined}>
-                <div className={styles.collapseInner} inert={!open} aria-hidden={!open}>
-                    {children}
-                </div>
-            </div>
-        </div>
+            <CollapsiblePanel>{children}</CollapsiblePanel>
+        </Collapsible>
     );
 }

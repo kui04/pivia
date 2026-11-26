@@ -155,7 +155,11 @@ export function TurnGroup({
     activityLabel,
     className,
 }: TurnGroupProps): ReactElement {
-    const control = useDisclosure({ defaultOpen, open: controlledOpen, onOpenChange });
+    const { open, onOpenChange: handleOpenChange } = useDisclosure({
+        defaultOpen,
+        open: controlledOpen,
+        onOpenChange,
+    });
     const liveDurationMs = useLiveDuration(turn.timing, 1000);
 
     const headerLabel = formatHeaderLabel(turn.streaming, liveDurationMs);
@@ -186,10 +190,10 @@ export function TurnGroup({
             {singleStep !== undefined ? renderStep(singleStep, onOpenLink, true) : null}
 
             {hasGroup ? (
-                <Disclosure control={control} icon={Layers} label={headerLabel}>
+                <Disclosure open={open} onOpenChange={handleOpenChange} icon={Layers} label={headerLabel}>
                     <RailScrollArea
                         label="Turn steps"
-                        enabled={control.open}
+                        enabled={open}
                         streaming={turn.streaming}
                         maxHeight="lg"
                         indent="trigger"

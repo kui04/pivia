@@ -97,6 +97,7 @@ export const Collapsed: Story = {
 
         await expect(canvas.getByRole("button", { name: /pivia/ })).toHaveAttribute("aria-expanded", "false");
         await expect(canvas.getByText("pivia")).toBeVisible();
-        await expect(canvasElement.querySelector("ul")).toHaveAttribute("inert");
+        await expect(canvasElement.querySelector("ul")).not.toBeInTheDocument();
+        await expect(canvas.queryByText("Fix the session list")).not.toBeInTheDocument();
     },
 };

@@ -1,20 +1,23 @@
 /*
- * Shared disclosure row for transcript steps: trigger, animated panel and inert wiring.
+ * Shared disclosure row for transcript steps: trigger styling paired with Base UI CollapsiblePanel.
  *
  * The nesting this file styles:
  *
  *   .root[data-tone]
- *   ├─ .trigger
- *   │   ├─ .label            primary text; shimmers while data-streaming
- *   │   ├─ .summary          optional secondary text that takes the remaining width
- *   │   └─ .meta             optional trailing text before the chevron
- *   └─ .collapse             animated 0fr -> 1fr grid container (data-open)
- *       └─ .collapseInner    overflow hidden and inert while closed
  *
  * Classes passed to child components stay top-level so CSS Modules keep one class of specificity:
  *
+ *   .trigger[data-panel-open]
+ *   ├─ @media (hover: hover) -> &:hover
+ *   ├─ &:active
+ *   ├─ &:focus-visible
+ *   ├─ @media (pointer: coarse)
+ *   ├─ .label[data-streaming]
+ *   ├─ .summary
+ *   ├─ .meta
+ *   └─ @media (prefers-reduced-motion: reduce)
  *   .icon
- *   .chevron                 rotates 90deg when data-open="true"
+ *   .chevron                 rotates 90deg when the enclosing .trigger has data-panel-open
  */
 .root {
     /* Tone variables keep one trigger rule for muted, accent, tool and failed rows. */
@@ -49,150 +52,128 @@
         --disclosure-icon: var(--color-error);
         --disclosure-icon-strong: var(--color-error);
     }
+}
 
-    .trigger {
-        display: flex;
-        align-items: center;
-        gap: var(--space-8);
-        inline-size: 100%;
-        min-block-size: var(--space-24);
-        padding-block: var(--space-4);
-        padding-inline: var(--space-4);
-        border-radius: var(--shape-corner-small);
-        background-color: transparent;
-        color: var(--disclosure-label);
-        cursor: pointer;
-        text-align: start;
-        transition:
-            color var(--motion-duration-effects-fast) var(--motion-easing-standard),
-            opacity var(--motion-duration-effects-fast) var(--motion-easing-standard);
+.trigger {
+    display: flex;
+    align-items: center;
+    gap: var(--space-8);
+    inline-size: 100%;
+    min-block-size: var(--space-24);
+    padding-block: var(--space-4);
+    padding-inline: var(--space-4);
+    border-radius: var(--shape-corner-small);
+    background-color: transparent;
+    color: var(--disclosure-label);
+    cursor: pointer;
+    text-align: start;
+    transition:
+        color var(--motion-duration-effects-fast) var(--motion-easing-standard),
+        opacity var(--motion-duration-effects-fast) var(--motion-easing-standard);
 
-        /* Keep hover and press feedback on foreground color/opacity so rows never inflate into a tall box. */
-        @media (hover: hover) {
-            &:hover {
-                --disclosure-icon: var(--disclosure-icon-strong);
-                --disclosure-chevron: var(--disclosure-chevron-strong);
-                --disclosure-meta: var(--color-on-surface);
-
-                color: var(--disclosure-label-strong);
-            }
-        }
-
-        &:active {
-            opacity: var(--disclosure-active-opacity);
-        }
-
-        /* Draw the focus ring inside the trigger box so an enclosing ScrollArea never clips its edges. */
-        &:focus-visible {
-            outline-offset: calc(-1 * var(--border-width-strong));
-        }
-
-        &[aria-expanded="true"] {
+    /* Keep hover and press feedback on foreground color/opacity so rows never inflate into a tall box. */
+    @media (hover: hover) {
+        &:hover {
             --disclosure-icon: var(--disclosure-icon-strong);
             --disclosure-chevron: var(--disclosure-chevron-strong);
+            --disclosure-meta: var(--color-on-surface);
 
             color: var(--disclosure-label-strong);
         }
+    }
 
-        @media (pointer: coarse) {
-            min-block-size: var(--space-48);
-        }
+    &:active {
+        opacity: var(--disclosure-active-opacity);
+    }
 
-        .label {
-            min-inline-size: 0;
-            overflow: hidden;
-            font-size: var(--type-body-medium-size);
-            font-weight: var(--type-body-medium-emphasized-weight);
-            font-variant-numeric: tabular-nums;
-            letter-spacing: var(--type-body-medium-tracking);
-            line-height: var(--type-body-medium-line-height);
-            text-overflow: ellipsis;
-            white-space: nowrap;
+    /* Draw the focus ring inside the trigger box so an enclosing ScrollArea never clips its edges. */
+    &:focus-visible {
+        outline-offset: calc(-1 * var(--border-width-strong));
+    }
 
-            /* A narrow label scopes the shimmer sweep directly across the row text. */
-            &[data-streaming="true"] {
-                /*
-                 * CSS Modules localizes a bare animation name to a scoped keyframe that token.css
-                 * does not define, so the global name travels through a custom property. The
-                 * property must not end in "animation" or "animation-name", or its value would be
-                 * localized too.
-                 */
-                --shimmer-keyframes: shimmer;
+    &[data-panel-open] {
+        --disclosure-icon: var(--disclosure-icon-strong);
+        --disclosure-chevron: var(--disclosure-chevron-strong);
 
-                background-image: var(--shimmer-gradient);
-                background-size: var(--shimmer-size);
-                -webkit-background-clip: text;
-                background-clip: text;
-                -webkit-text-fill-color: transparent;
-                animation-name: var(--shimmer-keyframes);
-                animation-duration: var(--shimmer-duration);
-                animation-timing-function: linear;
-                animation-iteration-count: infinite;
+        color: var(--disclosure-label-strong);
+    }
 
-                /* Forced colors removes the gradient that paints the glyphs, so fall back to text color. */
-                @media (forced-colors: active) {
-                    background-image: none;
-                    -webkit-text-fill-color: currentColor;
-                }
+    @media (pointer: coarse) {
+        min-block-size: var(--space-48);
+    }
+
+    .label {
+        min-inline-size: 0;
+        overflow: hidden;
+        font-size: var(--type-body-medium-size);
+        font-weight: var(--type-body-medium-emphasized-weight);
+        font-variant-numeric: tabular-nums;
+        letter-spacing: var(--type-body-medium-tracking);
+        line-height: var(--type-body-medium-line-height);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+
+        /* A narrow label scopes the shimmer sweep directly across the row text. */
+        &[data-streaming="true"] {
+            /*
+             * CSS Modules localizes a bare animation name to a scoped keyframe that token.css
+             * does not define, so the global name travels through a custom property. The
+             * property must not end in "animation" or "animation-name", or its value would be
+             * localized too.
+             */
+            --shimmer-keyframes: shimmer;
+
+            background-image: var(--shimmer-gradient);
+            background-size: var(--shimmer-size);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+            animation-name: var(--shimmer-keyframes);
+            animation-duration: var(--shimmer-duration);
+            animation-timing-function: linear;
+            animation-iteration-count: infinite;
+
+            /* Forced colors removes the gradient that paints the glyphs, so fall back to text color. */
+            @media (forced-colors: active) {
+                background-image: none;
+                -webkit-text-fill-color: currentColor;
             }
-        }
-
-        .summary {
-            flex: 1;
-            min-inline-size: 0;
-            overflow: hidden;
-            color: var(--disclosure-meta);
-            font-size: var(--type-body-medium-size);
-            letter-spacing: var(--type-body-medium-tracking);
-            line-height: var(--type-body-medium-line-height);
-            text-overflow: ellipsis;
-            white-space: nowrap;
-            transition: color var(--motion-duration-effects-fast) var(--motion-easing-standard);
-        }
-
-        .meta {
-            flex: none;
-            color: var(--disclosure-meta);
-            font-family: var(--font-mono);
-            font-size: var(--type-label-medium-size);
-            font-variant-numeric: tabular-nums;
-            letter-spacing: var(--type-label-medium-tracking);
-            line-height: var(--type-label-medium-line-height);
-            transition: color var(--motion-duration-effects-fast) var(--motion-easing-standard);
         }
     }
 
-    .collapse {
-        display: grid;
-        grid-template-rows: 0fr;
-        visibility: hidden;
-        transition:
-            grid-template-rows var(--motion-duration-effects-default) var(--motion-easing-standard),
-            visibility 0s linear var(--motion-duration-effects-default);
+    .summary {
+        flex: 1;
+        min-inline-size: 0;
+        overflow: hidden;
+        color: var(--disclosure-meta);
+        font-size: var(--type-body-medium-size);
+        letter-spacing: var(--type-body-medium-tracking);
+        line-height: var(--type-body-medium-line-height);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        transition: color var(--motion-duration-effects-fast) var(--motion-easing-standard);
+    }
 
-        &[data-open="true"] {
-            grid-template-rows: 1fr;
-            visibility: visible;
-            transition:
-                grid-template-rows var(--motion-duration-effects-default) var(--motion-easing-standard),
-                visibility 0s linear;
-        }
-
-        .collapseInner {
-            min-block-size: 0;
-            overflow: hidden;
-        }
+    .meta {
+        flex: none;
+        color: var(--disclosure-meta);
+        font-family: var(--font-mono);
+        font-size: var(--type-label-medium-size);
+        font-variant-numeric: tabular-nums;
+        letter-spacing: var(--type-label-medium-tracking);
+        line-height: var(--type-label-medium-line-height);
+        transition: color var(--motion-duration-effects-fast) var(--motion-easing-standard);
     }
 
     @media (prefers-reduced-motion: reduce) {
-        .trigger,
-        .trigger .summary,
-        .trigger .meta,
-        .collapse {
+        transition: none;
+
+        .summary,
+        .meta {
             transition: none;
         }
 
-        .trigger .label[data-streaming="true"] {
+        .label[data-streaming="true"] {
             background-image: none;
             -webkit-text-fill-color: currentColor;
             animation: none;
@@ -218,7 +199,8 @@
         color var(--motion-duration-effects-fast) var(--motion-easing-standard),
         transform var(--motion-duration-effects-fast) var(--motion-easing-standard);
 
-    &[data-open="true"] {
+    /* :where() keeps zero ancestor specificity so .chevron remains at (0,1,0). */
+    :where(.trigger[data-panel-open]) & {
         transform: rotate(90deg);
     }
 

@@ -3,16 +3,18 @@
  *
  * The nesting this file styles:
  *
- *   .section
- *   ├─ .heading                        h2, sticky; the DOM parent of .toggle
- *   ├─ .toggle                         button inside .heading; holds .folder and .label
- *   │   ├─ &                           pointer: coarse, 48px tall
- *   │   └─ &:hover                     hover-capable pointers only
- *   ├─ .folder                         the folder Icon, inside .toggle
- *   ├─ .label                          inside .toggle
- *   ├─ .collapse                       div; the DOM parent of .list
- *   │   └─ &[data-collapsed="true"]    folds its row to 0 height
- *   └─ .list                           ul inside .collapse; SessionRow (li) children
+ *   .section                           Collapsible root (<section>)
+ *   ├─ .heading                        h2, sticky; DOM parent of .toggle
+ *   └─ .list                           ul inside CollapsiblePanel; SessionRow (li) children
+ *
+ * Classes passed to child components stay top-level so CSS Modules keep one class of specificity:
+ *
+ *   .toggle                            CollapsibleTrigger inside .heading
+ *   ├─ @media (pointer: coarse)
+ *   ├─ @media (hover: hover) -> &:hover
+ *   ├─ .label                          session folder title inside .toggle
+ *   └─ @media (prefers-reduced-motion: reduce)
+ *   .folder                            the folder Icon inside .toggle
  */
 .section {
     display: flex;
@@ -29,41 +31,42 @@
         background-color: var(--color-surface-container);
     }
 
-    /*
-     * The flush 20px icon box and the 8px gap put the label on the same line as the session titles
-     * below it. The row height is the same 32px as a session row.
-     */
-    .toggle {
+    /* The rows carry their own inset, so a row's hover layer is as wide as this header's. */
+    .list {
         display: flex;
-        align-items: center;
-        gap: var(--space-8);
-        inline-size: 100%;
-        min-block-size: var(--space-32);
-        padding: var(--space-4) var(--space-8);
-        border-radius: var(--shape-corner-small);
-        color: var(--color-on-surface-variant);
-        cursor: pointer;
-        text-align: start;
-        transition: background-color var(--motion-duration-effects-fast) var(--motion-easing-standard);
+        flex-direction: column;
+        gap: var(--space-4);
+    }
+}
 
-        /* A touch screen gets the same 48px target as the session rows below. */
-        @media (pointer: coarse) {
-            & {
-                min-block-size: var(--space-48);
-            }
-        }
+/*
+ * The flush 20px icon box and the 8px gap put the label on the same line as the session titles
+ * below it. The row height is the same 32px as a session row.
+ */
+.toggle {
+    display: flex;
+    align-items: center;
+    gap: var(--space-8);
+    inline-size: 100%;
+    min-block-size: var(--space-32);
+    padding: var(--space-4) var(--space-8);
+    border-radius: var(--shape-corner-small);
+    color: var(--color-on-surface-variant);
+    cursor: pointer;
+    text-align: start;
+    transition: background-color var(--motion-duration-effects-fast) var(--motion-easing-standard);
 
-        @media (hover: hover) {
-            &:hover {
-                background-color: var(--state-hover);
-            }
+    /* A touch screen gets the same 48px target as the session rows below. */
+    @media (pointer: coarse) {
+        & {
+            min-block-size: var(--space-48);
         }
     }
 
-    /* The glyph starts on the same line as the "Sessions" title and the other flush icons. */
-    .folder {
-        --icon-padding-inline-start: 0;
-        color: var(--color-on-surface-variant);
+    @media (hover: hover) {
+        &:hover {
+            background-color: var(--state-hover);
+        }
     }
 
     .label {
@@ -81,33 +84,13 @@
         white-space: nowrap;
     }
 
-    /*
-     * A row of 0fr is the folded state. The list keeps its own height inside, so the rows do not
-     * reflow while the track animates.
-     */
-    .collapse {
-        display: grid;
-        grid-template-rows: 1fr;
-        transition: grid-template-rows var(--motion-duration-effects-default) var(--motion-easing-standard);
-
-        &[data-collapsed="true"] {
-            grid-template-rows: 0fr;
-        }
-    }
-
-    /* The rows carry their own inset, so a row's hover layer is as wide as this header's. */
-    .list {
-        display: flex;
-        flex-direction: column;
-        gap: var(--space-4);
-        min-block-size: 0;
-        overflow: hidden;
-    }
-
     @media (prefers-reduced-motion: reduce) {
-        .toggle,
-        .collapse {
-            transition: none;
-        }
+        transition: none;
     }
+}
+
+/* The glyph starts on the same line as the "Sessions" title and the other flush icons. */
+.folder {
+    --icon-padding-inline-start: 0;
+    color: var(--color-on-surface-variant);
 }

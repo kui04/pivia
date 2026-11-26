@@ -1,0 +1,45 @@
+/*
+ * Story layout and visual styling for the shared Collapsible primitive.
+ *
+ *   .frame     max-width container for story previews
+ *   .trigger   bare trigger button styling inside stories
+ *   └─ &[data-disabled]
+ *   .body      panel content container
+ */
+.frame {
+    max-inline-size: 28rem;
+}
+
+.trigger {
+    display: inline-flex;
+    align-items: center;
+    min-block-size: var(--space-32);
+    padding: var(--space-4) var(--space-12);
+    border: var(--border-width) solid var(--color-outline-control);
+    border-radius: var(--shape-corner-small);
+    background-color: var(--color-surface-container);
+    color: var(--color-on-surface);
+    cursor: pointer;
+    font-family: var(--font-sans);
+    font-size: var(--type-body-medium-size);
+    font-weight: var(--type-body-medium-emphasized-weight);
+    letter-spacing: var(--type-body-medium-tracking);
+    line-height: var(--type-body-medium-line-height);
+
+    &[data-disabled] {
+        color: var(--color-on-surface-variant);
+        cursor: not-allowed;
+        opacity: 0.6;
+    }
+}
+
+.body {
+    margin-block-start: var(--space-8);
+    padding: var(--space-12);
+    border: var(--border-width) solid var(--color-outline-variant);
+    border-radius: var(--shape-corner-small);
+    background-color: var(--color-surface-container);
+    color: var(--color-on-surface-variant);
+    font-size: var(--type-body-medium-size);
+    line-height: var(--type-body-medium-line-height);
+}

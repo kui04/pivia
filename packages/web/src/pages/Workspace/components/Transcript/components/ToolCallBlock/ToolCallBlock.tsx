@@ -166,11 +166,14 @@ export function ToolCallBlock({
     defaultWrapped = false,
     className,
 }: ToolCallBlockProps): ReactElement {
-    const control = useDisclosure({ defaultOpen, open: controlledOpen, onOpenChange });
+    const { open, onOpenChange: handleOpenChange } = useDisclosure({
+        defaultOpen,
+        open: controlledOpen,
+        onOpenChange,
+    });
     const [wrapped, setWrapped] = useState(defaultWrapped);
     const { status: copyStatus, copy } = useCopyFeedback(onCopy);
 
-    const { open } = control;
     const isRunning = step.status === "running";
     const isError = step.status === "error";
     const hasPreview = step.preview.kind !== "none";
@@ -330,7 +333,8 @@ export function ToolCallBlock({
 
     return (
         <Disclosure
-            control={control}
+            open={open}
+            onOpenChange={handleOpenChange}
             icon={ToolIcon}
             label={label}
             summary={step.summary}

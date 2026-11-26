@@ -199,7 +199,7 @@
 
     /*
      * global.css sets the ring at (0,2,0); this selector is (0,3,0), keeping the ring inside
-     * the viewport where Disclosure's .collapseInner clips the outer edges.
+     * the viewport where CollapsiblePanel clips the outer edges.
      */
     &[tabindex]:focus-visible {
         outline-offset: calc(-1 * var(--border-width-strong));

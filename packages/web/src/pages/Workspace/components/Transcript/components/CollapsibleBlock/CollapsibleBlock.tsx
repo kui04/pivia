@@ -51,11 +51,16 @@ export function CollapsibleBlock({
     className,
     tone = "neutral",
 }: CollapsibleBlockProps): ReactElement {
-    const control = useDisclosure({ defaultOpen, open: controlledOpen, onOpenChange });
+    const { open, onOpenChange: handleOpenChange } = useDisclosure({
+        defaultOpen,
+        open: controlledOpen,
+        onOpenChange,
+    });
 
     return (
         <Disclosure
-            control={control}
+            open={open}
+            onOpenChange={handleOpenChange}
             icon={LeadingIcon}
             label={label}
             tone={tone}
@@ -64,7 +69,7 @@ export function CollapsibleBlock({
         >
             <RailScrollArea
                 label={scrollLabel}
-                enabled={control.open}
+                enabled={open}
                 streaming={streaming}
                 maxHeight="md"
                 indent="body"

@@ -1,0 +1,22 @@
+/*
+ * Height-animated disclosure panel driven by Base UI's --collapsible-panel-height variable.
+ *
+ *   .panel                             Base UI Collapsible.Panel; caller `className` merges here
+ *   ├─ &[data-starting-style], &[data-ending-style]
+ *   └─ @media (prefers-reduced-motion: reduce)
+ */
+.panel {
+    min-inline-size: 0;
+    height: var(--collapsible-panel-height);
+    overflow: hidden;
+    transition: height var(--motion-duration-effects-default) var(--motion-easing-standard);
+
+    &[data-starting-style],
+    &[data-ending-style] {
+        height: 0;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        transition: none;
+    }
+}
