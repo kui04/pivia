@@ -426,6 +426,7 @@ export function ModelPicker({
             disabled={disabled}
             label={`Model: ${modelLabel}`}
             title={current === null ? "Model" : `${current.provider}/${current.id}`}
+            dialogLabel="Model picker"
             pillClassName={styles.trigger}
             popupClassName={styles.popup}
             triggerChildren={

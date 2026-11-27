@@ -285,7 +285,10 @@ export const HoverDoesNotScroll: Story = {
         await userEvent.keyboard("{ArrowDown}");
         await waitFor(() => expect(viewport.scrollTop).toBeLessThan(scrolledTop));
 
-        // The story ends with the popover closed, so the a11y scan does not see an unnamed dialog.
+        // The popup is a named dialog, so assistive technology can announce it.
+        await expect(screen.getByRole("dialog", { name: "Model picker" })).toBeInTheDocument();
+
+        // Close the picker so the a11y scan checks the resting composer like the other stories.
         await userEvent.keyboard("{Escape}");
         await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     },

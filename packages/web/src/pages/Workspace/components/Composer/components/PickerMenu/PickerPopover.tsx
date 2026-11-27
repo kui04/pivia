@@ -13,6 +13,8 @@ export interface PickerPopoverProps {
     readonly label: string;
     /** Tooltip of the trigger pill. */
     readonly title?: string | undefined;
+    /** Accessible name of the popup dialog, such as "Model picker". */
+    readonly dialogLabel: string;
     /** Pill sizing for this picker. */
     readonly pillClassName?: string | undefined;
     /** Popup sizing for this picker; the shared popup class is added here. */
@@ -33,6 +35,7 @@ export function PickerPopover({
     disabled,
     label,
     title,
+    dialogLabel,
     pillClassName,
     popupClassName,
     triggerChildren,
@@ -46,6 +49,7 @@ export function PickerPopover({
                 {triggerChildren}
             </PopoverTrigger>
             <PopoverContent
+                aria-label={dialogLabel}
                 side="top"
                 align="start"
                 sideOffset={10}

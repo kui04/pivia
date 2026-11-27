@@ -187,6 +187,7 @@ export function ThinkingLevelPicker({
             onOpenChange={onOpenChange}
             disabled={disabled}
             label={`Thinking level: ${thinkingLabel}`}
+            dialogLabel="Thinking level picker"
             pillClassName={styles.trigger}
             popupClassName={styles.popup}
             triggerChildren={
