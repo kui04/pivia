@@ -3,139 +3,366 @@
  *
  * The nesting this file styles:
  *
- *   .section                       form sub-section (Recent / Browse)
- *   ├─ .sectionHeader              heading row for Browse
- *   ├─ .sectionLabel               sub-section title
- *   ├─ .currentPath                current browsed path in Browse header
- *   └─ .recentList                 vertical stack of up to 3 recent directories
- *
- *   .rowButton                     interactive row in .recentList or .browserContent
- *   ├─ &:hover:not(:disabled)      hover-capable pointers only
- *   ├─ &[aria-pressed="true"]      matches current input path
- *   └─ &:disabled
- *
- *   .browserBox                    framed container holding ScrollArea
- *   ├─ .browserStatus              loading state
- *   ├─ .browserError               directory read error
- *   └─ .browserEmpty               no subdirectories note
- *
- *   .rowIcon                       Icon inside .rowButton
- *   .rowLabel                      truncated label inside .rowButton
- *   .dialog                        Dialog popup width override (className on Dialog)
- *   .sheet                         Drawer bottom-sheet popup spacing (className on Drawer)
- *   ├─ .sheetHeader                title + description block inside .sheet
- *   ├─ .sheetTitle
- *   └─ .sheetDescription
- *   .formScroll                    scrollable form body inside the bottom sheet
- *   .browserScroll                 ScrollArea root inside .browserBox
- *   .browserContent                ScrollArea content inside .browserBox
- *   .actions                       submit / cancel footer inside the mobile sheet
+ *   .dialog                        Dialog popup shell (className on Dialog)
+ *   ├─ .inputBand
+ *   ├─ .directoryContent
+ *   └─ .footer
+ *   .sheet                         Drawer bottom-sheet popup shell (className on Drawer)
+ *   └─ &[data-side="bottom"]       beats Drawer's `[data-side="bottom"]` specificity
+ *   .sheetHeader                   pinned header inside .sheet
+ *   ├─ .grabber                    drag-handle pill at the top of .sheet
+ *   └─ .sheetTitle
+ *   .dialogHeader                  pinned header inside .dialog (className on DialogHeader)
+ *   .form                          flex column holding pinned input, directory ScrollArea, and pinned footer
+ *   .inputBand                     pinned working-directory input section
+ *   └─ .inputShell                 unified field frame around .inputIcon, .pathInput, and .clearButton
+ *       ├─ &:hover:not(:has(:disabled))
+ *       ├─ &:has(.pathInput:focus-visible)
+ *       ├─ &:has(.pathInput[aria-invalid="true"])
+ *       ├─ &:has(.pathInput[aria-invalid="true"]:focus-visible)
+ *       ├─ &:has(.pathInput:disabled)
+ *       └─ @media (forced-colors: active)
+ *   .inputShell .pathInput         borderless Input inside .inputShell
+ *   ├─ &:hover:not(:disabled)
+ *   ├─ &:focus-visible
+ *   ├─ &[aria-invalid="true"]
+ *   ├─ &:disabled
+ *   └─ @media (any-pointer: coarse)
+ *   .directoryArea                 clipped flex container owning the unified ScrollArea
+ *   .section                       Recent or Browse section inside .directoryContent
+ *   ├─ .sectionHeader              sticky heading row holding .sectionLabel and LoadingIndicator
+ *   ├─ .sectionLabel
+ *   ├─ .rowList                    vertical stack of directory rows
+ *   │   └─ &[data-loading="true"]
+ *   ├─ .browserErrorRow            error state container with retry/back actions
+ *   │   └─ .browserErrorActions
+ *   ├─ .browserStatus
+ *   ├─ .browserError
+ *   └─ .browserEmpty
+ *   .rowButton                     interactive row inside .rowList
+ *   ├─ @media (any-pointer: coarse)
+ *   ├─ @media (hover: hover)
+ *   ├─ &:active:not(:disabled)
+ *   ├─ &[aria-pressed="true"]
+ *   ├─ &:disabled
+ *   └─ @media (prefers-reduced-motion: reduce)
+ *   .rowLabel                      truncated sans-serif label inside .rowButton
+ *   .footer                        pinned submit / cancel footer
  *   .confirmPath                   highlighted missing directory path inside AlertDialog
+ *   :global(:root[data-keyboard-open="true"]) .sheet[data-side="bottom"]
+ *   ├─ .sheetHeader
+ *   ├─ .inputBand
+ *   └─ .footer
+ *
+ * Classes passed to child components stay top-level for (0,1,0) specificity:
+ *
+ *   .inputIcon                     leading Folder Icon inside .inputShell
+ *   .clearButton                   clear IconButton inside .inputShell (44px touch hit target via ::after)
+ *   .directoryScroll               ScrollArea root inside .directoryArea
+ *   .directoryViewport             ScrollArea viewport with bottom edge fade
+ *   .directoryContent              ScrollArea content holding Recent and Browse sections
+ *   .rowIcon                       leading Icon inside .rowButton
+ *   .rowCheck                      trailing Check Icon on selected Recent row
+ *   .rowChevron                    trailing ChevronRight Icon on Browse row
+ *   .dialogAction                  row-matched Button sizing in desktop .footer
+ *   └─ @media (any-pointer: coarse)
+ *   .sheetAction                   equal-width touch-sized Button in mobile .footer
  */
 .dialog {
-    --dialog-width: 34rem;
+    --dialog-width: 32rem;
+    gap: 0;
+    block-size: min(
+        35rem,
+        calc(100dvh - var(--space-32) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))
+    );
+    padding: 0;
+    overflow: hidden;
+    background-color: var(--color-surface-container-high);
 }
 
 .sheet {
-    gap: var(--space-16);
-    /* Bound the sheet to the viewport content box, which already subtracts the keyboard inset. */
-    max-block-size: 100%;
-    padding: var(--space-20) var(--space-16) var(--space-20);
-    /* The base drawer pulls the sheet down by the bleed; restore that padding and add the sheet inset. */
-    padding-block-end: calc(var(--drawer-bleed) + var(--space-20));
-    background-color: var(--color-surface-container-high);
+    /* Match Drawer's `[data-side="bottom"]` specificity so the definite height overrides `block-size: auto`. */
+    &[data-side="bottom"] {
+        gap: 0;
+        block-size: calc(min(86dvh, 38rem) + var(--drawer-bleed));
+        /* Expand up to 100% of the visual viewport box plus the bottom bleed when the IME opens. */
+        max-block-size: calc(100% + var(--drawer-bleed));
+        padding: 0;
+        padding-block-end: var(--drawer-bleed);
+        background-color: var(--color-surface-container-high);
+    }
+}
 
-    .sheetHeader {
-        display: flex;
-        flex-direction: column;
-        gap: var(--space-6);
-        min-inline-size: 0;
+.sheetHeader {
+    display: flex;
+    flex: none;
+    flex-direction: column;
+    gap: var(--space-8);
+    padding: var(--space-10) var(--space-16) var(--space-12);
+
+    .grabber {
+        align-self: center;
+        inline-size: var(--space-32);
+        block-size: var(--space-4);
+        border-radius: var(--shape-corner-full);
+        background-color: var(--color-outline);
     }
 
     .sheetTitle {
         margin: 0;
         color: var(--color-on-surface);
-        font-size: var(--type-title-large-size);
-        font-weight: var(--type-title-large-weight);
-        letter-spacing: var(--type-title-large-tracking);
-        line-height: var(--type-title-large-line-height);
+        font-family: var(--font-sans);
+        font-size: var(--type-title-medium-size);
+        font-weight: var(--type-title-medium-weight);
+        letter-spacing: var(--type-title-medium-tracking);
+        line-height: var(--type-title-medium-line-height);
+    }
+}
+
+.dialogHeader {
+    flex: none;
+    padding: var(--space-20) var(--space-24) var(--space-12);
+}
+
+.form {
+    flex: 1;
+    gap: 0;
+    min-block-size: 0;
+    overflow: hidden;
+}
+
+.inputBand {
+    flex: none;
+    padding: var(--space-4) var(--space-16) var(--space-8);
+
+    .inputShell {
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
+        gap: var(--space-8);
+        min-block-size: var(--space-40);
+        padding-inline: var(--space-12) var(--space-8);
+        border: var(--border-width) solid var(--color-outline-control);
+        border-radius: var(--shape-corner-small);
+        background-color: var(--color-surface);
+        transition:
+            border-color var(--motion-duration-effects-fast) var(--motion-easing-standard),
+            background-color var(--motion-duration-effects-fast) var(--motion-easing-standard);
+
+        @media (hover: hover) {
+            &:hover:not(:has(:disabled)) {
+                border-color: var(--color-on-surface-variant);
+            }
+        }
+
+        &:has(.pathInput:focus-visible) {
+            border-color: var(--color-primary);
+            outline: var(--border-width-strong) solid var(--color-primary);
+            outline-offset: calc(-1 * var(--border-width-strong));
+        }
+
+        &:has(.pathInput[aria-invalid="true"]) {
+            border-color: var(--color-error);
+            box-shadow: inset 0 0 0 var(--border-width) var(--color-error);
+        }
+
+        &:has(.pathInput[aria-invalid="true"]:focus-visible) {
+            outline-color: var(--color-error);
+        }
+
+        &:has(.pathInput:disabled) {
+            background-color: var(--color-secondary-container);
+        }
+
+        @media (any-pointer: coarse) {
+            min-block-size: calc(var(--space-40) + var(--space-4));
+        }
+
+        @media (forced-colors: active) {
+            border-color: CanvasText;
+
+            &:has(.pathInput[aria-invalid="true"]) {
+                border-color: Mark;
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            transition: none;
+        }
+    }
+}
+
+.dialog .inputBand {
+    padding: var(--space-4) var(--space-24) var(--space-8);
+}
+
+.inputIcon {
+    flex: none;
+    inline-size: var(--space-16);
+    block-size: var(--space-16);
+    color: var(--color-on-surface-variant);
+}
+
+.inputShell .pathInput {
+    flex: 1;
+    min-inline-size: 0;
+    min-block-size: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    outline: none;
+    background-color: transparent;
+    font-family: var(--font-sans);
+    font-size: var(--type-body-medium-size);
+    line-height: var(--type-body-medium-line-height);
+
+    &:hover:not(:disabled) {
+        border-color: transparent;
     }
 
-    .sheetDescription {
-        margin: 0;
-        color: var(--color-on-surface-variant);
-        font-size: var(--type-body-medium-size);
-        font-weight: var(--type-body-medium-weight);
-        letter-spacing: var(--type-body-medium-tracking);
-        line-height: var(--type-body-medium-line-height);
+    &:focus-visible {
+        border-color: transparent;
+        outline: none;
     }
+
+    &[aria-invalid="true"] {
+        border-color: transparent;
+        box-shadow: none;
+    }
+
+    &:disabled {
+        background-color: transparent;
+    }
+
+    @media (any-pointer: coarse) {
+        & {
+            font-size: var(--type-body-large-size);
+            line-height: var(--type-body-large-line-height);
+        }
+    }
+}
+
+.clearButton {
+    position: relative;
+    flex: none;
+    color: var(--color-on-surface-variant);
+
+    @media (any-pointer: coarse) {
+        /* Expand the 16px visual control to a 44px touch target without enlarging .inputShell. */
+        &::after {
+            content: "";
+            position: absolute;
+            inset: calc(-1 * (var(--space-12) + var(--space-2)));
+        }
+    }
+}
+
+.directoryArea {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-block-size: 0;
+    overflow: hidden;
+}
+
+.directoryScroll {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-block-size: 0;
+}
+
+.directoryViewport {
+    flex: 1;
+    min-block-size: 0;
+    /* Fade only the bottom edge so sticky section headers stay crisp and opaque at top: 0. */
+    mask-image: linear-gradient(to bottom, black calc(100% - var(--space-24)), transparent);
+}
+
+.directoryContent {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-12);
+    min-inline-size: 0 !important;
+    /* Match .inputBand horizontal inset so rows align flush with the input field; zero top padding prevents sticky jump. */
+    padding: 0 var(--space-16) var(--space-24);
+}
+
+.dialog .directoryContent {
+    padding: 0 var(--space-24) var(--space-24);
 }
 
 .section {
     display: flex;
     flex-direction: column;
-    gap: var(--space-6);
     min-inline-size: 0;
 
+    /* Sticky below ScrollArea's scrollbar (z-index: 2) with an opaque surface so scrolled rows never show through. */
     .sectionHeader {
+        position: sticky;
+        top: 0;
+        z-index: 1;
         display: flex;
-        align-items: baseline;
+        align-items: center;
+        justify-content: space-between;
         gap: var(--space-8);
-        min-inline-size: 0;
+        min-block-size: var(--space-24);
+        padding: var(--space-4) 0;
+        background-color: var(--color-surface-container-high);
     }
 
     .sectionLabel {
-        flex: none;
+        margin: 0;
         color: var(--color-on-surface-variant);
-        font-size: var(--type-label-medium-size);
-        font-weight: var(--type-label-medium-weight);
-        letter-spacing: var(--type-label-medium-tracking);
-        line-height: var(--type-label-medium-line-height);
+        font-family: var(--font-sans);
+        font-size: var(--type-label-large-size);
+        font-weight: var(--type-label-large-weight);
+        letter-spacing: var(--type-label-large-tracking);
+        line-height: var(--type-label-large-line-height);
     }
 
-    .currentPath {
-        flex: 1;
-        min-inline-size: 0;
-        overflow: hidden;
-        color: var(--color-on-surface-variant);
-        font-family: var(--font-mono);
-        font-size: var(--type-label-small-size);
-        line-height: var(--type-label-small-line-height);
-        text-align: end;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-    }
-
-    .recentList {
+    .rowList {
         display: flex;
         flex-direction: column;
         gap: var(--space-2);
+        transition: opacity var(--motion-duration-effects-fast) var(--motion-easing-standard);
+
+        &[data-loading="true"] {
+            opacity: 0.55;
+            pointer-events: none;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            transition: none;
+        }
     }
-}
 
-.formScroll {
-    /* Allow the form to shrink inside the sheet so its content scrolls instead of overflowing. */
-    min-block-size: 0;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-}
+    .browserErrorRow {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--space-8);
+        padding: var(--space-12) 0;
 
-.browserBox {
-    border: var(--border-width) solid var(--color-outline-variant);
-    border-radius: var(--shape-corner-small);
-    background-color: var(--color-surface-container);
-    overflow: hidden;
+        .browserErrorActions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: var(--space-8);
+        }
+    }
 
     .browserStatus,
     .browserError,
     .browserEmpty {
-        padding: var(--space-12) var(--space-12);
-        font-size: var(--type-body-small-size);
-        line-height: var(--type-body-small-line-height);
+        margin: 0;
+        font-family: var(--font-sans);
+        font-size: var(--type-body-medium-size);
+        line-height: var(--type-body-medium-line-height);
     }
 
     .browserStatus,
     .browserEmpty {
+        padding: var(--space-12) var(--space-12);
         color: var(--color-on-surface-variant);
     }
 
@@ -144,44 +371,37 @@
     }
 }
 
-.browserScroll {
-    block-size: 12.5rem;
-}
-
-@media (max-width: 720px) {
-    .browserScroll {
-        block-size: min(11rem, 28dvh);
-    }
-}
-
-.browserContent {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-    min-inline-size: 0 !important;
-    padding: var(--space-4);
-}
-
 .rowButton {
+    box-sizing: border-box;
     display: flex;
     align-items: center;
     gap: var(--space-8);
     inline-size: 100%;
     min-inline-size: 0;
-    min-block-size: var(--space-32);
-    padding: var(--space-4) var(--space-8);
+    min-block-size: calc(var(--space-32) + var(--space-4));
+    /* Match .inputShell horizontal padding so icons and labels share the same vertical columns. */
+    padding: var(--space-6) var(--space-8) var(--space-6) var(--space-12);
     border: var(--border-width) solid transparent;
     border-radius: var(--shape-corner-small);
     background-color: transparent;
     color: var(--color-on-surface);
-    font-family: var(--font-mono);
-    font-size: var(--type-label-medium-size);
-    line-height: var(--type-label-medium-line-height);
+    font-family: var(--font-sans);
+    font-size: var(--type-body-medium-size);
+    font-weight: var(--type-body-medium-weight);
+    letter-spacing: var(--type-body-medium-tracking);
+    line-height: var(--type-body-medium-line-height);
     text-align: start;
     cursor: pointer;
     transition:
         background-color var(--motion-duration-effects-fast) var(--motion-easing-standard),
-        border-color var(--motion-duration-effects-fast) var(--motion-easing-standard);
+        border-color var(--motion-duration-effects-fast) var(--motion-easing-standard),
+        color var(--motion-duration-effects-fast) var(--motion-easing-standard);
+
+    @media (any-pointer: coarse) {
+        & {
+            min-block-size: calc(var(--space-40) + var(--space-4));
+        }
+    }
 
     @media (hover: hover) {
         &:hover:not(:disabled) {
@@ -189,10 +409,16 @@
         }
     }
 
+    &:active:not(:disabled) {
+        background-color: var(--state-pressed);
+    }
+
     &[aria-pressed="true"] {
-        border-color: var(--color-primary);
+        --row-icon-color: var(--color-on-primary-container);
+        --row-check-color: var(--color-on-primary-container);
         background-color: var(--color-primary-container);
         color: var(--color-on-primary-container);
+        font-weight: var(--type-body-medium-emphasized-weight);
     }
 
     &:disabled {
@@ -208,12 +434,14 @@
 }
 
 .rowIcon {
-    --icon-padding-inline-start: 0;
     flex: none;
-    color: var(--color-on-surface-variant);
+    inline-size: var(--space-16);
+    block-size: var(--space-16);
+    color: var(--row-icon-color, var(--color-on-surface-variant));
 }
 
 .rowLabel {
+    display: block;
     flex: 1;
     min-inline-size: 0;
     overflow: hidden;
@@ -221,11 +449,51 @@
     white-space: nowrap;
 }
 
-.actions {
+.rowCheck {
+    flex: none;
+    inline-size: var(--space-16);
+    block-size: var(--space-16);
+    color: var(--row-check-color, var(--color-primary));
+}
+
+.rowChevron {
+    flex: none;
+    inline-size: var(--space-16);
+    block-size: var(--space-16);
+    color: var(--color-on-surface-variant);
+    opacity: 0.6;
+}
+
+.footer {
+    position: relative;
+    z-index: 1;
     display: flex;
-    flex-wrap: wrap;
+    flex: none;
+    align-items: center;
     justify-content: flex-end;
     gap: var(--space-8);
+    padding: var(--space-10) var(--space-16) var(--space-16);
+    background-color: var(--color-surface-container-high);
+}
+
+.dialog .footer {
+    padding: var(--space-12) var(--space-24) var(--space-20);
+}
+
+.dialogAction {
+    min-block-size: calc(var(--space-32) + var(--space-4));
+    padding: var(--space-6) var(--space-16);
+
+    @media (any-pointer: coarse) {
+        & {
+            min-block-size: calc(var(--space-40) + var(--space-4));
+        }
+    }
+}
+
+.sheetAction {
+    flex: 1;
+    min-block-size: calc(var(--space-40) + var(--space-4));
 }
 
 .confirmPath {
@@ -235,7 +503,25 @@
     border-radius: var(--shape-corner-small);
     background-color: var(--color-surface-container);
     color: var(--color-on-surface);
-    font-family: var(--font-mono);
-    font-size: var(--type-label-medium-size);
+    font-family: var(--font-sans);
+    font-size: var(--type-body-medium-size);
+    line-height: var(--type-body-medium-line-height);
     overflow-wrap: anywhere;
+}
+
+/* Compact non-scrolling chrome inside the bottom sheet while the software keyboard is open. */
+:global(:root[data-keyboard-open="true"]) .sheet[data-side="bottom"] {
+    block-size: calc(100% + var(--drawer-bleed));
+
+    .sheetHeader {
+        padding-block: var(--space-6) var(--space-8);
+    }
+
+    .inputBand {
+        padding-block: var(--space-2) var(--space-8);
+    }
+
+    .footer {
+        padding-block: var(--space-8) var(--space-10);
+    }
 }

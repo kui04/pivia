@@ -40,7 +40,8 @@ export type DrawerProps = {
  * The panel sits above the software keyboard with the `--kb-inset` the rest of the app reads, and
  * its swipe direction follows `side`, so it always leaves towards the edge it entered from. The
  * portal is outside the safe-area padding of `#root`, so the viewport adds the system insets
- * itself and keeps the larger of the bottom safe area and the keyboard inset.
+ * itself, keeps the larger of the top safe area and `--vv-offset-top`, and keeps the larger of
+ * the bottom safe area and `--kb-inset`.
  */
 export function Drawer({ open, onOpenChange, side = "left", label, children, className }: DrawerProps): ReactElement {
     const swipeDirection = side === "bottom" ? "down" : side;

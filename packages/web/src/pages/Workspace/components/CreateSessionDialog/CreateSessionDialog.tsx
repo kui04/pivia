@@ -1,20 +1,31 @@
 import type { CreateSessionOptions, DirectoryListResponse, SessionSummary } from "@pivia/protocol";
-import { ArrowUp, Clock, Folder } from "lucide-react";
-import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactElement } from "react";
+import { Check, ChevronRight, Clock, CornerLeftUp, Folder, X } from "lucide-react";
+import {
+    useCallback,
+    useEffect,
+    useId,
+    useRef,
+    useState,
+    type FormEvent,
+    type KeyboardEvent,
+    type ReactElement,
+    type RefObject,
+} from "react";
 
 import {
     AlertDialog,
     Button,
     Dialog,
     DialogActions,
-    DialogDescription,
     DialogHeader,
     DialogTitle,
     Drawer,
     Field,
     Form,
     Icon,
+    IconButton,
     Input,
+    LoadingIndicator,
     ScrollArea,
 } from "@components";
 
@@ -60,6 +71,31 @@ function joinDirectoryPath(parentPath: string, childName: string): string {
     return `${parentPath}${separator}${childName}`;
 }
 
+function runDirectoryFetch(
+    listDirectories: (path?: string) => Promise<DirectoryListResponse>,
+    targetPath: string | undefined,
+    requestSeqRef: RefObject<number>,
+    onLoaded: (listing: DirectoryListResponse) => void,
+    onError: (message: string) => void,
+): void {
+    const seq = requestSeqRef.current + 1;
+    requestSeqRef.current = seq;
+
+    void listDirectories(targetPath)
+        .then((listing) => {
+            if (requestSeqRef.current !== seq) {
+                return;
+            }
+            onLoaded(listing);
+        })
+        .catch((error: unknown) => {
+            if (requestSeqRef.current !== seq) {
+                return;
+            }
+            onError(error instanceof Error ? error.message : String(error));
+        });
+}
+
 interface CreateSessionBodyProps {
     readonly knownCwds: readonly string[];
     readonly narrow: boolean;
@@ -92,10 +128,14 @@ function CreateSessionBody({
         kind: "loading",
         path: initialCwd === "" ? undefined : initialCwd,
     }));
+    const [lastListing, setLastListing] = useState<DirectoryListResponse | null>(null);
     const [confirmCreatePath, setConfirmCreatePath] = useState<string | null>(null);
 
     const recentLabelId = useId();
     const browseLabelId = useId();
+    const inputRef = useRef<HTMLInputElement>(null);
+    const viewportRef = useRef<HTMLDivElement>(null);
+    const browseSectionRef = useRef<HTMLElement>(null);
     const requestSeqRef = useRef(0);
     const userEditedRef = useRef(false);
     const submitting = submission.kind === "submitting";
@@ -104,39 +144,42 @@ function CreateSessionBody({
         onBusyChange(submitting || confirmCreatePath !== null);
     }, [confirmCreatePath, onBusyChange, submitting]);
 
-    const fetchDirectory = useCallback(
-        (targetPath: string | undefined, seedEmptyInput: boolean): void => {
-            const seq = requestSeqRef.current + 1;
-            requestSeqRef.current = seq;
-
-            void onListDirectories(targetPath)
-                .then((listing) => {
-                    if (requestSeqRef.current !== seq) {
-                        return;
-                    }
-                    setBrowse({ kind: "loaded", listing });
-                    if (seedEmptyInput && !userEditedRef.current) {
-                        setCwd((current) => (current.trim() === "" ? listing.path : current));
-                    }
-                })
-                .catch((error: unknown) => {
-                    if (requestSeqRef.current !== seq) {
-                        return;
-                    }
-                    const message = error instanceof Error ? error.message : String(error);
-                    setBrowse({ kind: "error", path: targetPath, message });
-                });
-        },
-        [onListDirectories],
-    );
+    const requestDirectory = (targetPath: string | undefined): void => {
+        runDirectoryFetch(
+            onListDirectories,
+            targetPath,
+            requestSeqRef,
+            (listing) => {
+                setLastListing(listing);
+                setBrowse({ kind: "loaded", listing });
+            },
+            (message) => {
+                setBrowse({ kind: "error", path: targetPath, message });
+            },
+        );
+    };
 
     useEffect(() => {
         const startPath = initialCwdRef.current === "" ? undefined : initialCwdRef.current;
-        fetchDirectory(startPath, true);
+        runDirectoryFetch(
+            onListDirectories,
+            startPath,
+            requestSeqRef,
+            (listing) => {
+                setLastListing(listing);
+                setBrowse({ kind: "loaded", listing });
+                if (!userEditedRef.current) {
+                    setCwd((current) => (current.trim() === "" ? listing.path : current));
+                }
+            },
+            (message) => {
+                setBrowse({ kind: "error", path: startPath, message });
+            },
+        );
         return () => {
             requestSeqRef.current += 1;
         };
-    }, [fetchDirectory]);
+    }, [onListDirectories]);
 
     const submitPath = async (targetPath: string, createDirectory: boolean): Promise<void> => {
         setSubmission({ kind: "submitting", cwd: targetPath });
@@ -174,25 +217,58 @@ function CreateSessionBody({
         void submitPath(trimmed, false);
     };
 
-    const selectDirectory = (nextPath: string): void => {
+    const selectRecent = (recentPath: string): void => {
+        userEditedRef.current = true;
+        setCwd(recentPath);
+        if (submission.kind === "failed") {
+            setSubmission({ kind: "idle" });
+        }
+    };
+
+    const browseInto = (nextPath: string): void => {
         userEditedRef.current = true;
         setCwd(nextPath);
         if (submission.kind === "failed") {
             setSubmission({ kind: "idle" });
         }
         setBrowse({ kind: "loading", path: nextPath });
-        fetchDirectory(nextPath, false);
+        const viewport = viewportRef.current;
+        const browseSection = browseSectionRef.current;
+        if (viewport !== null && browseSection !== null && viewport.scrollTop > browseSection.offsetTop) {
+            viewport.scrollTop = browseSection.offsetTop;
+        }
+        requestDirectory(nextPath);
     };
 
-    const currentBrowsePath =
-        browse.kind === "loaded" ? browse.listing.path : browse.path !== undefined ? browse.path : "Server root";
+    const handleInputKeyDown = (event: KeyboardEvent<HTMLInputElement>): void => {
+        const composing = event.nativeEvent.isComposing || event.keyCode === 229;
+        if (!composing) {
+            return;
+        }
+        // Let the active IME dismiss its candidate bar or confirm text without closing or submitting the modal.
+        if (event.key === "Escape") {
+            event.stopPropagation();
+            event.nativeEvent.stopPropagation();
+        } else if (event.key === "Enter") {
+            event.preventDefault();
+        }
+    };
+
+    const activeListing = browse.kind === "loaded" ? browse.listing : browse.kind === "loading" ? lastListing : null;
+    const isRefreshing = browse.kind === "loading" && lastListing !== null;
 
     const actionButtons = (
         <>
-            <Button type="button" variant="secondary" disabled={submitting} onClick={onRequestClose}>
+            <Button
+                type="button"
+                variant="secondary"
+                disabled={submitting}
+                className={narrow ? styles.sheetAction : styles.dialogAction}
+                onClick={onRequestClose}
+            >
                 Cancel
             </Button>
-            <Button type="submit" disabled={submitting}>
+            <Button type="submit" disabled={submitting} className={narrow ? styles.sheetAction : styles.dialogAction}>
                 {submitting ? "Creating..." : "Create session"}
             </Button>
         </>
@@ -202,143 +278,214 @@ function CreateSessionBody({
         <>
             <Form
                 aria-busy={submitting ? true : undefined}
-                className={narrow ? styles.formScroll : undefined}
+                className={styles.form}
                 onSubmit={(event) => {
                     handleSubmit(event);
                 }}
             >
-                <Field
-                    label="Working directory"
-                    name="cwd"
-                    description="Absolute path on the server. The entered path is used directly."
-                    {...(submission.kind === "failed" ? { error: submission.message } : {})}
-                >
-                    <Input
-                        autoFocus={!narrow}
-                        value={cwd}
-                        disabled={submitting}
-                        placeholder="/path/to/project"
-                        autoComplete="off"
-                        onChange={(event) => {
-                            userEditedRef.current = true;
-                            setCwd(event.currentTarget.value);
-                            if (submission.kind === "failed") {
-                                setSubmission({ kind: "idle" });
-                            }
-                        }}
-                    />
-                </Field>
-
-                {recentCwds.length > 0 ? (
-                    <section className={styles.section} aria-labelledby={recentLabelId}>
-                        <p id={recentLabelId} className={styles.sectionLabel}>
-                            Recent
-                        </p>
-                        <div className={styles.recentList}>
-                            {recentCwds.map((dir) => (
-                                <button
-                                    key={dir}
+                <div className={styles.inputBand}>
+                    <Field
+                        label="Working directory"
+                        name="cwd"
+                        {...(submission.kind === "failed" ? { error: submission.message } : {})}
+                    >
+                        <div className={styles.inputShell}>
+                            <Icon className={styles.inputIcon} size="no-container">
+                                <Folder />
+                            </Icon>
+                            <Input
+                                ref={inputRef}
+                                autoFocus={!narrow}
+                                value={cwd}
+                                disabled={submitting}
+                                placeholder="/path/to/project"
+                                autoComplete="off"
+                                autoCorrect="off"
+                                autoCapitalize="none"
+                                spellCheck={false}
+                                enterKeyHint="go"
+                                className={styles.pathInput}
+                                onKeyDown={handleInputKeyDown}
+                                onChange={(event) => {
+                                    userEditedRef.current = true;
+                                    setCwd(event.currentTarget.value);
+                                    if (submission.kind === "failed") {
+                                        setSubmission({ kind: "idle" });
+                                    }
+                                }}
+                            />
+                            {cwd !== "" ? (
+                                <IconButton
                                     type="button"
-                                    className={styles.rowButton}
+                                    label="Clear path"
+                                    size="sm"
+                                    radius="small"
                                     disabled={submitting}
-                                    aria-pressed={cwd === dir}
+                                    className={styles.clearButton}
                                     onClick={() => {
-                                        selectDirectory(dir);
+                                        userEditedRef.current = true;
+                                        setCwd("");
+                                        if (submission.kind === "failed") {
+                                            setSubmission({ kind: "idle" });
+                                        }
+                                        inputRef.current?.focus();
                                     }}
                                 >
-                                    <Icon className={styles.rowIcon} size="sm">
-                                        <Clock />
-                                    </Icon>
-                                    <span className={styles.rowLabel}>{dir}</span>
-                                </button>
-                            ))}
+                                    <X />
+                                </IconButton>
+                            ) : null}
                         </div>
-                    </section>
-                ) : null}
+                    </Field>
+                </div>
 
-                <section className={styles.section} aria-labelledby={browseLabelId}>
-                    <div className={styles.sectionHeader}>
-                        <p id={browseLabelId} className={styles.sectionLabel}>
-                            Browse
-                        </p>
-                        <code className={styles.currentPath} title={currentBrowsePath}>
-                            {currentBrowsePath}
-                        </code>
-                    </div>
-                    <div className={styles.browserBox}>
-                        <ScrollArea
-                            label="Directories on server"
-                            landmark
-                            className={styles.browserScroll}
-                            contentClassName={styles.browserContent}
-                        >
-                            {browse.kind === "loading" ? (
+                <div className={styles.directoryArea}>
+                    <ScrollArea
+                        label="Directories on server"
+                        landmark
+                        viewportRef={viewportRef}
+                        className={styles.directoryScroll}
+                        viewportClassName={styles.directoryViewport}
+                        contentClassName={styles.directoryContent}
+                    >
+                        {recentCwds.length > 0 ? (
+                            <section className={styles.section} aria-labelledby={recentLabelId}>
+                                <div className={styles.sectionHeader}>
+                                    <p id={recentLabelId} className={styles.sectionLabel}>
+                                        Recent
+                                    </p>
+                                </div>
+                                <div className={styles.rowList}>
+                                    {recentCwds.map((dir) => {
+                                        const selected = cwd === dir;
+                                        return (
+                                            <button
+                                                key={dir}
+                                                type="button"
+                                                className={styles.rowButton}
+                                                disabled={submitting}
+                                                aria-pressed={selected}
+                                                onClick={() => {
+                                                    selectRecent(dir);
+                                                }}
+                                            >
+                                                <Icon className={styles.rowIcon} size="no-container">
+                                                    <Clock />
+                                                </Icon>
+                                                <span className={styles.rowLabel}>{dir}</span>
+                                                {selected ? (
+                                                    <Icon className={styles.rowCheck} size="sm">
+                                                        <Check />
+                                                    </Icon>
+                                                ) : null}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </section>
+                        ) : null}
+
+                        <section ref={browseSectionRef} className={styles.section} aria-labelledby={browseLabelId}>
+                            <div className={styles.sectionHeader}>
+                                <p id={browseLabelId} className={styles.sectionLabel}>
+                                    Browse
+                                </p>
+                                {isRefreshing ? <LoadingIndicator size="sm" label="Loading directories" /> : null}
+                            </div>
+
+                            {browse.kind === "error" ? (
+                                <div className={styles.browserErrorRow} role="status">
+                                    <p className={styles.browserError}>{browse.message}</p>
+                                    <div className={styles.browserErrorActions}>
+                                        {lastListing !== null ? (
+                                            <Button
+                                                type="button"
+                                                variant="secondary"
+                                                disabled={submitting}
+                                                onClick={() => {
+                                                    setBrowse({ kind: "loaded", listing: lastListing });
+                                                    setCwd(lastListing.path);
+                                                }}
+                                            >
+                                                Back
+                                            </Button>
+                                        ) : null}
+                                        <Button
+                                            type="button"
+                                            variant="secondary"
+                                            disabled={submitting}
+                                            onClick={() => {
+                                                setBrowse({ kind: "loading", path: browse.path });
+                                                requestDirectory(browse.path);
+                                            }}
+                                        >
+                                            Retry
+                                        </Button>
+                                    </div>
+                                </div>
+                            ) : activeListing === null ? (
                                 <p className={styles.browserStatus} role="status">
                                     Loading directories…
                                 </p>
-                            ) : browse.kind === "error" ? (
-                                <p className={styles.browserError} role="status">
-                                    {browse.message}
-                                </p>
                             ) : (
-                                <>
-                                    {browse.listing.parent !== null ? (
+                                <div className={styles.rowList} data-loading={isRefreshing ? "true" : undefined}>
+                                    {activeListing.parent !== null ? (
                                         <button
                                             type="button"
                                             className={styles.rowButton}
                                             disabled={submitting}
                                             title="Go to parent directory"
                                             onClick={() => {
-                                                if (browse.listing.parent !== null) {
-                                                    selectDirectory(browse.listing.parent);
+                                                if (activeListing.parent !== null) {
+                                                    browseInto(activeListing.parent);
                                                 }
                                             }}
                                         >
-                                            <Icon className={styles.rowIcon} size="sm">
-                                                <ArrowUp />
+                                            <Icon className={styles.rowIcon} size="no-container">
+                                                <CornerLeftUp />
                                             </Icon>
                                             <span className={styles.rowLabel}>..</span>
                                         </button>
                                     ) : null}
-                                    {browse.listing.directories.map((entry) => {
-                                        const childPath = joinDirectoryPath(browse.listing.path, entry);
+                                    {activeListing.directories.map((entry) => {
+                                        const childPath = joinDirectoryPath(activeListing.path, entry);
                                         return (
                                             <button
                                                 key={entry}
                                                 type="button"
                                                 className={styles.rowButton}
                                                 disabled={submitting}
-                                                aria-pressed={cwd === childPath}
                                                 onClick={() => {
-                                                    selectDirectory(childPath);
+                                                    browseInto(childPath);
                                                 }}
                                             >
-                                                <Icon className={styles.rowIcon} size="sm">
+                                                <Icon className={styles.rowIcon} size="no-container">
                                                     <Folder />
                                                 </Icon>
                                                 <span className={styles.rowLabel}>{entry}</span>
+                                                <Icon className={styles.rowChevron} size="sm">
+                                                    <ChevronRight />
+                                                </Icon>
                                             </button>
                                         );
                                     })}
-                                    {browse.listing.directories.length === 0 ? (
+                                    {activeListing.directories.length === 0 ? (
                                         <p className={styles.browserEmpty}>No subdirectories</p>
                                     ) : null}
-                                    {browse.listing.truncated ? (
+                                    {activeListing.truncated ? (
                                         <p className={styles.browserStatus}>
-                                            This folder has more directories than the browser shows. Narrow the path to
-                                            find the rest.
+                                            List truncated — enter a deeper path to narrow.
                                         </p>
                                     ) : null}
-                                </>
+                                </div>
                             )}
-                        </ScrollArea>
-                    </div>
-                </section>
+                        </section>
+                    </ScrollArea>
+                </div>
 
                 {narrow ? (
-                    <div className={styles.actions}>{actionButtons}</div>
+                    <div className={styles.footer}>{actionButtons}</div>
                 ) : (
-                    <DialogActions>{actionButtons}</DialogActions>
+                    <DialogActions className={styles.footer}>{actionButtons}</DialogActions>
                 )}
             </Form>
 
@@ -370,7 +517,7 @@ function CreateSessionBody({
 
 /**
  * Responsive new-session modal: centered Dialog on desktop and bottom-sheet Drawer on narrow screens,
- * combining direct path entry, up to three recent directories, and live host directory browsing.
+ * keeping the header, working-directory input, and submit actions pinned while the directory list scrolls.
  */
 export function CreateSessionDialog({
     open,
@@ -421,9 +568,10 @@ export function CreateSessionDialog({
                 label="New session"
                 className={styles.sheet}
             >
+                {/* Keep the static header outside CreateSessionBody so exit animations never flash a blank sheet. */}
                 <div className={styles.sheetHeader}>
+                    <div className={styles.grabber} aria-hidden="true" />
                     <h2 className={styles.sheetTitle}>New session</h2>
-                    <p className={styles.sheetDescription}>Choose or enter a server working directory.</p>
                 </div>
                 {body}
             </Drawer>
@@ -432,9 +580,8 @@ export function CreateSessionDialog({
 
     return (
         <Dialog open={open} onOpenChange={handleOpenChange} className={styles.dialog}>
-            <DialogHeader>
+            <DialogHeader className={styles.dialogHeader}>
                 <DialogTitle>New session</DialogTitle>
-                <DialogDescription>Choose or enter a server working directory.</DialogDescription>
             </DialogHeader>
             {body}
         </Dialog>

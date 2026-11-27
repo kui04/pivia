@@ -13,6 +13,7 @@
     z-index: var(--z-modal);
     inset: 0;
     background-color: var(--color-scrim);
+    overscroll-behavior: contain;
     /* Base UI writes the gesture progress here, so the scrim follows the finger. */
     opacity: calc(1 - var(--drawer-swipe-progress, 0));
     transition: opacity var(--motion-duration-effects-default) var(--motion-easing-standard);
@@ -49,7 +50,9 @@
     inset: 0;
     display: flex;
     align-items: stretch;
-    padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
+    overscroll-behavior: contain;
+    /* Keep the top edge clear of both the notch and any Safari visual-viewport pan when an IME opens. */
+    padding: max(var(--vv-offset-top, 0px), env(safe-area-inset-top, 0px)) env(safe-area-inset-right, 0px)
         max(var(--kb-inset, 0px), env(safe-area-inset-bottom, 0px)) env(safe-area-inset-left, 0px);
 
     &[data-side="left"] {
@@ -112,7 +115,7 @@
             inline-size: 100%;
             max-inline-size: 36rem;
             block-size: auto;
-            max-block-size: calc(min(85dvh, 42rem) + var(--drawer-bleed));
+            max-block-size: min(calc(100% + var(--drawer-bleed)), calc(min(85dvh, 42rem) + var(--drawer-bleed)));
             margin-block-end: calc(-1 * var(--drawer-bleed));
             padding-block-end: var(--drawer-bleed);
             border-block-start: var(--border-width) solid var(--color-outline-variant);

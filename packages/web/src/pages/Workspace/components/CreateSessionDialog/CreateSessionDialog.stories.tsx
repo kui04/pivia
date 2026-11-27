@@ -178,8 +178,27 @@ export const Default: Story = {
             "scroll-area-viewport",
         );
 
-        // At most 3 recent directories are shown even when more exist in the catalog.
-        await expect(within(dialog).getByRole("button", { name: "/home/u/pivia" })).toBeVisible();
+        // At most 3 recent directories are shown even when more exist in the catalog, aligned with the input box.
+        const firstRecent = within(dialog).getByRole("button", { name: "/home/u/pivia" });
+        await expect(firstRecent).toBeVisible();
+        const inputBox = input.parentElement?.getBoundingClientRect();
+        const rowBox = firstRecent.getBoundingClientRect();
+        await expect(inputBox).toBeDefined();
+        if (inputBox !== undefined) {
+            await expect(Math.abs(rowBox.left - inputBox.left)).toBeLessThanOrEqual(1);
+            await expect(Math.abs(rowBox.right - inputBox.right)).toBeLessThanOrEqual(1);
+        }
+        const inputIcon = input.previousElementSibling?.getBoundingClientRect();
+        const rowIcon = firstRecent.firstElementChild?.getBoundingClientRect();
+        const rowLabel = firstRecent.children[1]?.getBoundingClientRect();
+        const inputRect = input.getBoundingClientRect();
+        if (inputIcon !== undefined && rowIcon !== undefined && rowLabel !== undefined) {
+            await expect(Math.abs(rowIcon.left - inputIcon.left)).toBeLessThanOrEqual(1);
+            await expect(Math.abs(rowLabel.left - inputRect.left)).toBeLessThanOrEqual(1);
+            const rowIconCenterY = (rowIcon.top + rowIcon.bottom) / 2;
+            const rowLabelCenterY = (rowLabel.top + rowLabel.bottom) / 2;
+            await expect(Math.abs(rowIconCenterY - rowLabelCenterY)).toBeLessThanOrEqual(1);
+        }
         await expect(within(dialog).getByRole("button", { name: "/home/u/docs" })).toBeVisible();
         await expect(within(dialog).getByRole("button", { name: "/home/u/notes" })).toBeVisible();
         await expect(within(dialog).queryByRole("button", { name: "/home/u/ignored-fourth" })).not.toBeInTheDocument();
@@ -194,14 +213,17 @@ export const Default: Story = {
         await expect(input).toHaveValue("/home/u/pivia");
 
         // Clearing the input triggers client-side required validation without hitting the server.
-        await userEvent.clear(input);
+        await userEvent.click(within(dialog).getByRole("button", { name: "Clear path" }));
+        await expect(input).toHaveValue("");
         await userEvent.click(within(dialog).getByRole("button", { name: "Create session" }));
         await expect(within(dialog).getByText("Enter a working directory path.")).toBeVisible();
         await expect(onCreateSuccess).not.toHaveBeenCalled();
 
-        // Picking a recent directory fills the input and clears the previous error.
+        // Picking a recent directory fills the input and clears the previous error without drilling down.
+        const callsBeforeRecent = mockListDirectories.mock.calls.length;
         await userEvent.click(within(dialog).getByRole("button", { name: "/home/u/docs" }));
         await expect(input).toHaveValue("/home/u/docs");
+        await expect(mockListDirectories.mock.calls.length).toBe(callsBeforeRecent);
 
         await userEvent.click(within(dialog).getByRole("button", { name: "Create session" }));
         await expect(onCreateSuccess).toHaveBeenCalledWith("/home/u/docs", undefined);
@@ -266,7 +288,7 @@ export const TruncatedDirectoryList: Story = {
     },
     play: async () => {
         const dialog = await within(document.body).findByRole("dialog", { name: "New session" });
-        await expect(await within(dialog).findByText(/more directories than the browser shows/)).toBeVisible();
+        await expect(await within(dialog).findByText(/List truncated/)).toBeVisible();
     },
 };
 
@@ -277,22 +299,34 @@ export const CatalogUpdateKeepsBrowsing: Story = {
     render: (args) => <UpdatingCatalogDemo {...args} />,
     play: async ({ userEvent }) => {
         const dialog = await within(document.body).findByRole("dialog", { name: "New session" });
+        const input = within(dialog).getByLabelText("Working directory");
         await userEvent.click(await within(dialog).findByRole("button", { name: "packages" }));
-        await waitFor(() => expect(within(dialog).getByTitle("/home/u/pivia/packages")).toBeVisible());
+        await waitFor(() => expect(input).toHaveValue("/home/u/pivia/packages"));
 
         mockListDirectories.mockClear();
         pushCatalogUpdate?.();
         await new Promise((resolve) => setTimeout(resolve, 100));
 
         await expect(mockListDirectories).not.toHaveBeenCalled();
-        await expect(within(dialog).getByTitle("/home/u/pivia/packages")).toBeVisible();
+        await expect(input).toHaveValue("/home/u/pivia/packages");
         await expect(within(dialog).getByRole("button", { name: "web" })).toBeVisible();
     },
 };
 
+const manyDirectoriesList = fn<(path?: string) => Promise<DirectoryListResponse>>((path) => {
+    const key = path ?? "/home/u/pivia";
+    return Promise.resolve({
+        path: key,
+        parent: "/home/u",
+        directories: Array.from({ length: 24 }, (_, index) => `project-${String(index + 1).padStart(2, "0")}`),
+        truncated: false,
+    });
+});
+
 export const BottomSheet: Story = {
     args: {
         narrow: true,
+        onListDirectories: manyDirectoriesList,
     },
     play: async ({ userEvent }) => {
         onCreateSuccess.mockClear();
@@ -300,8 +334,33 @@ export const BottomSheet: Story = {
         const sheet = await within(document.body).findByRole("dialog", { name: "New session" });
         await expect(sheet).toHaveAttribute("data-side", "bottom");
         await expect(within(sheet).getByRole("button", { name: "/home/u/pivia" })).toBeVisible();
+        await expect(await within(sheet).findByRole("button", { name: "project-01" })).toBeVisible();
 
-        await userEvent.click(within(sheet).getByRole("button", { name: "Create session" }));
+        // The directory viewport must scroll instead of overflowing under the pinned footer.
+        const viewport = within(sheet).getByRole("region", { name: "Directories on server" });
+        await waitFor(() => expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight));
+
+        const createButton = within(sheet).getByRole("button", { name: "Create session" });
+        const viewportBox = viewport.getBoundingClientRect();
+        const buttonBox = createButton.getBoundingClientRect();
+        await expect(viewportBox.bottom).toBeLessThanOrEqual(buttonBox.top + 1);
+
+        // Scrolling past Recent pins the Browse section header at the top of the scroll viewport.
+        viewport.scrollTop = 240;
+        await waitFor(async () => {
+            const browseLabel = within(sheet).getByText("Browse");
+            await expect(browseLabel.getBoundingClientRect().top).toBeLessThanOrEqual(viewportBox.top + 12);
+        });
+
+        // Escape or Enter during IME composition must not dismiss or submit the bottom sheet.
+        const input = within(sheet).getByLabelText("Working directory");
+        input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", isComposing: true, bubbles: true }));
+        input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", keyCode: 229, bubbles: true }));
+        input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", isComposing: true, bubbles: true }));
+        await expect(sheet).toBeVisible();
+        await expect(onCreateSuccess).not.toHaveBeenCalled();
+
+        await userEvent.click(createButton);
         await expect(onCreateSuccess).toHaveBeenCalledWith("/home/u/pivia", undefined);
         await waitFor(async () => {
             await expect(sheet).not.toBeVisible();
