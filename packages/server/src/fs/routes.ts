@@ -87,7 +87,7 @@ export function registerFsRoutes(app: FastifyInstance, options: FsRoutesOptions 
             try {
                 const targetStats = await stat(realPath);
                 if (!targetStats.isDirectory()) {
-                    return sendApiError(reply, 400, "invalid_request", "Path is not a directory.");
+                    return await sendApiError(reply, 400, "invalid_request", "Path is not a directory.");
                 }
                 const allDirectories = await collectSubdirectories(realPath);
                 const parentDir = dirname(realPath);

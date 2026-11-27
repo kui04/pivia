@@ -6,10 +6,10 @@ import {
     useId,
     useRef,
     useState,
-    type FormEvent,
     type KeyboardEvent,
     type ReactElement,
     type RefObject,
+    type SubmitEvent,
 } from "react";
 
 import {
@@ -28,7 +28,7 @@ import {
     LoadingIndicator,
     ScrollArea,
 } from "@components";
-import { ensureFontRole } from "@/lib";
+import { ensureFontRole, isImeComposition } from "@/lib";
 
 import styles from "./CreateSessionDialog.module.css";
 
@@ -206,7 +206,7 @@ function CreateSessionBody({
         }
     };
 
-    const handleSubmit = (event: FormEvent<HTMLFormElement>): void => {
+    const handleSubmit = (event: SubmitEvent<HTMLFormElement>): void => {
         event.preventDefault();
         if (submitting) {
             return;
@@ -243,8 +243,7 @@ function CreateSessionBody({
     };
 
     const handleInputKeyDown = (event: KeyboardEvent<HTMLInputElement>): void => {
-        const composing = event.nativeEvent.isComposing || event.keyCode === 229;
-        if (!composing) {
+        if (!isImeComposition(event.nativeEvent)) {
             return;
         }
         // Let the active IME dismiss its candidate bar or confirm text without closing or submitting the modal.
@@ -297,7 +296,6 @@ function CreateSessionBody({
                             </Icon>
                             <Input
                                 ref={inputRef}
-                                autoFocus={!narrow}
                                 value={cwd}
                                 disabled={submitting}
                                 placeholder="/path/to/project"

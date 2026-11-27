@@ -206,7 +206,7 @@ export function TurnGroup({
                 </Disclosure>
             ) : null}
 
-            {hasFinalReply && turn.finalReply !== null ? (
+            {hasFinalReply ? (
                 <div className={styles.finalReply}>
                     <Markdown streaming={turn.streaming} className={styles.markdown} onOpenLink={onOpenLink}>
                         {turn.finalReply}

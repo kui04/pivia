@@ -40,7 +40,7 @@ interface StoredEntry<D extends string, TDelta> {
     readonly bytes: number;
 }
 
-function defaultMeasureBytes<TDelta>(payload: TDelta): number {
+function defaultMeasureBytes(payload: unknown): number {
     return Buffer.byteLength(JSON.stringify(payload), "utf8");
 }
 

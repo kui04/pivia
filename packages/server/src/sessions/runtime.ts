@@ -946,6 +946,18 @@ export class SessionRegistry {
 
     private async bindRuntime(entry: ActiveSession, ready: PromiseWithResolvers<void>): Promise<void> {
         let shutdownRequested = false;
+        // `shutdownHandler` can run during `bindExtensions`, so the flag is read after binding.
+        const closeAfterStartupShutdown = (requested: boolean): void => {
+            if (!requested) {
+                return;
+            }
+            void this.closeSession(entry.sessionId).catch((error: unknown) => {
+                this.logger.warn(
+                    { err: error, sessionId: entry.sessionId },
+                    "failed to close session after startup shutdown request",
+                );
+            });
+        };
         try {
             await entry.runtime.session.bindExtensions({
                 uiContext: entry.uiBridge.context,
@@ -991,14 +1003,7 @@ export class SessionRegistry {
             ready.resolve();
             this.touch(entry);
             this.emitSessionUpdated(entry);
-            if (shutdownRequested) {
-                void this.closeSession(entry.sessionId).catch((error: unknown) => {
-                    this.logger.warn(
-                        { err: error, sessionId: entry.sessionId },
-                        "failed to close session after startup shutdown request",
-                    );
-                });
-            }
+            closeAfterStartupShutdown(shutdownRequested);
             return;
         }
 

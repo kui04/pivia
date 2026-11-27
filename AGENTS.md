@@ -21,8 +21,8 @@
 - Define HTTP and WebSocket paths, methods, auth visibility, and param/query codecs once in
   `packages/protocol/src/endpoints/` (`HTTP_ENDPOINTS`, `WS_ENDPOINTS`), and consume them from `packages/server` and
   `packages/web`.
-- Do not re-export raw `@earendil-works/pi-*` types from `@pivia/protocol`. Import SDK types directly in each package
-  and derive protocol wire types with checked helpers (`StrictOmit`, `PatchOf`).
+- Import SDK types directly in each package and derive protocol wire types with checked helpers (`StrictOmit`,
+  `PatchOf`).
 
 ## Guides
 
@@ -34,11 +34,9 @@
 
 ## Logging
 
-- Server code (`packages/server`) logs through the server logger module writing structured records to `stderr`. Do not
-  call `console.*` directly for application logs.
+- Server code (`packages/server`) logs through the server logger module writing structured records to `stderr`.
 - Frontend code (`packages/web`) logs through `Log` (`Log.trace`, `Log.debug`, `Log.info`, `Log.warn`, `Log.error`) in
-  `packages/web/src/lib/log.ts`, which writes to the browser console. Do not call `console.*` directly for application
-  logs.
+  `packages/web/src/lib/log.ts`, which writes to the browser console.
 
 ## Checks
 

@@ -108,18 +108,16 @@ export function isLoopbackHost(host: string): boolean {
 
 function buildSecretDigest(options: AuthServiceOptions): Buffer | null {
     if (options.disabled) {
-        if (options.password !== undefined) {
+        // Untyped callers can still pass both; `password?: never` only stops typed callers.
+        if (Object.hasOwn(options, "password")) {
             throw new Error("Cannot combine disabled authentication with a password.");
         }
         return null;
     }
-    if (options.password !== undefined) {
-        if (options.password.length === 0) {
-            throw new Error("Password must not be empty.");
-        }
-        return sha256(options.password);
+    if (options.password.length === 0) {
+        throw new Error("Password must not be empty.");
     }
-    throw new Error("AuthService requires a password or disabled: true.");
+    return sha256(options.password);
 }
 
 function verifySecretDigest(digest: Buffer, candidate: string): boolean {

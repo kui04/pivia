@@ -53,7 +53,6 @@ function RenameSessionBody({
                     value={name}
                     disabled={pending}
                     placeholder="Session name"
-                    autoFocus
                     onChange={(event) => {
                         setName(event.target.value);
                         if (validationError !== null) {

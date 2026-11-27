@@ -337,7 +337,9 @@ export function WorkspaceLayout(props: WorkspaceLayoutProps = {}): ReactElement 
           }
         : { kind: "none" };
 
-    const origin = typeof globalThis.location?.origin === "string" ? globalThis.location.origin : "Single host";
+    // `location` is absent in Node test runs, but the DOM types declare it always present.
+    const pageLocation = globalThis.location as Location | undefined;
+    const origin = pageLocation?.origin ?? "Single host";
 
     const sidebar = (
         <Sidebar

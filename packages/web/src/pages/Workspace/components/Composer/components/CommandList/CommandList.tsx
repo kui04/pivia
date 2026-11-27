@@ -70,6 +70,7 @@ export function CommandList({
                     id={listId}
                     role="listbox"
                     aria-label="Commands"
+                    tabIndex={-1}
                     className={styles.listbox}
                     onMouseLeave={() => {
                         onPoint(null);
@@ -78,11 +79,14 @@ export function CommandList({
                     {rows.map((row) => {
                         const lit = row.id === litId;
                         return (
+                            // Focus stays on the composer textarea, which drives this list with the arrow keys.
+                            // eslint-disable-next-line jsx-a11y/click-events-have-key-events
                             <div
                                 key={row.id}
                                 id={`${listId}-${row.id}`}
                                 role="option"
                                 aria-selected={lit}
+                                tabIndex={-1}
                                 data-lit={lit}
                                 ref={(element) => {
                                     scrollHighlightedIntoView(row, element);

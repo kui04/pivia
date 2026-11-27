@@ -42,7 +42,7 @@ function installViewportMetrics(): void {
         const innerHeight = window.innerHeight;
         const viewport = window.visualViewport;
 
-        if (viewport === null || viewport === undefined) {
+        if (viewport === null) {
             root.style.setProperty("--vv-height", `${innerHeight}px`);
             root.style.setProperty("--vv-offset-top", "0px");
             root.style.setProperty("--kb-inset", "0px");
@@ -50,9 +50,9 @@ function installViewportMetrics(): void {
             return;
         }
 
-        const top = Math.round(viewport.offsetTop ?? 0);
+        const top = Math.round(viewport.offsetTop);
         const height = Math.round(viewport.height);
-        const scale = viewport.scale ?? 1;
+        const scale = viewport.scale;
         const inset = computeKeyboardInset(top, height, scale);
 
         root.style.setProperty("--vv-height", `${height}px`);
@@ -83,7 +83,7 @@ function installViewportMetrics(): void {
     write();
 
     const viewport = window.visualViewport;
-    if (viewport !== null && viewport !== undefined) {
+    if (viewport !== null) {
         viewport.addEventListener("resize", schedule);
         viewport.addEventListener("scroll", schedule);
     }

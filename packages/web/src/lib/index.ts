@@ -23,4 +23,5 @@ export {
     type FontRole,
 } from "./fonts";
 export { Fuzzy, type FuzzyMatch } from "./fuzzy";
+export { isImeComposition } from "./ime";
 export { createLog, Log, type LogLevel, type LogOptions } from "./log";

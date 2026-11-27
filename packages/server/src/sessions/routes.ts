@@ -48,7 +48,7 @@ export function registerSessionRoutes(app: FastifyInstance, sessionRegistry: Ses
                             ? undefined
                             : { createDirectory: request.body.createDirectory },
                     );
-                    return reply.code(201).send({ session: handle.summarize() });
+                    return await reply.code(201).send({ session: handle.summarize() });
                 } catch (error) {
                     if (error instanceof SessionRegistryError) {
                         return sendRegistryError(reply, error);

@@ -188,14 +188,14 @@ export class SyncStreamHost<D extends string, TSnapshot, TDelta, THint = undefin
                 snapshot: result.snapshot,
             };
             client.sendRaw(JSON.stringify(snapshotFrame));
-            if (this.disposed || this.clients.get(client) !== state) {
+            if (this.clients.get(client) !== state) {
                 return;
             }
 
             const pending = state.phase.pending;
             state.phase = { kind: "live" };
             for (const item of pending) {
-                if (this.disposed || this.clients.get(client) !== state) {
+                if (this.clients.get(client) !== state) {
                     break;
                 }
                 if (item.seq <= result.cursor.seq) {

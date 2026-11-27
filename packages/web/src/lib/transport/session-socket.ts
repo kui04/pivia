@@ -96,8 +96,10 @@ export function buildSessionSocketUrl(sessionId: SessionId, handshake?: SessionH
 let fallbackCommandId = 0;
 
 function createCommandId(): string {
-    if (typeof globalThis.crypto?.randomUUID === "function") {
-        return globalThis.crypto.randomUUID();
+    // `randomUUID` is missing outside secure contexts, but the DOM types declare it always present.
+    const cryptoApi = globalThis.crypto as Crypto | undefined;
+    if (cryptoApi !== undefined && typeof cryptoApi.randomUUID === "function") {
+        return cryptoApi.randomUUID();
     }
     fallbackCommandId += 1;
     return `command-${String(fallbackCommandId)}`;

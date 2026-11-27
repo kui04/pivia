@@ -17,6 +17,8 @@ import type { SessionDelta, SessionId } from "@pivia/protocol";
  * This avoids depending on the SDK's private global theme singleton while keeping
  * `ExtensionUIContext.theme` usable for extensions that only style text.
  */
+// The proxy answers every property, so it needs no `Theme` instance state.
+// eslint-disable-next-line @typescript-eslint/no-unsafe-class-instance-assignment
 const plainTextTheme = new Proxy({} as Theme, {
     get(_target, property) {
         if (typeof property === "symbol") {
@@ -76,7 +78,7 @@ export interface SessionUiBridgeOptions {
 
 /** True when the response shape matches the dialog method it answers. */
 function responseMatchesMethod(method: RpcExtensionUIRequest["method"], response: RpcExtensionUIResponse): boolean {
-    if ("cancelled" in response && response.cancelled === true) {
+    if ("cancelled" in response) {
         return true;
     }
     if (method === "confirm") {
@@ -250,7 +252,7 @@ export class SessionUiBridge {
 
 /** Return the value of a select/input/editor response, or the default when cancelled. */
 function parseValueResponse(response: RpcExtensionUIResponse): string | undefined {
-    if ("cancelled" in response && response.cancelled) {
+    if ("cancelled" in response) {
         return undefined;
     }
     return "value" in response ? response.value : undefined;
@@ -258,7 +260,7 @@ function parseValueResponse(response: RpcExtensionUIResponse): string | undefine
 
 /** Return the confirmation value, or `false` when cancelled. */
 function parseConfirmResponse(response: RpcExtensionUIResponse): boolean {
-    if ("cancelled" in response && response.cancelled) {
+    if ("cancelled" in response) {
         return false;
     }
     return "confirmed" in response ? response.confirmed : false;

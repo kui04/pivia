@@ -65,13 +65,13 @@ export const Default: Story = {
         await expect(zoom).toHaveTextContent("100%");
 
         await userEvent.click(within(dialog).getByRole("button", { name: "Zoom in" }));
-        await waitFor(() => expect(Number.parseInt(zoom.textContent ?? "0", 10)).toBeGreaterThan(100));
+        await waitFor(() => expect(Number.parseInt(zoom.textContent, 10)).toBeGreaterThan(100));
 
         await userEvent.click(within(dialog).getByRole("button", { name: "Reset zoom" }));
         await waitFor(() => expect(zoom).toHaveTextContent("100%"));
 
         await userEvent.click(within(dialog).getByRole("button", { name: "Zoom in" }));
-        await waitFor(() => expect(Number.parseInt(zoom.textContent ?? "0", 10)).toBeGreaterThan(100));
+        await waitFor(() => expect(Number.parseInt(zoom.textContent, 10)).toBeGreaterThan(100));
 
         await userEvent.click(within(dialog).getByRole("button", { name: "Zoom out" }));
         await waitFor(() => expect(zoom).toHaveTextContent("100%"));

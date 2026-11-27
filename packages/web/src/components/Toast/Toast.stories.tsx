@@ -262,7 +262,7 @@ export const PersistentSeverities: Story = {
         await waitFor(() => expect(canvas.getAllByRole("listitem")).toHaveLength(4));
 
         const timeouts = [...canvas.getAllByRole("listitem")]
-            .map((item) => item.textContent ?? "")
+            .map((item) => item.textContent)
             .sort((left, right) => left.localeCompare(right));
 
         await expect(timeouts).toEqual(["error:0", "info:provider", "success:provider", "warning:0"]);

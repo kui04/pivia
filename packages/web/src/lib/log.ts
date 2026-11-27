@@ -28,9 +28,9 @@ function defaultLevel(): LogLevel {
 }
 
 /**
- * Creates a log facade over a console-like sink. Application code calls the
- * exported `Log` instead of `console.*`, so one module owns the prefix, the
- * level threshold and the call site a future transport can replace.
+ * Creates a log facade over a console-like sink. Application code logs through
+ * this facade so one module owns the prefix, the level threshold and the call
+ * site a future transport can replace.
  *
  * The sink and the level are injectable for tests and non-browser hosts.
  */

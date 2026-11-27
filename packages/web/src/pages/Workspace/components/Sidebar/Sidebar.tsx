@@ -1,6 +1,6 @@
 import type { SessionId } from "@pivia/protocol";
 import { Pin, Plus, RefreshCw, Search, Settings, X } from "lucide-react";
-import { useId, useRef, useState, type ReactElement } from "react";
+import { useEffect, useId, useRef, useState, type ReactElement } from "react";
 
 import { Button, Icon, IconButton, Input, ScrollArea, VisuallyHidden } from "@components";
 import { cn } from "@/lib";
@@ -49,7 +49,15 @@ export function Sidebar({
 }: SidebarProps): ReactElement {
     const [searching, setSearching] = useState(false);
     const searchActionRef = useRef<HTMLButtonElement>(null);
+    const searchInputRef = useRef<HTMLInputElement>(null);
     const pinnedTitleId = useId();
+
+    // The field replaces the Search action, so it takes the focus that action held.
+    useEffect(() => {
+        if (searching) {
+            searchInputRef.current?.focus();
+        }
+    }, [searching]);
 
     const syncing = sync.kind === "syncing";
     const starting = model.total === 0 && (sync.kind === "idle" || syncing);
@@ -90,8 +98,7 @@ export function Sidebar({
                             <Search />
                         </Icon>
                         <Input
-                            // The field replaces the Search action, so it has to take the focus it displaced.
-                            autoFocus
+                            ref={searchInputRef}
                             type="search"
                             aria-label="Search sessions"
                             placeholder="Search sessions"

@@ -18,7 +18,9 @@ export type WebSocketConstructor = new (url: string) => WebSocketLike;
  * Throws an Error when `pageUrl` is omitted outside a browser environment.
  */
 export function buildWebSocketUrl(path: string, pageUrl?: string): string {
-    const source = pageUrl ?? globalThis.location?.href;
+    // `location` is absent in Node, but the DOM types declare it always present.
+    const pageLocation = globalThis.location as Location | undefined;
+    const source = pageUrl ?? pageLocation?.href;
     if (source === undefined) {
         throw new Error("A WebSocket URL is required outside the browser.");
     }
@@ -34,7 +36,7 @@ export function buildWebSocketUrl(path: string, pageUrl?: string): string {
  * Throws an Error when `globalThis.WebSocket` is unavailable in the current environment.
  */
 export function defaultWebSocketConstructor(): WebSocketConstructor {
-    const constructor = globalThis.WebSocket;
+    const constructor = globalThis.WebSocket as typeof globalThis.WebSocket | undefined;
     if (constructor === undefined) {
         throw new Error("WebSocket is not available in this environment.");
     }

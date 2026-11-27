@@ -132,6 +132,8 @@ function isTransientHttpError(error: unknown): boolean {
 
 /** Creates the session store wired to `/ws/sessions/:id`, HTTP entry hydration, and dual caches. */
 export function createSessionStore(options: SessionStoreOptions) {
+    // Runtime guard for untyped callers; `store.test.ts` reaches it through `@ts-expect-error`.
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     if (options === undefined || options.apiClient === undefined) {
         throw new Error("createSessionStore requires an apiClient.");
     }
@@ -272,9 +274,11 @@ export function createSessionStore(options: SessionStoreOptions) {
                         anchor === undefined ? { signal } : { anchor, signal },
                     );
                 } catch (error) {
-                    if (isAbortError(error) || signal.aborted) {
+                    if (isAbortError(error)) {
                         throw error;
                     }
+                    // The request above can abort after the loop-top check; an abort must not retry.
+                    signal.throwIfAborted();
                     lastError = error;
                     if (error instanceof ApiClientError && error.status === 404) {
                         throw error;

@@ -24,9 +24,11 @@ const BASE64_CHUNK_BYTES = 0x8000;
  * Rejects with a plain Error when both paths fail.
  */
 async function copy(text: string): Promise<void> {
-    if (typeof navigator.clipboard?.writeText === "function") {
+    // `clipboard` is absent on insecure origins, but the DOM types declare it always present.
+    const clipboard = navigator.clipboard as globalThis.Clipboard | undefined;
+    if (clipboard !== undefined && typeof clipboard.writeText === "function") {
         try {
-            await navigator.clipboard.writeText(text);
+            await clipboard.writeText(text);
             return;
         } catch {
             // Permission or focus errors still leave the legacy path available.
@@ -85,12 +87,17 @@ async function readFiles(transfer: DataTransfer | null): Promise<readonly File[]
     if (fromTransfer.length > 0) {
         return fromTransfer;
     }
-    if (typeof navigator === "undefined" || typeof navigator.clipboard?.read !== "function") {
+    if (typeof navigator === "undefined") {
+        return [];
+    }
+    // `clipboard` is absent on insecure origins, but the DOM types declare it always present.
+    const clipboard = navigator.clipboard as globalThis.Clipboard | undefined;
+    if (clipboard === undefined || typeof clipboard.read !== "function") {
         return [];
     }
 
     try {
-        const items = await navigator.clipboard.read();
+        const items = await clipboard.read();
         const files: File[] = [];
         for (const item of items) {
             const preferredType =
@@ -145,6 +152,7 @@ function copyWithExecCommand(text: string): boolean {
     textarea.setSelectionRange(0, text.length);
 
     try {
+        // eslint-disable-next-line @typescript-eslint/no-deprecated -- The only fallback when the async clipboard API is missing or rejects.
         return document.execCommand("copy");
     } catch {
         return false;

@@ -52,6 +52,7 @@ export function AuthGate({ error, submitting, onSubmit }: AuthGateProps) {
                         description="The server checks this password before it opens the API."
                         {...(error === null ? {} : { error })}
                     >
+                        {/* eslint-disable-next-line jsx-a11y/no-autofocus -- The gate opens with focus in its only field. */}
                         <Input type="password" autoComplete="current-password" autoFocus required />
                     </Field>
                     <Button type="submit" className={styles.submit} disabled={submitting}>

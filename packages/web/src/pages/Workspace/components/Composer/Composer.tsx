@@ -13,7 +13,7 @@ import {
 } from "react";
 
 import { IconButton, Popover, ScrollArea, VisuallyHidden } from "@components";
-import { cn } from "@/lib";
+import { cn, isImeComposition } from "@/lib";
 
 import {
     AttachmentStrip,
@@ -112,7 +112,7 @@ export function Composer({
     const commandListOpen =
         ready && currentSlash !== null && !/\s/.test(value.trimStart()) && !dismissedSlash && panel === "none";
     const rows = useMemo(
-        () => (commandListOpen ? commandRows(currentSlash ?? "", remoteRows) : []),
+        () => (commandListOpen ? commandRows(currentSlash, remoteRows) : []),
         [commandListOpen, currentSlash, remoteRows],
     );
     const highlightedRow = rows.find((row) => row.id === highlightedId) ?? rows[0] ?? null;
@@ -206,7 +206,7 @@ export function Composer({
                     assertNever(command);
             }
         },
-        [notify, onSendCommand],
+        [notify, onSendCommand, restoreDraft],
     );
 
     const submit = useCallback(
@@ -287,8 +287,7 @@ export function Composer({
     };
 
     const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
-        // Keep IME composition safe across Escape, Tab, arrows, and Enter.
-        if (event.nativeEvent.isComposing || event.keyCode === 229) {
+        if (isImeComposition(event.nativeEvent)) {
             return;
         }
         if (event.key === "Escape" && commandListOpen) {

@@ -13,6 +13,7 @@ import {
 } from "react";
 
 import { Button, Icon, Popover, PopoverContent, PopoverTrigger, ScrollArea } from "@components";
+import { isImeComposition } from "@/lib";
 
 import type { ComposerCommandSender, PickerCatalogState } from "../../types";
 import { PickerPill } from "../PickerPill";
@@ -185,10 +186,13 @@ const ModelRow = memo(function ModelRow({
     onChoose,
 }: ModelRowProps): ReactElement {
     return (
+        // Focus stays on the combobox input, which moves the highlight with the arrow keys.
+        // eslint-disable-next-line jsx-a11y/click-events-have-key-events
         <div
             id={id}
             role="option"
             aria-selected={lit}
+            tabIndex={-1}
             data-lit={lit}
             className={styles.option}
             onClick={() => {
@@ -305,13 +309,14 @@ function ModelMenu({ catalog, activeKey, logoCache, onRetry, onChoose }: ModelMe
                         setCursor(0);
                     }}
                     onKeyDown={(event) => {
+                        const composing = isImeComposition(event.nativeEvent);
                         if (event.key === "ArrowDown") {
                             event.preventDefault();
                             move(1);
                         } else if (event.key === "ArrowUp") {
                             event.preventDefault();
                             move(-1);
-                        } else if (event.key === "Enter" && !event.nativeEvent.isComposing && event.keyCode !== 229) {
+                        } else if (event.key === "Enter" && !composing) {
                             const picked =
                                 litIndex < 0
                                     ? activeKey === null
@@ -344,6 +349,7 @@ function ModelMenu({ catalog, activeKey, logoCache, onRetry, onChoose }: ModelMe
                         id={listId}
                         role="listbox"
                         aria-label="Models"
+                        tabIndex={-1}
                         className={styles.listbox}
                         onMouseLeave={() => {
                             setHovered(null);

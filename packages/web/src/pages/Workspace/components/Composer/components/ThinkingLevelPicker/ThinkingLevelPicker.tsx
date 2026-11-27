@@ -104,11 +104,14 @@ function LevelList({
                 }}
             >
                 {levels.map((level, index) => (
+                    // Focus stays on the combobox input, which moves the highlight with the arrow keys.
+                    // eslint-disable-next-line jsx-a11y/click-events-have-key-events
                     <div
                         key={level}
                         id={`${listId}-${index}`}
                         role="option"
                         aria-selected={index === litIndex}
+                        tabIndex={-1}
                         data-lit={index === litIndex}
                         className={styles.option}
                         onClick={() => {
