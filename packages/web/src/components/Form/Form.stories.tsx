@@ -7,7 +7,7 @@ import { Fieldset } from "../Fieldset";
 import { Input } from "../Input";
 import { Select } from "../Select";
 
-import storyFrame from "@/storybook/storyFrame.module.css";
+import storyFrame from "@/storybook/frames.module.css";
 import { Form } from "./Form";
 
 const onFormSubmit = fn();

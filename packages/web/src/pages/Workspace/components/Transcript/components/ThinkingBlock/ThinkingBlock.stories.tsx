@@ -7,7 +7,7 @@ import type { TranscriptThinkingStep } from "@/stores/session";
 import { requireElement } from "@/storybook/dom";
 
 import { TranscriptFrame } from "@/storybook/frames";
-import storyFrame from "@/storybook/storyFrame.module.css";
+import storyFrame from "@/storybook/frames.module.css";
 import { ThinkingBlock } from "./ThinkingBlock";
 
 const shortThinking: TranscriptThinkingStep = {

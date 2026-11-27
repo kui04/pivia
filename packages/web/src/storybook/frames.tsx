@@ -1,7 +1,7 @@
 import type { Decorator } from "@storybook/react-vite";
 import type { ReactNode } from "react";
 
-import styles from "./storyFrame.module.css";
+import styles from "./frames.module.css";
 
 /**
  * Sizes a story to the transcript column. A story that renders one transcript row uses it so the

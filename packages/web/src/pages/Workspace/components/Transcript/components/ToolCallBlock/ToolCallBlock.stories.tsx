@@ -4,7 +4,7 @@ import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 import { cn } from "@/lib";
 import type { TranscriptToolCallStep } from "@/stores/session";
 import { mockClipboardSuccess, requireElement } from "@/storybook/dom";
-import storyFrame from "@/storybook/storyFrame.module.css";
+import storyFrame from "@/storybook/frames.module.css";
 
 import { TranscriptFrame } from "@/storybook/frames";
 import { ToolCallBlock } from "./ToolCallBlock";

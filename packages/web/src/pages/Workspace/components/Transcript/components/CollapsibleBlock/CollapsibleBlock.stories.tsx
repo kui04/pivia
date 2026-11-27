@@ -3,7 +3,7 @@ import { Brain } from "lucide-react";
 import { expect, fn, userEvent, within } from "storybook/test";
 
 import { TranscriptFrame } from "@/storybook/frames";
-import storyFrame from "@/storybook/storyFrame.module.css";
+import storyFrame from "@/storybook/frames.module.css";
 import { CollapsibleBlock } from "./CollapsibleBlock";
 
 const meta = {
