@@ -1,6 +1,6 @@
 import type { SessionModelInfo, SessionRpcCommand, SessionStateSnapshot } from "@pivia/protocol";
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, fn, screen, userEvent, waitFor, within } from "storybook/test";
+import { expect, fireEvent, fn, screen, userEvent, waitFor, within } from "storybook/test";
 
 import type { SessionRpcResponseMessage } from "@/lib/transport";
 import { sid } from "@/storybook/ids";
@@ -231,4 +231,62 @@ export const Unavailable: Story = {
 export const Dark: Story = {
     ...Default,
     decorators: [DarkTheme],
+};
+
+/** A distinct session id keeps this story off the catalog cache the other stories fill. */
+const MANY_MODELS_SESSION = sid("story-session-many-models");
+
+const MANY_MODELS: readonly SessionModelInfo[] = Array.from({ length: 20 }, (_, index) => ({
+    provider: "openai",
+    id: `story-model-${index}`,
+    name: `Story model ${index}`,
+}));
+
+const manyModelsCommand = fn((command: SessionRpcCommand): Promise<SessionRpcResponseMessage> => {
+    if (command.type === "get_available_models") {
+        return Promise.resolve({
+            type: "rpc:response",
+            command: command.type,
+            success: true,
+            data: { models: MANY_MODELS },
+        });
+    }
+    return defaultSendCommand(command);
+});
+
+export const HoverDoesNotScroll: Story = {
+    args: {
+        sessionId: MANY_MODELS_SESSION,
+        state: makeState({ sessionId: MANY_MODELS_SESSION }),
+        onSendCommand: manyModelsCommand,
+    },
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+        await userEvent.click(canvas.getByRole("button", { name: /^Model:/ }));
+
+        const firstOption = await screen.findByRole("option", { name: "Story model 0" });
+        const viewport = firstOption.closest('[data-slot="scroll-area-viewport"]');
+        if (!(viewport instanceof HTMLElement)) {
+            throw new Error("The story did not render the model list viewport");
+        }
+
+        viewport.scrollTop = viewport.scrollHeight;
+        const scrolledTop = viewport.scrollTop;
+        await expect(scrolledTop).toBeGreaterThan(0);
+
+        // Hovering a row clipped out of view moves the highlight and must not move the list.
+        await fireEvent.mouseMove(firstOption);
+        await expect(firstOption).toHaveAttribute("data-lit", "true");
+        await expect(viewport.scrollTop).toBe(scrolledTop);
+
+        // The keyboard cursor still reveals its row.
+        const search = screen.getByRole("combobox", { name: "Search models" });
+        search.focus();
+        await userEvent.keyboard("{ArrowDown}");
+        await waitFor(() => expect(viewport.scrollTop).toBeLessThan(scrolledTop));
+
+        // The story ends with the popover closed, so the a11y scan does not see an unnamed dialog.
+        await userEvent.keyboard("{Escape}");
+        await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    },
 };

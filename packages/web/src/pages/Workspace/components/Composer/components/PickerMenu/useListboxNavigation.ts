@@ -1,7 +1,7 @@
 import { useLayoutEffect, useState } from "react";
 
 export interface ListboxNavigation {
-    /** Index the arrow keys highlight, or -1 while the list is empty. */
+    /** Index of the highlighted row (keyboard cursor or pointer hover), or -1 while the list is empty. */
     readonly litIndex: number;
     /** Points the highlight at a row the pointer entered. */
     readonly setHovered: (index: number | null) => void;
@@ -15,7 +15,8 @@ export interface ListboxNavigation {
  * Keyboard cursor for a single-select listbox.
  *
  * The listbox owns ARIA focus while `litIndex` says which option is highlighted; the hook also
- * reveals the highlighted option after a movement or a filter change.
+ * reveals the keyboard cursor after a movement or a filter change. Pointer hover only moves the
+ * highlight, so a hovered row never drags the list under the pointer.
  *
  * @param options.listId Id prefix of the option elements
  * @param options.scrollKey Value that changes when the list is filtered, so a still cursor scrolls
@@ -37,11 +38,12 @@ export function useListboxNavigation({
     const litIndex = itemCount === 0 ? -1 : Math.min(hovered ?? cursorIndex, itemCount - 1);
 
     useLayoutEffect(() => {
-        if (litIndex < 0) {
+        if (cursorIndex < 0 || itemCount === 0) {
             return;
         }
-        document.getElementById(`${listId}-${litIndex}`)?.scrollIntoView({ block: "nearest" });
-    }, [itemCount, listId, litIndex, scrollKey]);
+        const index = Math.min(cursorIndex, itemCount - 1);
+        document.getElementById(`${listId}-${index}`)?.scrollIntoView({ block: "nearest" });
+    }, [cursorIndex, itemCount, listId, scrollKey]);
 
     const move = (step: number): void => {
         if (itemCount === 0) {
