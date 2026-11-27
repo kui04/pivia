@@ -3,17 +3,19 @@ import type { ComponentProps } from "react";
 
 import { cn } from "@/lib";
 
+import radiusStyles from "@/styles/radius.module.css";
+
 import styles from "./Button.module.css";
 
 type BaseButtonProps = Omit<ComponentProps<typeof BaseButton>, "className">;
 
 const radiusClasses = {
-    none: styles.radiusNone,
-    "extra-small": styles.radiusExtraSmall,
-    small: styles.radiusSmall,
-    medium: styles.radiusMedium,
-    large: styles.radiusLarge,
-    full: styles.radiusFull,
+    none: radiusStyles.radiusNone,
+    "extra-small": radiusStyles.radiusExtraSmall,
+    small: radiusStyles.radiusSmall,
+    medium: radiusStyles.radiusMedium,
+    large: radiusStyles.radiusLarge,
+    full: radiusStyles.radiusFull,
 } as const;
 
 export type ButtonVariant = "primary" | "secondary" | "ghost";

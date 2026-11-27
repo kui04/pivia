@@ -15,7 +15,6 @@
  *   └─ .card
  */
 .frame {
-    box-sizing: border-box;
     width: 26rem;
     height: 15rem;
     overflow: hidden;

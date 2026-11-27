@@ -73,11 +73,6 @@ export function parseAvailableModelsData(data: unknown): readonly SessionModelIn
     return models;
 }
 
-/** Boundary parser for the untrusted `data` payload returned by `set_model`. */
-export function parseSetModelData(data: unknown): SessionModelInfo | null {
-    return parseSessionModelInfo(data);
-}
-
 /** Stable identifier string (`provider/id`) for one {@link SessionModelInfo}. */
 export function modelChoiceKey(model: SessionModelInfo): string {
     return `${model.provider}/${model.id}`;

@@ -3,28 +3,13 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useState } from "react";
 import { expect, fn, waitFor, within } from "storybook/test";
 
-import { sid } from "@/storybook/ids";
-import type { CatalogSyncPhase, SessionRow as SessionRowModel, WorkspaceModel } from "@/stores/workspace";
+import { makeStorySessionRow, STORY_NOW } from "@/storybook/fixtures";
+import type { CatalogSyncPhase, WorkspaceModel } from "@/stores/workspace";
 
 import { Sidebar, type SidebarProps } from "./Sidebar";
 import styles from "./Sidebar.stories.module.css";
 
-const NOW = Date.parse("2026-01-03T12:00:00.000Z");
-
-function row(id: string, title: string, overrides: Partial<SessionRowModel> = {}): SessionRowModel {
-    return {
-        id: sid(id),
-        title,
-        named: true,
-        cwd: "/home/u/pivia",
-        modifiedAtMs: NOW - 2 * 60 * 60 * 1000,
-        runtimeState: "idle",
-        attachedClients: 0,
-        pinned: false,
-        selected: false,
-        ...overrides,
-    };
-}
+const row = makeStorySessionRow;
 
 const populated: WorkspaceModel = {
     pinned: [row("session-1", "Parser rewrite", { pinned: true, selected: true })],
@@ -84,7 +69,7 @@ const meta = {
         model: populated,
         sync: live,
         query: "",
-        nowMs: NOW,
+        nowMs: STORY_NOW,
         closingIds: new Set<SessionId>(),
         onQueryChange: fn(),
         onRefresh: fn(),

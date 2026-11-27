@@ -15,14 +15,11 @@ function authClient(overrides: Partial<AuthClient> = {}): AuthClient {
     };
 }
 
-function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (error: unknown) => void } {
-    let resolve!: (value: T) => void;
-    let reject!: (error: unknown) => void;
-    const promise = new Promise<T>((resolvePromise, rejectPromise) => {
-        resolve = resolvePromise;
-        reject = rejectPromise;
+/** Builds a client whose named call rejects with `error`. */
+function failingAuthClient(method: "login" | "logout", error: ApiClientError): AuthClient {
+    return authClient({
+        [method]: vi.fn(() => Promise.reject(error)),
     });
-    return { promise, resolve, reject };
 }
 
 describe("formatRateLimitMessage", () => {
@@ -67,7 +64,7 @@ describe("createAuthStore", () => {
     });
 
     it("shares one in-flight status request", async () => {
-        const status = deferred<AuthStatusResponse>();
+        const status = Promise.withResolvers<AuthStatusResponse>();
         const getAuthStatus = vi.fn(() => status.promise);
         const store = createAuthStore(authClient({ getAuthStatus }));
 
@@ -106,7 +103,7 @@ describe("createAuthStore", () => {
     });
 
     it("shows submitting while login is in flight and then authenticates", async () => {
-        const login = deferred<{ readonly authenticated: true }>();
+        const login = Promise.withResolvers<{ readonly authenticated: true }>();
         const store = createAuthStore(authClient({ login: vi.fn(() => login.promise) }));
 
         const request = store.getState().login("secret");
@@ -125,13 +122,10 @@ describe("createAuthStore", () => {
 
     it("names an invalid password and keeps the gate", async () => {
         const store = createAuthStore(
-            authClient({
-                login: vi.fn(() =>
-                    Promise.reject(
-                        new ApiClientError({ status: 401, code: "invalid_credentials", message: "Invalid password." }),
-                    ),
-                ),
-            }),
+            failingAuthClient(
+                "login",
+                new ApiClientError({ status: 401, code: "invalid_credentials", message: "Invalid password." }),
+            ),
         );
 
         await store.getState().login("wrong");
@@ -146,18 +140,15 @@ describe("createAuthStore", () => {
 
     it("records Retry-After seconds when login is rate limited", async () => {
         const store = createAuthStore(
-            authClient({
-                login: vi.fn(() =>
-                    Promise.reject(
-                        new ApiClientError({
-                            status: 429,
-                            code: "rate_limited",
-                            message: "Too many failed login attempts. Try again later.",
-                            retryAfterSeconds: 30,
-                        }),
-                    ),
-                ),
-            }),
+            failingAuthClient(
+                "login",
+                new ApiClientError({
+                    status: 429,
+                    code: "rate_limited",
+                    message: "Too many failed login attempts. Try again later.",
+                    retryAfterSeconds: 30,
+                }),
+            ),
         );
 
         await store.getState().login("wrong");
@@ -170,13 +161,10 @@ describe("createAuthStore", () => {
 
     it("reports a network failure on login", async () => {
         const store = createAuthStore(
-            authClient({
-                login: vi.fn(() =>
-                    Promise.reject(
-                        new ApiClientError({ status: 0, code: "internal_error", message: "Cannot reach the server." }),
-                    ),
-                ),
-            }),
+            failingAuthClient(
+                "login",
+                new ApiClientError({ status: 0, code: "internal_error", message: "Cannot reach the server." }),
+            ),
         );
 
         await store.getState().login("secret");
@@ -199,13 +187,10 @@ describe("createAuthStore", () => {
         expect(store.getState().error).toBeNull();
 
         const failing = createAuthStore(
-            authClient({
-                logout: vi.fn(() =>
-                    Promise.reject(
-                        new ApiClientError({ status: 0, code: "internal_error", message: "Cannot reach the server." }),
-                    ),
-                ),
-            }),
+            failingAuthClient(
+                "logout",
+                new ApiClientError({ status: 0, code: "internal_error", message: "Cannot reach the server." }),
+            ),
         );
         await failing.getState().login("secret");
         await failing.getState().logout();

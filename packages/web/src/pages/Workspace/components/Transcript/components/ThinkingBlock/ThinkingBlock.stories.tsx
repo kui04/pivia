@@ -5,10 +5,10 @@ import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 import { Button } from "@components";
 import type { TranscriptThinkingStep } from "@/stores/session";
 import { requireElement } from "@/storybook/dom";
-import storyFrame from "@/storybook/storyFrame.module.css";
 
+import { TranscriptFrame } from "@/storybook/frames";
+import storyFrame from "@/storybook/storyFrame.module.css";
 import { ThinkingBlock } from "./ThinkingBlock";
-import styles from "./ThinkingBlock.stories.module.css";
 
 const shortThinking: TranscriptThinkingStep = {
     kind: "thinking",
@@ -47,13 +47,7 @@ const meta = {
         onOpenChange: { control: false },
         onOpenLink: { control: false },
     },
-    decorators: [
-        (Story) => (
-            <div className={storyFrame.frame}>
-                <Story />
-            </div>
-        ),
-    ],
+    decorators: [TranscriptFrame],
 } satisfies Meta<typeof ThinkingBlock>;
 
 export default meta;
@@ -155,7 +149,7 @@ function StreamingHarness(): ReactElement {
 
     return (
         <>
-            <div className={styles.meta}>
+            <div className={storyFrame.meta}>
                 <Button type="button" onClick={() => setCount((prev) => prev + 1)}>
                     Append chunk
                 </Button>

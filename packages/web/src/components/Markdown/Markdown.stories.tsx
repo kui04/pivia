@@ -8,6 +8,7 @@ import { DarkTheme } from "@/storybook/theme";
 import { IconButton } from "../IconButton";
 import { imageAlt, imageCaption, imageSrc } from "../Image/imageFixture";
 
+import { requireElement, waitForDarkTheme } from "@/storybook/dom";
 import { Markdown } from "./Markdown";
 
 const answer = [
@@ -160,15 +161,12 @@ export const Default: Story = {
 
         // A footnote reference scrolls and focuses its note without writing the
         // fragment into the URL, which the hash router would read as a route.
-        const note = canvasElement.querySelector<HTMLElement>("[data-footnotes] li[id]");
-        if (note === null) {
-            throw new Error("The story did not render a footnote note");
-        }
+        const note = requireElement(canvasElement.querySelector<HTMLElement>("[data-footnotes] li[id]"), "note");
 
-        const reference = canvasElement.querySelector<HTMLAnchorElement>(`a[href="#${note.id}"]`);
-        if (reference === null) {
-            throw new Error("The story did not render the footnote reference");
-        }
+        const reference = requireElement(
+            canvasElement.querySelector<HTMLAnchorElement>(`a[href="#${note.id}"]`),
+            "reference",
+        );
 
         // The renderer passes the rest of remark-gfm's attributes through.
         await expect(reference).toHaveAttribute("aria-describedby", "footnote-label");
@@ -178,10 +176,10 @@ export const Default: Story = {
         await expect(window.location.hash).toBe(hash);
         await waitFor(() => expect(note).toHaveFocus(), { timeout: 3000 });
 
-        const backReference = note.querySelector<HTMLAnchorElement>("a[data-footnote-backref]");
-        if (backReference === null) {
-            throw new Error("The story did not render the footnote back-reference");
-        }
+        const backReference = requireElement(
+            note.querySelector<HTMLAnchorElement>("a[data-footnote-backref]"),
+            "backReference",
+        );
 
         await userEvent.click(backReference);
         await expect(window.location.hash).toBe(hash);
@@ -190,12 +188,11 @@ export const Default: Story = {
 
         await expect(canvasElement.querySelector(".katex-display"), "display math").not.toBeNull();
 
-        const label = canvasElement.querySelector("[data-slot='code-block-language']");
-        const code = canvasElement.querySelector("[data-slot='code-block'] code");
-
-        if (label === null || code === null) {
-            throw new Error("The story did not render the fenced code block");
-        }
+        const label = requireElement(
+            canvasElement.querySelector("[data-slot='code-block-language']"),
+            "the code block language label",
+        );
+        const code = requireElement(canvasElement.querySelector("[data-slot='code-block'] code"), "the code block");
 
         await expect(label).toHaveTextContent("ts");
 
@@ -216,24 +213,19 @@ export const WideTable: Story = {
         </div>
     ),
     play: async ({ canvasElement }) => {
-        const region = canvasElement.querySelector<HTMLElement>(
-            "[data-slot='scroll-area-viewport'][aria-label='Table']",
+        const region = requireElement(
+            canvasElement.querySelector<HTMLElement>("[data-slot='scroll-area-viewport'][aria-label='Table']"),
+            "the table scroller",
         );
-
-        if (region === null) {
-            throw new Error("The story did not render the table scroller");
-        }
 
         await waitFor(() => expect(region.scrollWidth).toBeGreaterThan(region.clientWidth));
 
-        const bar =
+        const bar = requireElement(
             region.parentElement?.querySelector<HTMLElement>(
                 "[data-slot='scroll-area-scrollbar'][data-orientation='horizontal']",
-            ) ?? null;
-
-        if (bar === null) {
-            throw new Error("The story did not render the table scrollbar");
-        }
+            ),
+            "the table scrollbar",
+        );
 
         await expect(getComputedStyle(bar).opacity).toBe("1");
 
@@ -268,20 +260,27 @@ export const Streaming: Story = {
     render: () => <StreamingAnswer />,
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
-        const control = canvasElement.querySelector("[data-testid='markdown-shiki-control']");
-        const streamingRoot = canvasElement.querySelector("[data-testid='markdown-streaming']");
+        const control = requireElement(
+            canvasElement.querySelector("[data-testid='markdown-shiki-control']"),
+            "the control Markdown",
+        );
+        const streamingRoot = requireElement(
+            canvasElement.querySelector("[data-testid='markdown-streaming']"),
+            "the streaming Markdown",
+        );
 
-        if (control === null || streamingRoot === null) {
-            throw new Error("The story did not render both Markdown instances");
-        }
-
-        const root = streamingRoot.querySelector("[data-slot='markdown']");
-        const block = streamingRoot.querySelector("[data-slot='code-block']");
-        const controlBlock = control.querySelector("[data-slot='code-block']");
-
-        if (root === null || block === null || controlBlock === null) {
-            throw new Error("The streaming answer did not render its code block");
-        }
+        const root = requireElement(
+            streamingRoot.querySelector("[data-slot='markdown']"),
+            "the streaming Markdown root",
+        );
+        const block = requireElement(
+            streamingRoot.querySelector("[data-slot='code-block']"),
+            "the streaming code block",
+        );
+        const controlBlock = requireElement(
+            control.querySelector("[data-slot='code-block']"),
+            "the control code block",
+        );
 
         // The fence is still open: plain text, no Shiki spans, and the host can
         // style the row while it grows. Wait for the ungated control first.
@@ -344,11 +343,7 @@ export const Math: Story = {
         // A formula KaTeX cannot parse stays visible in the error colour.
         await expect(canvasElement.querySelector("[style*='var(--md-error)']")).not.toBeNull();
 
-        const display = canvasElement.querySelector(".katex-display");
-
-        if (display === null) {
-            throw new Error("The story did not render display math");
-        }
+        const display = requireElement(canvasElement.querySelector(".katex-display"), "the display math");
 
         await expect(display.closest("[data-slot='scroll-area-viewport']")).not.toBeNull();
     },
@@ -412,10 +407,7 @@ export const Images: Story = {
 
         await waitFor(() => expect(viewerImage).toHaveAttribute("data-status", "loaded"), { timeout: 5000 });
 
-        const caption = dialog.querySelector("[data-slot='image-viewer-caption']");
-        if (caption === null) {
-            throw new Error("The Markdown viewer did not render the image title");
-        }
+        const caption = requireElement(dialog.querySelector("[data-slot='image-viewer-caption']"), "caption");
 
         await expect(caption).toHaveTextContent(imageCaption);
 
@@ -444,7 +436,7 @@ export const Dark: Story = {
     },
     decorators: [DarkTheme],
     play: async ({ canvasElement }) => {
-        await waitFor(() => expect(getComputedStyle(document.documentElement).colorScheme).toBe("dark"));
+        await waitForDarkTheme();
         await waitFor(
             () => expect(canvasElement.querySelector("[data-slot='code-block'] span[style*='--shiki']")).not.toBeNull(),
             {
@@ -452,13 +444,12 @@ export const Dark: Story = {
             },
         );
 
-        const root = canvasElement.querySelector<HTMLElement>("[data-slot='markdown']");
-        const link = root?.querySelector<HTMLElement>("a");
-        const inline = root?.querySelector<HTMLElement>("code");
-
-        if (root === null || link === null || link === undefined || inline === null || inline === undefined) {
-            throw new Error("The dark Markdown story did not render its text and link");
-        }
+        const root = requireElement(
+            canvasElement.querySelector<HTMLElement>("[data-slot='markdown']"),
+            "the Markdown root",
+        );
+        const link = requireElement(root.querySelector<HTMLElement>("a"), "the link");
+        const inline = requireElement(root.querySelector<HTMLElement>("code"), "the inline code");
 
         await expect(getComputedStyle(root).color).toBe("rgb(204, 204, 204)");
         await expect(getComputedStyle(link).color).toBe("rgb(77, 170, 252)");

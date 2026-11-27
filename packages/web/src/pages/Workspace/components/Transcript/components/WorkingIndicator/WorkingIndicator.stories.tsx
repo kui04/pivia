@@ -1,8 +1,8 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, within } from "storybook/test";
 
-import storyFrame from "@/storybook/storyFrame.module.css";
-
+import { requireElement } from "@/storybook/dom";
+import { TranscriptFrame } from "@/storybook/frames";
 import { WorkingIndicator } from "./WorkingIndicator";
 
 const meta = {
@@ -14,13 +14,7 @@ const meta = {
     argTypes: {
         label: { control: "text" },
     },
-    decorators: [
-        (Story) => (
-            <div className={storyFrame.frame}>
-                <Story />
-            </div>
-        ),
-    ],
+    decorators: [TranscriptFrame],
 } satisfies Meta<typeof WorkingIndicator>;
 
 export default meta;
@@ -36,10 +30,10 @@ export const Default: Story = {
 
         // The spinner is decorative, so the status text is the only announcement.
         await expect(canvas.queryByRole("progressbar")).not.toBeInTheDocument();
-        const spinner = canvasElement.querySelector<HTMLElement>("[data-slot='loading-indicator']");
-        if (spinner === null) {
-            throw new Error("The working indicator did not render a spinner");
-        }
+        const spinner = requireElement(
+            canvasElement.querySelector<HTMLElement>("[data-slot='loading-indicator']"),
+            "spinner",
+        );
 
         await expect(spinner).toHaveAttribute("aria-hidden", "true");
         await expect(spinner).toHaveAttribute("data-size", "no-container");

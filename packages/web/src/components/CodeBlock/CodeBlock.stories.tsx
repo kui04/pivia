@@ -1,8 +1,15 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { Play } from "lucide-react";
 import { useState } from "react";
-import { expect, spyOn, userEvent, waitFor, within } from "storybook/test";
+import { expect, userEvent, waitFor, within } from "storybook/test";
 
+import {
+    mockClipboardFailure,
+    mockClipboardSuccess,
+    requireElement,
+    requireViewport,
+    waitForDarkTheme,
+} from "@/storybook/dom";
 import { DarkTheme } from "@/storybook/theme";
 
 import { IconButton } from "../IconButton";
@@ -41,12 +48,11 @@ type Story = StoryObj<typeof meta>;
 
 export const Default: Story = {
     play: async ({ canvasElement }) => {
-        const code = canvasElement.querySelector("pre code");
-        const label = canvasElement.querySelector("[data-slot='code-block-language']");
-
-        if (code === null || label === null) {
-            throw new Error("The story did not render the code and the language label");
-        }
+        const code = requireElement(canvasElement.querySelector("pre code"), "the code element");
+        const label = requireElement(
+            canvasElement.querySelector("[data-slot='code-block-language']"),
+            "the language label",
+        );
 
         await expect(label).toHaveTextContent("ts");
 
@@ -78,19 +84,17 @@ export const Streaming: Story = {
     render: () => <StreamingCodeBlock />,
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
-        const control = canvasElement.querySelector("[data-testid='codeblock-shiki-control']");
-        const streamingBlock = canvasElement.querySelector("[data-testid='codeblock-streaming']");
+        const control = requireElement(
+            canvasElement.querySelector("[data-testid='codeblock-shiki-control']"),
+            "the control code block",
+        );
+        const streamingBlock = requireElement(
+            canvasElement.querySelector("[data-testid='codeblock-streaming']"),
+            "the streaming code block",
+        );
 
-        if (control === null || streamingBlock === null) {
-            throw new Error("The story did not render both code blocks");
-        }
-
-        const controlCode = control.querySelector("pre code");
-        const streamingCode = streamingBlock.querySelector("pre code");
-
-        if (controlCode === null || streamingCode === null) {
-            throw new Error("The story did not render the code elements");
-        }
+        const controlCode = requireElement(control.querySelector("pre code"), "the control code element");
+        const streamingCode = requireElement(streamingBlock.querySelector("pre code"), "the streaming code element");
 
         // Wait for the ungated control to load Shiki. A gated block must still be
         // plain once the same grammar and engine are ready.
@@ -119,14 +123,13 @@ export const Wrapped: Story = {
 export const Dark: Story = {
     decorators: [DarkTheme],
     play: async ({ canvasElement }) => {
-        await waitFor(() => expect(getComputedStyle(document.documentElement).colorScheme).toBe("dark"));
+        await waitForDarkTheme();
         await waitFor(() => expect(canvasElement.querySelector("code span[style]")).not.toBeNull(), { timeout: 5000 });
 
-        const token = canvasElement.querySelector<HTMLElement>("code span[style]");
-
-        if (token === null) {
-            throw new Error("The story did not render a highlighted token");
-        }
+        const token = requireElement(
+            canvasElement.querySelector<HTMLElement>("code span[style]"),
+            "a highlighted token",
+        );
 
         // The computed colour must come from the dark variable, not the light one.
         const dark = token.style.getPropertyValue("--shiki-dark").trim();
@@ -142,14 +145,10 @@ export const LineNumbers: Story = {
         startLine: 12,
     },
     play: async ({ canvasElement }) => {
-        const pre = canvasElement.querySelector("pre");
+        const pre = requireElement(canvasElement.querySelector("pre"), "the pre element");
         const labels = [...canvasElement.querySelectorAll("[data-slot='code-block-line-number']")].map(
             (node) => node.textContent,
         );
-
-        if (pre === null) {
-            throw new Error("The story did not render a pre element");
-        }
 
         await expect(pre.hasAttribute("data-numbered")).toBe(true);
         await expect(labels).toEqual(["12", "13", "14"]);
@@ -186,16 +185,17 @@ export const StickyLineNumbers: Story = {
         lineNumbers: true,
     },
     play: async ({ canvasElement }) => {
-        const pre = canvasElement.querySelector("pre");
-        const gutter = canvasElement.querySelector("[data-slot='code-block-line-number']");
-        const viewport = canvasElement.querySelector<HTMLElement>("[data-slot='scroll-area-viewport']");
-        const bar = canvasElement.querySelector<HTMLElement>(
-            "[data-slot='scroll-area-scrollbar'][data-orientation='horizontal']",
+        const gutter = requireElement(
+            canvasElement.querySelector("[data-slot='code-block-line-number']"),
+            "the gutter",
         );
-
-        if (pre === null || gutter === null || viewport === null || bar === null) {
-            throw new Error("The story did not render the code scroller");
-        }
+        const viewport = requireViewport(canvasElement, "the code scroller");
+        const bar = requireElement(
+            canvasElement.querySelector<HTMLElement>(
+                "[data-slot='scroll-area-scrollbar'][data-orientation='horizontal']",
+            ),
+            "the horizontal scrollbar",
+        );
 
         await expect(viewport).toHaveAttribute("aria-label", "ts code");
         await expect(viewport.scrollWidth).toBeGreaterThan(viewport.clientWidth);
@@ -221,18 +221,15 @@ export const Copy: Story = {
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
 
-        // Headless Chromium denies the real clipboard write (the page is not
-        // focused and has no permission), so the story checks the wiring and
-        // leaves the actual write to the app and to a manual check.
-        const writeText = spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
+        const clipboard = mockClipboardSuccess();
 
         try {
             await userEvent.click(canvas.getByRole("button", { name: "Copy code" }));
 
             await waitFor(() => expect(canvas.getByRole("status")).toHaveTextContent("Copied"));
-            await expect(writeText).toHaveBeenCalledWith(greeting);
+            await expect(clipboard.writeText).toHaveBeenCalledWith(greeting);
         } finally {
-            writeText.mockRestore();
+            clipboard.restore();
         }
     },
 };
@@ -241,17 +238,14 @@ export const CopyFailure: Story = {
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
 
-        // Both clipboard paths must fail before the button reports the error.
-        const writeText = spyOn(navigator.clipboard, "writeText").mockRejectedValue(new Error("denied"));
-        const execCommand = spyOn(document, "execCommand").mockReturnValue(false);
+        const clipboard = mockClipboardFailure();
 
         try {
             await userEvent.click(canvas.getByRole("button", { name: "Copy code" }));
 
             await waitFor(() => expect(canvas.getByRole("status")).toHaveTextContent("Copy failed"));
         } finally {
-            writeText.mockRestore();
-            execCommand.mockRestore();
+            clipboard.restore();
         }
     },
 };
@@ -260,11 +254,7 @@ export const ToggleWrap: Story = {
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
         const toggle = canvas.getByRole("button", { name: "Wrap lines" });
-        const pre = canvasElement.querySelector("pre");
-
-        if (pre === null) {
-            throw new Error("The story did not render a pre element");
-        }
+        const pre = requireElement(canvasElement.querySelector("pre"), "the pre element");
 
         await expect(getComputedStyle(pre).whiteSpace).toBe("pre");
 

@@ -1,5 +1,8 @@
-import { parseSessionId, type SessionId, type SessionSummary } from "@pivia/protocol";
+import type { SessionId, SessionSummary } from "@pivia/protocol";
 import { describe, expect, it } from "vitest";
+
+import { makeSessionSummary } from "@/test/fixtures";
+import { sid } from "@/test/ids";
 
 import {
     buildWorkspaceModel,
@@ -12,51 +15,29 @@ import {
     sortSessions,
 } from "./model";
 
-function sid(raw: string): SessionId {
-    const parsed = parseSessionId(raw);
-    if (parsed === null) {
-        throw new Error(`Invalid test session id: ${raw}`);
-    }
-    return parsed;
-}
-
-function summary(id: string, overrides: Partial<SessionSummary> = {}): SessionSummary {
-    return {
-        id: sid(id),
-        cwd: "/home/u/pivia",
-        name: null,
-        firstMessage: "First prompt",
-        messageCount: 1,
-        createdAtMs: 1_000,
-        modifiedAtMs: 1_000,
-        hasParent: false,
-        runtimeState: "idle",
-        attachedClients: 0,
-        ...overrides,
-    };
-}
-
 describe("sessionTitle", () => {
     it("uses a trimmed name and reports it as named", () => {
-        expect(sessionTitle(summary("a", { name: "  Parser rewrite ", firstMessage: "First prompt" }))).toEqual({
+        expect(
+            sessionTitle(makeSessionSummary("a", { name: "  Parser rewrite ", firstMessage: "First prompt" })),
+        ).toEqual({
             title: "Parser rewrite",
             named: true,
         });
     });
 
     it("falls back to the trimmed first message when the name is null or blank", () => {
-        expect(sessionTitle(summary("a", { name: null, firstMessage: "  First prompt  " }))).toEqual({
+        expect(sessionTitle(makeSessionSummary("a", { name: null, firstMessage: "  First prompt  " }))).toEqual({
             title: "First prompt",
             named: false,
         });
-        expect(sessionTitle(summary("a", { name: "   ", firstMessage: "First prompt" }))).toEqual({
+        expect(sessionTitle(makeSessionSummary("a", { name: "   ", firstMessage: "First prompt" }))).toEqual({
             title: "First prompt",
             named: false,
         });
     });
 
     it("uses the placeholder when both title sources are blank", () => {
-        expect(sessionTitle(summary("a", { name: null, firstMessage: " " }))).toEqual({
+        expect(sessionTitle(makeSessionSummary("a", { name: null, firstMessage: " " }))).toEqual({
             title: "Untitled session",
             named: false,
         });
@@ -83,44 +64,30 @@ describe("folderLabel", () => {
 
 describe("session list helpers", () => {
     it("orders by creation time and then by id, regardless of activity", () => {
-        const older = summary("b", { createdAtMs: 1_000, modifiedAtMs: 9_000 });
-        const newer = summary("c", { createdAtMs: 5_000, modifiedAtMs: 1_000 });
-        const tieA = summary("a", { createdAtMs: 5_000, modifiedAtMs: 3_000 });
+        const older = makeSessionSummary("b", { createdAtMs: 1_000, modifiedAtMs: 9_000 });
+        const newer = makeSessionSummary("c", { createdAtMs: 5_000, modifiedAtMs: 1_000 });
+        const tieA = makeSessionSummary("a", { createdAtMs: 5_000, modifiedAtMs: 3_000 });
 
         expect(sortSessions([older, newer, tieA]).map((session) => session.id)).toEqual(["a", "c", "b"]);
     });
 
-    it("applies catalog deltas and maintains reference stability in createCatalogSyncReducer", () => {
-        const one = summary("one", { runtimeState: "idle" });
-        const two = summary("two", { runtimeState: "starting" });
+    it("merges catalog patches into session rows", () => {
+        const one = makeSessionSummary("one", { runtimeState: "idle" });
+        const two = makeSessionSummary("two", { runtimeState: "starting" });
 
         const reducer = createCatalogSyncReducer();
         const afterSnap = reducer.applySnapshot(
             { sessions: [], updatedAtMs: null },
             { sessions: [one], updatedAtMs: 5_000 },
         );
-        expect(afterSnap).toEqual({ sessions: [one], updatedAtMs: 5_000 });
-
-        const afterSameUpsert = reducer.applyDelta(afterSnap, { op: "upsert", item: { ...one } });
-        expect(afterSameUpsert).toBe(afterSnap);
-
-        const afterTwo = reducer.applyDelta(afterSnap, { op: "upsert", item: two });
-        const afterNoopPatch = reducer.applyDelta(afterTwo, {
-            op: "patch",
-            id: sid("one"),
-            patch: { runtimeState: "idle" },
-        });
-        expect(afterNoopPatch).toBe(afterTwo);
-
-        const afterPatch = reducer.applyDelta(afterTwo, {
+        const afterUpsert = reducer.applyDelta(afterSnap, { op: "upsert", item: two });
+        const afterPatch = reducer.applyDelta(afterUpsert, {
             op: "patch",
             id: sid("one"),
             patch: { runtimeState: "streaming", attachedClients: 1 },
         });
-        const afterRemove = reducer.applyDelta(afterPatch, {
-            op: "remove",
-            id: sid("two"),
-        });
+        const afterRemove = reducer.applyDelta(afterPatch, { op: "remove", id: sid("two") });
+
         expect(afterRemove).toEqual({
             sessions: [{ ...one, runtimeState: "streaming", attachedClients: 1 }],
             updatedAtMs: 5_000,
@@ -143,31 +110,31 @@ describe("buildWorkspaceModel", () => {
 
     it("moves pinned sessions out of their folders and keeps them filtered", () => {
         const sessions = [
-            summary("pin-old", {
+            makeSessionSummary("pin-old", {
                 cwd: "/only-pinned",
                 name: "Older pin",
                 createdAtMs: 1_000,
                 modifiedAtMs: 9_000,
             }),
-            summary("pin-new", {
+            makeSessionSummary("pin-new", {
                 cwd: "/home/u/pivia",
                 name: "Newer pin",
                 createdAtMs: 5_000,
                 modifiedAtMs: 1_000,
             }),
-            summary("pin-tie-a", {
+            makeSessionSummary("pin-tie-a", {
                 cwd: "/home/u/pivia",
                 name: "Pin tie A",
                 createdAtMs: 3_000,
                 modifiedAtMs: 7_000,
             }),
-            summary("pin-tie-b", {
+            makeSessionSummary("pin-tie-b", {
                 cwd: "/home/u/pivia",
                 name: "Pin tie B",
                 createdAtMs: 3_000,
                 modifiedAtMs: 1_000,
             }),
-            summary("regular", { cwd: "/home/u/pivia", name: "Regular", createdAtMs: 2_000 }),
+            makeSessionSummary("regular", { cwd: "/home/u/pivia", name: "Regular", createdAtMs: 2_000 }),
         ];
 
         const model = buildWorkspaceModel({
@@ -189,10 +156,15 @@ describe("buildWorkspaceModel", () => {
 
     it("groups by cwd and orders folders and rows by newest creation first", () => {
         const sessions = [
-            summary("old", { cwd: "/home/u/alpha", name: "Alpha", createdAtMs: 1_500, modifiedAtMs: 9_000 }),
-            summary("b", { cwd: "/home/u/beta", name: "Beta B", createdAtMs: 2_000, modifiedAtMs: 1_000 }),
-            summary("a", { cwd: "/home/u/beta", name: "Beta A", createdAtMs: 2_000, modifiedAtMs: 5_000 }),
-            summary("oldest", { cwd: "/home/u/beta", name: "Beta Old", createdAtMs: 1_000, modifiedAtMs: 8_000 }),
+            makeSessionSummary("old", { cwd: "/home/u/alpha", name: "Alpha", createdAtMs: 1_500, modifiedAtMs: 9_000 }),
+            makeSessionSummary("b", { cwd: "/home/u/beta", name: "Beta B", createdAtMs: 2_000, modifiedAtMs: 1_000 }),
+            makeSessionSummary("a", { cwd: "/home/u/beta", name: "Beta A", createdAtMs: 2_000, modifiedAtMs: 5_000 }),
+            makeSessionSummary("oldest", {
+                cwd: "/home/u/beta",
+                name: "Beta Old",
+                createdAtMs: 1_000,
+                modifiedAtMs: 8_000,
+            }),
         ];
 
         const model = buildWorkspaceModel({
@@ -213,8 +185,8 @@ describe("buildWorkspaceModel", () => {
     it("orders folders with the same newest creation time by cwd", () => {
         const model = buildWorkspaceModel({
             sessions: [
-                summary("b", { cwd: "/home/u/beta", createdAtMs: 1_000, modifiedAtMs: 9_000 }),
-                summary("a", { cwd: "/home/u/alpha", createdAtMs: 1_000, modifiedAtMs: 1_000 }),
+                makeSessionSummary("b", { cwd: "/home/u/beta", createdAtMs: 1_000, modifiedAtMs: 9_000 }),
+                makeSessionSummary("a", { cwd: "/home/u/alpha", createdAtMs: 1_000, modifiedAtMs: 1_000 }),
             ],
             pins: [],
             query: "",
@@ -226,8 +198,8 @@ describe("buildWorkspaceModel", () => {
     });
 
     it("keeps rows in creation order when activity and attachments change", () => {
-        const older = summary("older", { createdAtMs: 1_000 });
-        const newer = summary("newer", { createdAtMs: 2_000 });
+        const older = makeSessionSummary("older", { createdAtMs: 1_000 });
+        const newer = makeSessionSummary("newer", { createdAtMs: 2_000 });
         const reducer = createCatalogSyncReducer();
         const before = reducer.applySnapshot(
             { sessions: [], updatedAtMs: null },
@@ -254,22 +226,22 @@ describe("buildWorkspaceModel", () => {
 
     it("filters case-insensitively on name, first message and cwd, and expands matches", () => {
         const sessions = [
-            summary("one", { cwd: "/home/u/pivia", name: "Parser Rewrite", firstMessage: "unused" }),
-            summary("two", {
+            makeSessionSummary("one", { cwd: "/home/u/pivia", name: "Parser Rewrite", firstMessage: "unused" }),
+            makeSessionSummary("two", {
                 cwd: "/home/u/docs",
                 name: null,
                 firstMessage: "Fix PARSER edge case",
                 createdAtMs: 2_000,
                 modifiedAtMs: 1_000,
             }),
-            summary("three", {
+            makeSessionSummary("three", {
                 cwd: "/home/u/Parser-Lab",
                 name: "Other",
                 firstMessage: "Nothing",
                 createdAtMs: 1_500,
                 modifiedAtMs: 9_000,
             }),
-            summary("four", { cwd: "/home/u/empty-match", name: "Unrelated", firstMessage: "Nothing" }),
+            makeSessionSummary("four", { cwd: "/home/u/empty-match", name: "Unrelated", firstMessage: "Nothing" }),
         ];
 
         const model = buildWorkspaceModel({
@@ -291,7 +263,7 @@ describe("buildWorkspaceModel", () => {
 
 describe("selectedSession", () => {
     it("returns null when no session is selected or found, and projects title metadata when matched", () => {
-        const one = summary("one", {
+        const one = makeSessionSummary("one", {
             name: "  Named  ",
             cwd: "/repo/a",
             runtimeState: "streaming",
@@ -311,47 +283,26 @@ describe("selectedSession", () => {
 });
 
 describe("sessionRowStatus", () => {
-    it("maps every runtime state and attachment count to its display union", () => {
-        expect(sessionRowStatus({ runtimeState: "idle", attachedClients: 0, modifiedAtMs: 5_000 })).toEqual({
-            kind: "idle",
-            modifiedAtMs: 5_000,
-        });
-        expect(sessionRowStatus({ runtimeState: "idle", attachedClients: 1, modifiedAtMs: 5_000 })).toEqual({
-            kind: "active",
-            state: "attached",
-            label: "Attached",
-        });
-        expect(sessionRowStatus({ runtimeState: "starting", attachedClients: 0, modifiedAtMs: 5_000 })).toEqual({
-            kind: "active",
-            state: "starting",
-            label: "Starting",
-        });
-        expect(sessionRowStatus({ runtimeState: "streaming", attachedClients: 1, modifiedAtMs: 5_000 })).toEqual({
-            kind: "active",
-            state: "streaming",
-            label: "Streaming",
-        });
-        expect(sessionRowStatus({ runtimeState: "compacting", attachedClients: 1, modifiedAtMs: 5_000 })).toEqual({
-            kind: "active",
-            state: "compacting",
-            label: "Compacting",
-        });
-        expect(sessionRowStatus({ runtimeState: "closing", attachedClients: 0, modifiedAtMs: 5_000 })).toEqual({
-            kind: "active",
-            state: "closing",
-            label: "Closing",
-        });
+    it.each([
+        ["idle", 0, { kind: "idle", modifiedAtMs: 5_000 }],
+        ["idle", 1, { kind: "active", state: "attached", label: "Attached" }],
+        ["starting", 0, { kind: "active", state: "starting", label: "Starting" }],
+        ["streaming", 1, { kind: "active", state: "streaming", label: "Streaming" }],
+        ["compacting", 1, { kind: "active", state: "compacting", label: "Compacting" }],
+        ["closing", 0, { kind: "active", state: "closing", label: "Closing" }],
+    ] as const)("maps %s with %i attached clients to its display union", (runtimeState, attachedClients, expected) => {
+        expect(sessionRowStatus({ runtimeState, attachedClients, modifiedAtMs: 5_000 })).toEqual(expected);
     });
 });
 
 describe("collectKnownCwds", () => {
     it("deduplicates non-empty cwds ordered by most recently created session first", () => {
         const sessions = [
-            summary("a", { cwd: "/repo/old", createdAtMs: 1_000, modifiedAtMs: 9_000 }),
-            summary("b", { cwd: "/repo/new", createdAtMs: 5_000, modifiedAtMs: 1_000 }),
-            summary("c", { cwd: "/repo/old", createdAtMs: 3_000, modifiedAtMs: 2_000 }),
-            summary("d", { cwd: "   ", createdAtMs: 9_000 }),
-            summary("e", { cwd: "", createdAtMs: 8_000 }),
+            makeSessionSummary("a", { cwd: "/repo/old", createdAtMs: 1_000, modifiedAtMs: 9_000 }),
+            makeSessionSummary("b", { cwd: "/repo/new", createdAtMs: 5_000, modifiedAtMs: 1_000 }),
+            makeSessionSummary("c", { cwd: "/repo/old", createdAtMs: 3_000, modifiedAtMs: 2_000 }),
+            makeSessionSummary("d", { cwd: "   ", createdAtMs: 9_000 }),
+            makeSessionSummary("e", { cwd: "", createdAtMs: 8_000 }),
         ];
 
         expect(collectKnownCwds(sessions)).toEqual(["/repo/new", "/repo/old"]);

@@ -180,6 +180,17 @@
     --border-width: 1px;
     --border-width-strong: 2px;
 
+    /* Edge fade mask on bounded scrollers; each viewport sets its own --fade-size. */
+    --mask-edge-opaque: black;
+    --mask-edge-transparent: transparent;
+    --fade-size-compact: var(--space-16);
+    --fade-size-default: var(--space-24);
+
+    /* 1px vertical guide beside a transcript row, scaled to a hairline. */
+    --guide-line-width: var(--border-width-strong);
+    --guide-line-color: var(--color-outline-variant);
+    --guide-line-scale: scaleX(0.5);
+
     /* Elevation levels 0-5. CSS needs shadows; M3 also uses surface tint. */
     --elevation-0: none;
     --elevation-1: 0 1px 2px rgb(0 0 0 / 0.08), 0 1px 3px 1px rgb(0 0 0 / 0.06);
@@ -215,6 +226,7 @@
     );
     --shimmer-size: 220% 100%;
     --shimmer-duration: 1.8s;
+    --shimmer-animation: shimmer var(--shimmer-duration) linear infinite;
 
     /* Layout and stacking. */
     --content-max-width: 960px;

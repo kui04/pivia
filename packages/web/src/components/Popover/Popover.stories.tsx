@@ -1,8 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, screen, userEvent, waitFor, within } from "storybook/test";
 
-import { DarkTheme } from "@/storybook/theme";
-
 import { Button } from "../Button";
 import { Popover, PopoverClose, PopoverContent, PopoverDescription, PopoverTitle, PopoverTrigger } from "./Popover";
 
@@ -44,9 +42,4 @@ export const Default: Story = {
         await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
         await waitFor(() => expect(trigger).toHaveFocus());
     },
-};
-
-export const Dark: Story = {
-    ...Default,
-    decorators: [DarkTheme],
 };

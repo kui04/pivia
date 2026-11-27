@@ -2,10 +2,11 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { Trash, Upload } from "lucide-react";
 import { expect, fn, screen, userEvent, waitFor, within } from "storybook/test";
 
-import { DarkTheme, LightTheme } from "@/storybook/theme";
+import { LightTheme } from "@/storybook/theme";
 
 import { IconButton } from "../IconButton";
 
+import { requireElement } from "@/storybook/dom";
 import { AlertDialog } from "./AlertDialog";
 
 const onConfirm = fn();
@@ -68,10 +69,10 @@ export const Default: Story = {
         await waitFor(() => expect(cancel).toHaveFocus());
         await expect(dialog).toHaveAttribute("aria-modal", "true");
 
-        const backdrop = document.querySelector<HTMLElement>("[data-slot='alert-dialog-backdrop']");
-        if (backdrop === null) {
-            throw new Error("The alert dialog did not render a backdrop");
-        }
+        const backdrop = requireElement(
+            document.querySelector<HTMLElement>("[data-slot='alert-dialog-backdrop']"),
+            "backdrop",
+        );
 
         // Alert Dialog disables pointer dismissal; the backdrop is not an action.
         await userEvent.click(backdrop, { pointerEventsCheck: 0 });
@@ -120,16 +121,5 @@ export const Disabled: Story = {
         await expect(confirm).toBeDisabled();
         await userEvent.click(confirm);
         await expect(screen.getByRole("alertdialog", { name: "Publish changes?" })).toBeInTheDocument();
-    },
-};
-
-export const Dark: Story = {
-    decorators: [DarkTheme],
-    play: async ({ canvasElement }) => {
-        await waitFor(() => expect(getComputedStyle(document.documentElement).colorScheme).toBe("dark"));
-
-        const { dialog } = await openFromTrigger(canvasElement, "Publish changes", "Publish changes?");
-
-        await expect(dialog).toBeVisible();
     },
 };

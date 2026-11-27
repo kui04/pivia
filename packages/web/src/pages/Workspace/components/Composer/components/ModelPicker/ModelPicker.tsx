@@ -1,22 +1,20 @@
 import type { SessionModelInfo } from "@pivia/protocol";
 import { Bot, Check, Search } from "lucide-react";
-import {
-    memo,
-    useCallback,
-    useEffect,
-    useId,
-    useLayoutEffect,
-    useMemo,
-    useRef,
-    useState,
-    type ReactElement,
-} from "react";
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactElement } from "react";
 
-import { Button, Icon, Popover, PopoverContent, PopoverTrigger, ScrollArea } from "@components";
+import { Icon, ScrollArea } from "@components";
 import { isImeComposition } from "@/lib";
 
 import type { ComposerCommandSender, PickerCatalogState } from "../../types";
-import { PickerPill } from "../PickerPill";
+import {
+    PickerOptionLabel,
+    PickerPopover,
+    PickerSkeleton,
+    PickerStatus,
+    useListboxNavigation,
+    usePickerCatalog,
+} from "../PickerMenu";
+import pickerStyles from "../PickerMenu/PickerMenu.module.css";
 import { createProviderLogoCache, type ProviderLogoCache, type ProviderLogoState } from "./logos";
 import {
     createModelCatalogCache,
@@ -194,7 +192,7 @@ const ModelRow = memo(function ModelRow({
             aria-selected={lit}
             tabIndex={-1}
             data-lit={lit}
-            className={styles.option}
+            className={pickerStyles.option}
             onClick={() => {
                 onChoose(model);
             }}
@@ -203,11 +201,9 @@ const ModelRow = memo(function ModelRow({
             }}
         >
             <ProviderMark provider={model.provider} logo={logo} />
-            <span className={styles.optionName} title={`${model.provider}/${model.id}`}>
-                {model.name}
-            </span>
+            <PickerOptionLabel title={`${model.provider}/${model.id}`}>{model.name}</PickerOptionLabel>
             {inUse ? (
-                <Icon size="no-container" className={styles.checkIcon}>
+                <Icon size="no-container" className={pickerStyles.checkIcon}>
                     <Check />
                 </Icon>
             ) : null}
@@ -225,8 +221,6 @@ interface ModelMenuProps {
 
 function ModelMenu({ catalog, activeKey, logoCache, onRetry, onChoose }: ModelMenuProps): ReactElement {
     const [query, setQuery] = useState("");
-    const [cursor, setCursor] = useState<number | null>(null);
-    const [hovered, setHovered] = useState<number | null>(null);
     const searchRef = useRef<HTMLInputElement | null>(null);
     const listId = `${useId()}-models`;
 
@@ -238,44 +232,20 @@ function ModelMenu({ catalog, activeKey, logoCache, onRetry, onChoose }: ModelMe
         return trimmed.length === 0 ? orderModelsByProvider(items, activeKey) : filterModels(items, trimmed);
     }, [activeKey, items, query]);
 
-    const cursorIndex = cursor ?? -1;
-    const litIndex = shown.length === 0 ? -1 : Math.min(hovered ?? cursorIndex, shown.length - 1);
+    const { litIndex, setHovered, move, resetCursor } = useListboxNavigation({
+        itemCount: shown.length,
+        listId,
+        scrollKey: query,
+    });
 
     useEffect(() => {
         searchRef.current?.focus({ preventScroll: true });
     }, []);
 
-    useLayoutEffect(() => {
-        if (cursorIndex < 0 || shown.length === 0) {
-            return;
-        }
-        document.getElementById(`${listId}-${Math.min(cursorIndex, shown.length - 1)}`)?.scrollIntoView({
-            block: "nearest",
-        });
-    }, [cursorIndex, listId, query, shown.length]);
-
-    const move = (step: number): void => {
-        if (shown.length === 0) {
-            return;
-        }
-        setHovered(null);
-        setCursor((prev) => {
-            if (prev === null) {
-                return step > 0 ? 0 : shown.length - 1;
-            }
-            return (prev + step + shown.length) % shown.length;
-        });
-    };
-
     if (catalog.kind === "error") {
         return (
             <div className={styles.menu}>
-                <div className={styles.statusBox} role="alert">
-                    <p className={styles.statusText}>{catalog.message}</p>
-                    <Button type="button" variant="secondary" size="md" onClick={onRetry}>
-                        Retry
-                    </Button>
-                </div>
+                <PickerStatus message={catalog.message} onRetry={onRetry} />
             </div>
         );
     }
@@ -306,7 +276,7 @@ function ModelMenu({ catalog, activeKey, logoCache, onRetry, onChoose }: ModelMe
                     onChange={(event) => {
                         setQuery(event.target.value);
                         setHovered(null);
-                        setCursor(0);
+                        resetCursor();
                     }}
                     onKeyDown={(event) => {
                         const composing = isImeComposition(event.nativeEvent);
@@ -333,32 +303,26 @@ function ModelMenu({ catalog, activeKey, logoCache, onRetry, onChoose }: ModelMe
             </div>
             <ScrollArea
                 label="Models"
-                className={styles.scroll}
-                viewportClassName={styles.viewport}
-                contentClassName={styles.content}
+                className={pickerStyles.scroll}
+                viewportClassName={pickerStyles.viewport}
+                contentClassName={pickerStyles.content}
                 viewportTabIndex={-1}
             >
-                {catalog.kind === "loading" || catalog.kind === "idle" ? (
-                    <div role="status" aria-label="Loading models" className={styles.skeleton}>
-                        {SKELETON_ROWS.map((width, index) => (
-                            <div key={index} aria-hidden="true" className={styles.skeletonRow} style={{ width }} />
-                        ))}
-                    </div>
+                {catalog.kind === "loading" ? (
+                    <PickerSkeleton label="Loading models" widths={SKELETON_ROWS} />
                 ) : (
                     <div
                         id={listId}
                         role="listbox"
                         aria-label="Models"
                         tabIndex={-1}
-                        className={styles.listbox}
+                        className={pickerStyles.listbox}
                         onMouseLeave={() => {
                             setHovered(null);
                         }}
                     >
                         {shown.length === 0 ? (
-                            <div className={styles.statusBox}>
-                                <p className={styles.statusText}>No matching models.</p>
-                            </div>
+                            <PickerStatus message="No matching models." />
                         ) : (
                             shown.map((model, index) => {
                                 const key = modelChoiceKey(model);
@@ -399,68 +363,17 @@ function ModelCatalogBody({
     readonly onSendCommand: ComposerCommandSender;
     readonly onChoose: (model: SessionModelInfo) => void;
 }): ReactElement {
-    const [catalog, setCatalog] = useState<PickerCatalogState<SessionModelInfo>>(() => {
-        const cached = catalogCache.get(cacheKey);
-        return cached !== null ? { kind: "ready", items: cached } : { kind: "loading" };
+    const { catalog, retry } = usePickerCatalog<SessionModelInfo>({
+        cacheKey,
+        command: "get_available_models",
+        parse: parseAvailableModelsData,
+        invalidDataMessage: "Received an invalid model catalog.",
+        cache: catalogCache,
+        onSendCommand,
     });
 
-    const fetchCatalog = useCallback(
-        (cancelledRef?: { current: boolean }): void => {
-            void onSendCommand({ type: "get_available_models" })
-                .then((response) => {
-                    if (cancelledRef?.current) {
-                        return;
-                    }
-                    if (!response.success) {
-                        setCatalog({ kind: "error", message: response.error });
-                        return;
-                    }
-                    const models = parseAvailableModelsData(response.data);
-                    if (models === null) {
-                        setCatalog({ kind: "error", message: "Received an invalid model catalog." });
-                        return;
-                    }
-                    catalogCache.set(cacheKey, models);
-                    setCatalog({ kind: "ready", items: models });
-                })
-                .catch((cause: unknown) => {
-                    if (cancelledRef?.current) {
-                        return;
-                    }
-                    setCatalog({
-                        kind: "error",
-                        message: cause instanceof Error ? cause.message : String(cause),
-                    });
-                });
-        },
-        [cacheKey, catalogCache, onSendCommand],
-    );
-
-    useEffect(() => {
-        if (catalogCache.get(cacheKey) !== null) {
-            return;
-        }
-        const cancelledRef = { current: false };
-        fetchCatalog(cancelledRef);
-        return () => {
-            cancelledRef.current = true;
-        };
-    }, [cacheKey, catalogCache, fetchCatalog]);
-
-    const handleRetry = useCallback(() => {
-        catalogCache.invalidate(cacheKey);
-        setCatalog({ kind: "loading" });
-        fetchCatalog();
-    }, [cacheKey, catalogCache, fetchCatalog]);
-
     return (
-        <ModelMenu
-            catalog={catalog}
-            activeKey={activeKey}
-            logoCache={logoCache}
-            onRetry={handleRetry}
-            onChoose={onChoose}
-        />
+        <ModelMenu catalog={catalog} activeKey={activeKey} logoCache={logoCache} onRetry={retry} onChoose={onChoose} />
     );
 }
 
@@ -507,37 +420,30 @@ export function ModelPicker({
     const modelLabel = current?.name ?? "Model";
 
     return (
-        <Popover open={open && !disabled} onOpenChange={onOpenChange}>
-            <PopoverTrigger
-                render={
-                    <PickerPill
-                        aria-label={`Model: ${modelLabel}`}
-                        disabled={disabled}
-                        className={styles.trigger}
-                        title={current === null ? "Model" : `${current.provider}/${current.id}`}
-                    />
-                }
-            >
-                <ProviderMark provider={current?.provider ?? null} logo={activeLogo} />
-                <span className={styles.triggerLabel}>{modelLabel}</span>
-            </PopoverTrigger>
-            <PopoverContent
-                side="top"
-                align="start"
-                sideOffset={10}
-                collisionAvoidance={{ side: "none", align: "shift" }}
-                className={styles.popup}
-            >
-                <ModelCatalogBody
-                    key={cacheKey}
-                    cacheKey={cacheKey}
-                    activeKey={activeKey}
-                    catalogCache={catalogCache}
-                    logoCache={logoCache}
-                    onSendCommand={onSendCommand}
-                    onChoose={handleChoose}
-                />
-            </PopoverContent>
-        </Popover>
+        <PickerPopover
+            open={open}
+            onOpenChange={onOpenChange}
+            disabled={disabled}
+            label={`Model: ${modelLabel}`}
+            title={current === null ? "Model" : `${current.provider}/${current.id}`}
+            pillClassName={styles.trigger}
+            popupClassName={styles.popup}
+            triggerChildren={
+                <>
+                    <ProviderMark provider={current?.provider ?? null} logo={activeLogo} />
+                    <span className={pickerStyles.triggerLabel}>{modelLabel}</span>
+                </>
+            }
+        >
+            <ModelCatalogBody
+                key={cacheKey}
+                cacheKey={cacheKey}
+                activeKey={activeKey}
+                catalogCache={catalogCache}
+                logoCache={logoCache}
+                onSendCommand={onSendCommand}
+                onChoose={handleChoose}
+            />
+        </PickerPopover>
     );
 }

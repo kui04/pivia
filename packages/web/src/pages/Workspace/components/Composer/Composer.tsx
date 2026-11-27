@@ -13,14 +13,13 @@ import {
 } from "react";
 
 import { IconButton, Popover, ScrollArea, VisuallyHidden } from "@components";
-import { cn, isImeComposition } from "@/lib";
+import { Clipboard, cn, isImeComposition } from "@/lib";
 
 import {
     AttachmentStrip,
     CommandList,
     commandRows,
     formatAttachmentError,
-    hasClipboardImageOrFiles,
     ModelPicker,
     parseComposerSubmission,
     readClipboardImages,
@@ -322,7 +321,7 @@ export function Composer({
 
     const handlePaste = (event: ClipboardEvent<HTMLTextAreaElement>): void => {
         const transfer = event.clipboardData;
-        if (!hasClipboardImageOrFiles(transfer)) {
+        if (!Clipboard.hasFiles(transfer)) {
             return;
         }
         event.preventDefault();

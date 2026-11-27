@@ -1,32 +1,22 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, within } from "storybook/test";
 
+import { makeStorySessionRow, STORY_NOW } from "@/storybook/fixtures";
 import { sid } from "@/storybook/ids";
 import type { SessionRow as SessionRowModel } from "@/stores/workspace";
 
+import { requireElement } from "@/storybook/dom";
 import { SessionRow } from "./SessionRow";
 import styles from "./SessionRow.stories.module.css";
 
-const NOW = Date.parse("2026-01-03T12:00:00.000Z");
-
-const session: SessionRowModel = {
-    id: sid("session-a1"),
-    title: "Fix the session list",
-    named: true,
-    cwd: "/home/u/pivia",
-    modifiedAtMs: NOW - 2 * 60 * 60 * 1000,
-    runtimeState: "idle",
-    attachedClients: 0,
-    pinned: false,
-    selected: false,
-};
+const session: SessionRowModel = makeStorySessionRow("session-a1", "Fix the session list");
 
 const meta = {
     title: "Pages/Workspace/SessionRow",
     component: SessionRow,
     args: {
         session,
-        nowMs: NOW,
+        nowMs: STORY_NOW,
         closing: false,
         onSelect: fn(),
         onTogglePinned: fn(),
@@ -112,10 +102,7 @@ export const RuntimeStates: Story = {
         for (const label of ["Streaming", "Attached", "Closing"]) {
             const dot = canvas.getByRole("img", { name: label });
             await expect(dot).toBeVisible();
-            const row = dot.closest("li");
-            if (row === null) {
-                throw new Error(`Missing row for the ${label} indicator`);
-            }
+            const row = requireElement(dot.closest("li"), "row");
             const menu = within(row).getByRole("button", { name: "Session actions" });
             const dotBox = dot.getBoundingClientRect();
             const menuBox = menu.getBoundingClientRect();

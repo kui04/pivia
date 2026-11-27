@@ -8,7 +8,7 @@ import type { TranscriptTiming } from "@/stores/session";
  * A clock that jumps backwards (NTP correction, a restored tab) must not make a running timer read
  * as negative.
  */
-export function elapsedSince(startedAtMs: number, sampledAtMs: number): number {
+function elapsedSince(startedAtMs: number, sampledAtMs: number): number {
     return Math.max(0, sampledAtMs - startedAtMs);
 }
 

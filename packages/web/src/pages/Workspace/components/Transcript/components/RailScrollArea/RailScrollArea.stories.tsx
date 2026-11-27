@@ -3,8 +3,8 @@ import type { ReactElement } from "react";
 import { expect, userEvent, waitFor } from "storybook/test";
 
 import { requireElement, requireViewport } from "@/storybook/dom";
-import storyFrame from "@/storybook/storyFrame.module.css";
 
+import { TranscriptFrame } from "@/storybook/frames";
 import { RailScrollArea } from "./RailScrollArea";
 
 function ParagraphList({ count }: { readonly count: number }): ReactElement {
@@ -32,13 +32,7 @@ const meta = {
     argTypes: {
         children: { control: false },
     },
-    decorators: [
-        (Story) => (
-            <div className={storyFrame.frame}>
-                <Story />
-            </div>
-        ),
-    ],
+    decorators: [TranscriptFrame],
 } satisfies Meta<typeof RailScrollArea>;
 
 export default meta;

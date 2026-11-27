@@ -1,23 +1,12 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { FileEntry, RpcExtensionUIRequest } from "@earendil-works/pi-coding-agent";
-import {
-    parseEntriesVersion,
-    parseSessionId,
-    parseSyncEpoch,
-    parseSyncSeq,
-    type EntriesVersion,
-    type SessionDelta,
-    type SessionId,
-    type SessionSnapshot,
-    type SessionStateSnapshot,
-    type SyncEpoch,
-    type SyncSeq,
-} from "@pivia/protocol";
+import type { SessionDelta, SessionId, SessionSnapshot, SessionStateSnapshot } from "@pivia/protocol";
 
 type SessionEvent = Extract<SessionDelta, { readonly kind: "agent_event" }>["event"];
 import { describe, expect, it } from "vitest";
 
-import { SyncStreamClient } from "@/lib/sync";
+import { makeSessionStateSnapshot } from "@/test/fixtures";
+import { ev, sid } from "@/test/ids";
 
 import {
     applyHydratedEntries,
@@ -25,64 +14,15 @@ import {
     createSessionSyncReducer,
     initialSessionState,
     liveAssistantMessage,
-    type SessionHttpHydrationDescriptor,
     type SessionState,
 } from "./reducer";
 
-function sid(raw: string): SessionId {
-    const parsed = parseSessionId(raw);
-    if (parsed === null) {
-        throw new Error(`Invalid test session id: ${raw}`);
-    }
-    return parsed;
-}
-
-function ev(raw: string): EntriesVersion {
-    const parsed = parseEntriesVersion(raw);
-    if (parsed === null) {
-        throw new Error(`Invalid test entries version: ${raw}`);
-    }
-    return parsed;
-}
-
-function rt(raw: string): SyncEpoch<"session"> {
-    const parsed = parseSyncEpoch<"session">(raw);
-    if (parsed === null) {
-        throw new Error(`Invalid test runtime id: ${raw}`);
-    }
-    return parsed;
-}
-
-function seq(raw: number): SyncSeq<"session"> {
-    const parsed = parseSyncSeq<"session">(raw);
-    if (parsed === null) {
-        throw new Error(`Invalid test session seq: ${raw}`);
-    }
-    return parsed;
-}
-
 const SESSION_1 = sid("session-1");
 const OTHER_SESSION = sid("other");
-const RUNTIME_1 = rt("runtime-1");
 const V152 = ev("3:1.5.2");
 
 function summary(overrides: Partial<SessionStateSnapshot> = {}): SessionStateSnapshot {
-    return {
-        sessionId: SESSION_1,
-        cwd: "/home/u/project",
-        name: null,
-        model: null,
-        thinkingLevel: "medium",
-        isStreaming: false,
-        isCompacting: false,
-        steeringMode: "one-at-a-time",
-        followUpMode: "one-at-a-time",
-        autoCompactionEnabled: true,
-        messageCount: 2,
-        steeringMessages: [],
-        followUpMessages: [],
-        ...overrides,
-    };
+    return makeSessionStateSnapshot({ messageCount: 2, ...overrides });
 }
 
 function dialog(id: string, method: "confirm" | "select" | "input" | "editor" = "confirm"): RpcExtensionUIRequest {
@@ -195,52 +135,30 @@ describe("session sync reducer", () => {
         expect(next).toBe(state);
     });
 
-    it("applies state_patched and agent_event deltas deterministically during replay", () => {
-        const client = new SyncStreamClient<
-            "session",
-            SessionState,
-            SessionSnapshot,
-            SessionDelta,
-            SessionHttpHydrationDescriptor
-        >({
-            initialState: connectingState(),
-            reducer: createSessionSyncReducer(),
-        });
-
-        client.markConnecting();
-        client.handleFrame({
-            type: "sync:snapshot",
-            cursor: { epoch: RUNTIME_1, seq: seq(2) },
-            snapshot: makeSnapshot({
+    it("applies state_patched and agent_event deltas deterministically", () => {
+        const reducer = createSessionSyncReducer();
+        let state = reducer.applySnapshot(
+            connectingState(),
+            makeSnapshot({
                 state: summary({ isStreaming: true, messageCount: 2 }),
                 pendingUiRequests: [dialog("stale")],
             }),
+        );
+
+        state = reducer.applyDelta(state, {
+            kind: "agent_event",
+            event: { type: "agent_settled", aborted: false },
+        });
+        state = reducer.applyDelta(state, { kind: "ui_resolved", requestId: "stale" });
+        state = reducer.applyDelta(state, {
+            kind: "state_patched",
+            patch: {
+                model: { provider: "anthropic", id: "claude-sonnet-4", name: "Claude" },
+                messageCount: 4,
+                steeringMode: "all",
+            },
         });
 
-        client.markReconnecting(1);
-        client.handleFrame({
-            type: "sync:replay",
-            cursor: { epoch: RUNTIME_1, seq: seq(5) },
-            fromSeq: seq(2),
-            deltas: [
-                { seq: seq(3), payload: { kind: "agent_event", event: { type: "agent_settled", aborted: false } } },
-                { seq: seq(4), payload: { kind: "ui_resolved", requestId: "stale" } },
-                {
-                    seq: seq(5),
-                    payload: {
-                        kind: "state_patched",
-                        patch: {
-                            model: { provider: "anthropic", id: "claude-sonnet-4", name: "Claude" },
-                            messageCount: 4,
-                            steeringMode: "all",
-                        },
-                    },
-                },
-            ],
-        });
-
-        const state = client.currentState;
-        expect(client.appliedCursor).toEqual({ epoch: RUNTIME_1, seq: seq(5) });
         expect(state.state?.isStreaming).toBe(false);
         expect(state.state?.messageCount).toBe(4);
         expect(state.state?.steeringMode).toBe("all");
@@ -358,7 +276,7 @@ describe("session sync reducer", () => {
         expect(state.entries).toHaveLength(3);
     });
 
-    it("delegates pending delta buffering during HTTP hydration to SyncStreamClient", async () => {
+    it("hydrates HTTP entries and appends deltas that follow the hydrated prefix", () => {
         const headerEntry: FileEntry = {
             type: "session",
             version: 3,
@@ -381,51 +299,24 @@ describe("session sync reducer", () => {
             message: { role: "user", content: "q2", timestamp: 2 },
         };
 
-        const hydrateGate = Promise.withResolvers<SessionState>();
-        const client = new SyncStreamClient<
-            "session",
-            SessionState,
-            SessionSnapshot,
-            SessionDelta,
-            SessionHttpHydrationDescriptor
-        >({
-            initialState: connectingState(),
-            reducer: createSessionSyncReducer(),
-            onHydrateHttp: () => hydrateGate.promise,
+        const reducer = createSessionSyncReducer();
+        let state = reducer.applySnapshot(
+            connectingState(),
+            makeSnapshot({ entries: { mode: "http", meta: { entryCount: 2 } } }),
+        );
+        expect(state.entriesSync).toEqual({ kind: "loading" });
+
+        state = applyHydratedEntries(state, V152, 0, [headerEntry, msg1]);
+        expect(state.entriesSync).toEqual({ kind: "idle" });
+
+        state = reducer.applyDelta(state, {
+            kind: "entries_appended",
+            entriesVersion: V152,
+            baseEntryCount: 2,
+            entries: { mode: "inline", data: [msg2] },
         });
 
-        client.markConnecting();
-        client.handleFrame({
-            type: "sync:snapshot",
-            cursor: { epoch: RUNTIME_1, seq: seq(1) },
-            snapshot: makeSnapshot({
-                entries: { mode: "http", meta: { entryCount: 2 } },
-            }),
-        });
-        expect(client.currentPhase.kind).toBe("hydrating_http");
-        expect(client.currentState.entriesSync).toEqual({
-            kind: "loading",
-        });
-
-        client.handleFrame({
-            type: "sync:delta",
-            cursor: { epoch: RUNTIME_1, seq: seq(2) },
-            delta: {
-                kind: "entries_appended",
-                entriesVersion: V152,
-                baseEntryCount: 2,
-                entries: { mode: "inline", data: [msg2] },
-            },
-        });
-
-        // HTTP returns [header, msg1] without msg2; SyncStreamClient applies msg2 afterward cleanly.
-        hydrateGate.resolve(applyHydratedEntries(client.currentState, V152, 0, [headerEntry, msg1]));
-        await Promise.resolve();
-        await Promise.resolve();
-
-        expect(client.currentPhase).toEqual({ kind: "live", cursor: { epoch: RUNTIME_1, seq: seq(2) } });
-        expect(client.currentState.entriesSync).toEqual({ kind: "idle" });
-        expect(client.currentState.entries.map((entry) => entry.id)).toEqual(["session-1", "e1", "e2"]);
+        expect(state.entries.map((entry) => entry.id)).toEqual(["session-1", "e1", "e2"]);
     });
 
     it("hydrates over a cached prefix without duplicating overlap entries", () => {

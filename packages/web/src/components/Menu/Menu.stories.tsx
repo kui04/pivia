@@ -7,6 +7,7 @@ import { DarkTheme } from "@/storybook/theme";
 
 import { IconButton } from "../IconButton";
 
+import { requireElement, requireViewport, waitForDarkTheme } from "@/storybook/dom";
 import { Menu, MenuItem, MenuSeparator } from "./Menu";
 
 const onCopy = fn();
@@ -97,10 +98,7 @@ export const Keyboard: Story = {
         await userEvent.keyboard("{ArrowDown}");
         await waitFor(() => expect(menu.querySelector("[data-highlighted]")).not.toBeNull());
 
-        const highlighted = menu.querySelector<HTMLElement>("[data-highlighted]");
-        if (highlighted === null) {
-            throw new Error("The keyboard highlight is missing");
-        }
+        const highlighted = requireElement(menu.querySelector<HTMLElement>("[data-highlighted]"), "highlighted");
         await waitFor(() => expect(highlighted).toHaveFocus());
 
         await userEvent.keyboard("{Escape}");
@@ -120,11 +118,7 @@ export const ManyItems: Story = {
         await userEvent.click(canvas.getByRole("button", { name: "Message actions" }));
 
         const menu = await screen.findByRole("menu");
-        const viewport = menu.querySelector<HTMLElement>("[data-slot='scroll-area-viewport']");
-
-        if (viewport === null) {
-            throw new Error("The menu did not render a scroll area");
-        }
+        const viewport = requireViewport(menu, "the menu scroll area");
 
         await waitFor(() => expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight));
         await expect(getComputedStyle(menu).overflowY).toBe("hidden");
@@ -144,7 +138,7 @@ export const Dark: Story = {
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
 
-        await waitFor(() => expect(getComputedStyle(document.documentElement).colorScheme).toBe("dark"));
+        await waitForDarkTheme();
         await userEvent.click(canvas.getByRole("button", { name: "Message actions" }));
 
         const menu = await screen.findByRole("menu");

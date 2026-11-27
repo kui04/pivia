@@ -1,9 +1,11 @@
 import type { SessionId } from "@pivia/protocol";
-import { Copy, EllipsisVertical, Minimize2, PanelLeft, Pencil, X } from "lucide-react";
+import { EllipsisVertical, Minimize2, PanelLeft, Pencil } from "lucide-react";
 import type { ReactElement } from "react";
 
 import { IconButton, Menu, MenuItem, MenuSeparator } from "@components";
 import type { SelectedSession } from "@/stores/workspace";
+
+import { SessionCommonMenuItems } from "../SessionCommonMenuItems";
 
 import styles from "./Topbar.module.css";
 
@@ -92,23 +94,12 @@ export function Topbar({
                             </MenuItem>
                         )}
                         {hasRuntimeMenuItems ? <MenuSeparator /> : null}
-                        <MenuItem
-                            icon={<Copy />}
-                            onClick={() => {
-                                onCopySessionId(session.id);
-                            }}
-                        >
-                            Copy session ID
-                        </MenuItem>
-                        <MenuItem
-                            icon={<X />}
-                            disabled={closing || session.runtimeState === "closing"}
-                            onClick={() => {
-                                onCloseSession(session.id);
-                            }}
-                        >
-                            Close session
-                        </MenuItem>
+                        <SessionCommonMenuItems
+                            sessionId={session.id}
+                            closeDisabled={closing || session.runtimeState === "closing"}
+                            onCopySessionId={onCopySessionId}
+                            onCloseSession={onCloseSession}
+                        />
                     </Menu>
                 )}
             </div>

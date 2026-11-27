@@ -2,7 +2,6 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useState } from "react";
 import { expect, fn, waitFor, within } from "storybook/test";
 
-import { DarkTheme } from "@/storybook/theme";
 import { Button, Input, Menu, MenuItem } from "@components";
 
 import { Drawer, type DrawerProps } from "./Drawer";
@@ -147,18 +146,6 @@ export const Bottom: Story = {
         await waitFor(async () => {
             await expect(panel).not.toBeVisible();
         });
-    },
-};
-
-export const Dark: Story = {
-    decorators: [DarkTheme],
-    play: async ({ canvasElement, userEvent }) => {
-        await waitFor(() => expect(getComputedStyle(document.documentElement).colorScheme).toBe("dark"));
-        await userEvent.click(within(canvasElement).getByRole("button", { name: "Open drawer" }));
-
-        const panel = await within(document.body).findByRole("dialog", { name: "Sessions" });
-
-        await expect(panel).toBeVisible();
     },
 };
 

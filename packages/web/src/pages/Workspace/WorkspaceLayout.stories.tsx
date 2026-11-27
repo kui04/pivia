@@ -1,11 +1,4 @@
-import {
-    initialSyncSeq,
-    nextSyncSeq,
-    parseSyncEpoch,
-    type SessionId,
-    type SessionSummary,
-    type SyncEpoch,
-} from "@pivia/protocol";
+import { initialSyncSeq, nextSyncSeq, type SessionSummary } from "@pivia/protocol";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useState, type ReactElement } from "react";
 import { MemoryRouter, Route, Routes } from "react-router";
@@ -13,8 +6,10 @@ import { expect, fn, waitFor, within } from "storybook/test";
 
 import { ToastProvider } from "@components/Toast";
 import { toastManager } from "@/lib/toast";
-import { sid } from "@/storybook/ids";
-import type { WebSocketConstructor, WebSocketLike } from "@/lib/transport";
+import { makeStorySessionSummary } from "@/storybook/fixtures";
+import { catalogEpoch, sid } from "@/storybook/ids";
+import { createStorySocket } from "@/storybook/socket";
+import type { WebSocketConstructor } from "@/lib/transport";
 import { createAuthStore, type AuthClient } from "@/stores/auth";
 import { createSessionStore } from "@/stores/session";
 import { createWorkspaceStore, type WorkspaceCatalogCache } from "@/stores/workspace";
@@ -26,34 +21,15 @@ import styles from "./WorkspaceLayout.stories.module.css";
 const S1 = sid("session-1");
 const S2 = sid("session-2");
 const INITIAL_SEQ = initialSyncSeq<"catalog">();
-const STORY_EPOCH: SyncEpoch<"catalog"> = (() => {
-    const parsed = parseSyncEpoch<"catalog">("story-epoch-1");
-    if (parsed === null) {
-        throw new Error("Invalid story catalog epoch");
-    }
-    return parsed;
-})();
-
-function summary(id: SessionId, overrides: Partial<SessionSummary> = {}): SessionSummary {
-    return {
-        id,
-        cwd: "/home/u/pivia",
-        name: "First task",
-        firstMessage: "Inspect routes",
-        messageCount: 2,
-        createdAtMs: 1_000,
-        modifiedAtMs: 5_000,
-        hasParent: false,
-        runtimeState: "idle",
-        attachedClients: 0,
-        ...overrides,
-    };
-}
+const STORY_EPOCH = catalogEpoch("story-epoch-1");
 
 const noopCache: WorkspaceCatalogCache = {
     get: () => Promise.resolve(null),
     put: () => Promise.resolve(),
 };
+
+/** Session socket that stays silent; the layout stories only exercise the shell. */
+const SilentSessionSocket = createStorySocket().WebSocket;
 
 const noopAuthClient: AuthClient = {
     getAuthStatus: () => Promise.resolve({ authRequired: false, authenticated: true }),
@@ -61,89 +37,38 @@ const noopAuthClient: AuthClient = {
     logout: () => Promise.resolve({ authenticated: false }),
 };
 
-/**
- * A session socket that opens and then stays silent.
- *
- * The layout stories only exercise the shell, so the routed page must not reach a real
- * `/ws/sessions/:id` endpoint or a real HTTP entry request.
- */
-class QuietSessionSocket implements WebSocketLike {
-    readonly url: string;
-    readyState = 0;
-    onopen: (() => void) | null = null;
-    onmessage: ((event: MessageEvent) => void) | null = null;
-    onclose: ((event: CloseEvent) => void) | null = null;
-    onerror: (() => void) | null = null;
-
-    constructor(url: string) {
-        this.url = url;
-        queueMicrotask(() => {
-            this.readyState = 1;
-            this.onopen?.();
-        });
-    }
-
-    send(): void {}
-
-    close(): void {
-        this.readyState = 3;
-    }
-}
-
 interface HarnessSocketController {
     readonly WebSocket: WebSocketConstructor;
     emitMessage: (payload: unknown) => void;
 }
 
+/**
+ * A workspace socket that opens at construction and answers with the story's starting catalog.
+ *
+ * The layout stories exercise the shell, so the socket replaces the real `/ws/workspace` endpoint
+ * and the routed page never reaches a real session socket.
+ */
 function createFakeWorkspaceSocket(initialSessions: readonly SessionSummary[]): HarnessSocketController {
-    const instances: Array<{
-        readyState: number;
-        onopen: (() => void) | null;
-        onmessage: ((event: MessageEvent) => void) | null;
-        onclose: ((event: CloseEvent) => void) | null;
-        onerror: (() => void) | null;
-    }> = [];
-
-    class FakeSocket implements WebSocketLike {
-        readyState = 0;
-        onopen: (() => void) | null = null;
-        onmessage: ((event: MessageEvent) => void) | null = null;
-        onclose: ((event: CloseEvent) => void) | null = null;
-        onerror: (() => void) | null = null;
-
-        constructor(public readonly url: string) {
-            instances.push(this);
-            queueMicrotask(() => {
-                this.readyState = 1;
-                this.onopen?.();
-                this.onmessage?.({
-                    data: JSON.stringify({
-                        type: "sync:snapshot",
-                        cursor: { epoch: STORY_EPOCH, seq: INITIAL_SEQ },
-                        snapshot: {
-                            sessions: initialSessions,
-                            updatedAtMs: 10_000,
-                        },
-                    }),
-                } as MessageEvent);
-            });
-        }
-
-        send(): void {}
-
-        close(): void {
-            this.readyState = 3;
-        }
-    }
+    const socket = createStorySocket((active) => {
+        active.open();
+        active.receive({
+            type: "sync:snapshot",
+            cursor: { epoch: STORY_EPOCH, seq: INITIAL_SEQ },
+            snapshot: {
+                sessions: initialSessions,
+                updatedAtMs: 10_000,
+            },
+        });
+    });
 
     return {
-        WebSocket: FakeSocket,
+        WebSocket: socket.WebSocket,
         emitMessage(payload) {
-            const active = instances.at(-1);
-            if (active === undefined) {
+            const active = socket.latest();
+            if (active === null) {
                 throw new Error("Expected active fake workspace socket");
             }
-            active.onmessage?.({ data: JSON.stringify(payload) } as MessageEvent);
+            active.receive(payload);
         },
     };
 }
@@ -166,7 +91,7 @@ function WorkspaceHarness({
         const workspaceStore = createWorkspaceStore({ cache: noopCache });
         const authStore = createAuthStore(noopAuthClient);
         const sessionStore = createSessionStore({
-            WebSocket: QuietSessionSocket,
+            WebSocket: SilentSessionSocket,
             apiClient: {
                 getSession: () => Promise.reject(new Error("The layout story does not load session entries.")),
             },
@@ -208,7 +133,7 @@ function createMockApiClient(overrides: Partial<WorkspaceApiClient> = {}): Works
     return {
         listSessions: fn(() =>
             Promise.resolve({
-                sessions: [summary(S1)],
+                sessions: [makeStorySessionSummary(S1)],
                 updatedAtMs: 10_000,
                 cursor: {
                     epoch: STORY_EPOCH,
@@ -227,7 +152,7 @@ function createMockApiClient(overrides: Partial<WorkspaceApiClient> = {}): Works
         ),
         createSession: fn((cwd: string) =>
             Promise.resolve({
-                session: summary(S2, {
+                session: makeStorySessionSummary(S2, {
                     cwd,
                     name: "Created session",
                     modifiedAtMs: 20_000,
@@ -253,7 +178,11 @@ type Story = StoryObj<typeof meta>;
 
 export const CreateSessionNavigates: Story = {
     render: () => (
-        <WorkspaceHarness initialRoute="/workspace" initialSessions={[summary(S1)]} apiClient={createMockApiClient()} />
+        <WorkspaceHarness
+            initialRoute="/workspace"
+            initialSessions={[makeStorySessionSummary(S1)]}
+            apiClient={createMockApiClient()}
+        />
     ),
     play: async ({ canvasElement, userEvent }) => {
         const canvas = within(canvasElement);
@@ -274,7 +203,7 @@ export const CloseIdleSessionWarns: Story = {
     render: () => (
         <WorkspaceHarness
             initialRoute={`/workspace/${S1}`}
-            initialSessions={[summary(S1)]}
+            initialSessions={[makeStorySessionSummary(S1)]}
             apiClient={createMockApiClient({
                 closeSession: fn(() => Promise.resolve({ closed: false })),
             })}
@@ -298,7 +227,7 @@ export const CloseRunningSessionNavigatesHome: Story = {
     render: () => (
         <WorkspaceHarness
             initialRoute={`/workspace/${S1}`}
-            initialSessions={[summary(S1, { runtimeState: "streaming", attachedClients: 1 })]}
+            initialSessions={[makeStorySessionSummary(S1, { runtimeState: "streaming", attachedClients: 1 })]}
             apiClient={createMockApiClient({
                 closeSession: fn(() => Promise.resolve({ closed: true })),
             })}
@@ -318,13 +247,13 @@ export const CloseRunningSessionNavigatesHome: Story = {
     },
 };
 
-const removedSocket = createFakeWorkspaceSocket([summary(S1)]);
+const removedSocket = createFakeWorkspaceSocket([makeStorySessionSummary(S1)]);
 
 export const RemovedSessionClearsRoute: Story = {
     render: () => (
         <WorkspaceHarness
             initialRoute={`/workspace/${S1}`}
-            initialSessions={[summary(S1)]}
+            initialSessions={[makeStorySessionSummary(S1)]}
             apiClient={createMockApiClient()}
             socketController={removedSocket}
         />

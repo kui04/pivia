@@ -37,7 +37,6 @@ export type ComposerPanel = "none" | "model" | "thinking";
 
 /** Discriminated state for lazy-loaded picker catalogs (models and thinking levels). */
 export type PickerCatalogState<T> =
-    | { readonly kind: "idle" }
     | { readonly kind: "loading" }
     | { readonly kind: "ready"; readonly items: readonly T[] }
     | { readonly kind: "error"; readonly message: string };
@@ -72,11 +71,8 @@ export type ComposerRuntimePhase =
     | {
           readonly kind: "ready";
           readonly isStreaming: boolean;
-          readonly isCompacting: boolean;
           readonly model: SessionModelInfo | null;
           readonly thinkingLevel: ThinkingLevel | null;
-          readonly queuedCount: number;
-          readonly sessionName: string | null;
       };
 
 /** Narrow RPC dispatcher contract consumed by the composer and its child pickers. */
@@ -94,10 +90,7 @@ export function toComposerRuntimePhase(
     return {
         kind: "ready",
         isStreaming: state.isStreaming,
-        isCompacting: state.isCompacting,
         model: state.model,
         thinkingLevel: state.thinkingLevel,
-        queuedCount: state.steeringMessages.length + state.followUpMessages.length,
-        sessionName: state.name,
     };
 }

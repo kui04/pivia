@@ -53,11 +53,11 @@
      * center.
      */
     .rail {
-        inline-size: var(--border-width-strong);
+        inline-size: var(--guide-line-width);
         block-size: 100%;
         justify-self: center;
-        background-color: var(--color-outline-variant);
-        transform: scaleX(0.5);
+        background-color: var(--guide-line-color);
+        transform: var(--guide-line-scale);
     }
 
     .previewStack {
@@ -277,7 +277,6 @@
 }
 
 .nestedCallsContent {
-    box-sizing: border-box;
     inline-size: 100%;
     min-inline-size: 0 !important;
     padding: var(--space-8) var(--space-12);

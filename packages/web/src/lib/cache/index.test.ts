@@ -1,36 +1,13 @@
-import type { FileEntry } from "@earendil-works/pi-coding-agent";
-import {
-    isRecord,
-    parseCatalogSnapshot,
-    parseEntriesVersion,
-    parseSessionId,
-    type CatalogSnapshot,
-    type EntriesVersion,
-    type SessionId,
-    type SessionSummary,
-} from "@pivia/protocol";
+import { isRecord, parseCatalogSnapshot, type CatalogSnapshot } from "@pivia/protocol";
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import { describe, expect, it, vi } from "vitest";
+
+import { makeSessionHeader, makeSessionSummary, makeUserEntry } from "@/test/fixtures";
+import { ev, sid } from "@/test/ids";
 
 import { IndexedDbCoordinator, IndexedDbSnapshotCache } from "./idb";
 import { IndexedDbAppCache } from "./index";
 import { IndexedDbSessionCacheSlice } from "./session";
-
-function sid(raw: string): SessionId {
-    const parsed = parseSessionId(raw);
-    if (parsed === null) {
-        throw new Error(`Invalid test session id: ${raw}`);
-    }
-    return parsed;
-}
-
-function ev(raw: string): EntriesVersion {
-    const parsed = parseEntriesVersion(raw);
-    if (parsed === null) {
-        throw new Error(`Invalid test entries version: ${raw}`);
-    }
-    return parsed;
-}
 
 const S1 = sid("s1");
 const S2 = sid("s2");
@@ -46,65 +23,87 @@ function createTestCache(options: { nowMs?: () => number; maxSessions?: number; 
     });
 }
 
-function header(id: string): FileEntry {
-    return {
-        type: "session",
-        version: 3,
-        id,
-        timestamp: "2026-04-01T00:00:00.000Z",
-        cwd: "/tmp/project",
-    };
+/** Opens the raw database under `name`, for tests that corrupt or inspect stored rows. */
+function openRawDb(factory: IDBFactory, name = "pivia.cache.v1"): Promise<IDBDatabase> {
+    return new Promise((resolve, reject) => {
+        const request = factory.open(name, 1);
+        request.onsuccess = () => {
+            resolve(request.result);
+        };
+        request.onerror = () => {
+            reject(request.error ?? new Error("Failed to open IndexedDB."));
+        };
+    });
 }
 
-function userEntry(id: string, parentId: string | null, text: string): FileEntry {
-    return {
-        type: "message",
-        id,
-        parentId,
-        timestamp: "2026-04-01T00:00:01.000Z",
-        message: { role: "user", content: text, timestamp: 1 },
-    };
+/** Runs `mutate` inside one transaction and resolves when that transaction commits. */
+function withRawTx(
+    db: IDBDatabase,
+    storeNames: string | string[],
+    mode: IDBTransactionMode,
+    mutate: (tx: IDBTransaction) => void,
+): Promise<void> {
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(storeNames, mode);
+        mutate(tx);
+        tx.oncomplete = () => {
+            resolve();
+        };
+        tx.onerror = () => {
+            reject(tx.error ?? new Error("IndexedDB transaction failed."));
+        };
+    });
 }
 
-function summary(id: SessionId): SessionSummary {
-    return {
-        id,
-        cwd: "/tmp/project",
-        name: null,
-        firstMessage: "hi",
-        messageCount: 1,
-        createdAtMs: 1000,
-        modifiedAtMs: 2000,
-        hasParent: false,
-        runtimeState: "idle",
-        attachedClients: 0,
-    };
+/** Makes the first write to `storeName` throw QuotaExceededError; returns the transaction spy. */
+function failNextPut(db: IDBDatabase, storeName: string): { mockRestore(): void } {
+    const origTx = db.transaction.bind(db);
+    let failed = false;
+    return vi.spyOn(db, "transaction").mockImplementation(((names: string | string[], mode?: IDBTransactionMode) => {
+        const tx = origTx(names, mode);
+        const origObjectStore = tx.objectStore.bind(tx);
+        tx.objectStore = (target: string) => {
+            const store = origObjectStore(target);
+            if (target === storeName) {
+                const origPut = store.put.bind(store);
+                store.put = (value: unknown, key?: IDBValidKey) => {
+                    if (!failed) {
+                        failed = true;
+                        throw new DOMException("Quota exceeded", "QuotaExceededError");
+                    }
+                    return origPut(value, key);
+                };
+            }
+            return store;
+        };
+        return tx;
+    }) as typeof db.transaction);
 }
 
 describe("IndexedDbAppCache", () => {
     it("persists row-level entries, appends incrementally, and skips stale/mismatched appends", async () => {
         let now = 1_000;
         const cache = createTestCache({ nowMs: () => now });
-        const entries = [header("s1"), userEntry("e1", null, "first")];
+        const entries = [makeSessionHeader({ id: "s1" }), makeUserEntry("e1", null, "first")];
 
         expect(await cache.sessions.replaceEntries(S1, V152, entries)).toBe("written");
         now = 2_000;
 
-        const appendOk = await cache.sessions.appendEntries(S1, V152, 2, [userEntry("e2", "e1", "second")]);
+        const appendOk = await cache.sessions.appendEntries(S1, V152, 2, [makeUserEntry("e2", "e1", "second")]);
         expect(appendOk).toBe("written");
 
         // Overlapping idempotent append from an older base advances only missing rows.
         const overlapAppend = await cache.sessions.appendEntries(S1, V152, 2, [
-            userEntry("e2", "e1", "second"),
-            userEntry("e3", "e2", "third"),
+            makeUserEntry("e2", "e1", "second"),
+            makeUserEntry("e3", "e2", "third"),
         ]);
         expect(overlapAppend).toBe("written");
 
         // Stale or version-mismatched appends are skipped safely.
-        expect(await cache.sessions.appendEntries(S1, V152, 2, [userEntry("e2", "e1", "second")])).toBe(
+        expect(await cache.sessions.appendEntries(S1, V152, 2, [makeUserEntry("e2", "e1", "second")])).toBe(
             "skipped-stale",
         );
-        expect(await cache.sessions.appendEntries(S1, V153, 4, [userEntry("e4", "e3", "fourth")])).toBe(
+        expect(await cache.sessions.appendEntries(S1, V153, 4, [makeUserEntry("e4", "e3", "fourth")])).toBe(
             "skipped-stale",
         );
 
@@ -120,7 +119,11 @@ describe("IndexedDbAppCache", () => {
 
     it("prevents slow-tab rollback overwrites while allowing divergent overwrites", async () => {
         const cache = createTestCache();
-        const full = [header("s1"), userEntry("e1", null, "one"), userEntry("e2", "e1", "two")];
+        const full = [
+            makeSessionHeader({ id: "s1" }),
+            makeUserEntry("e1", null, "one"),
+            makeUserEntry("e2", "e1", "two"),
+        ];
         await cache.sessions.replaceEntries(S1, V152, full);
 
         // Slow tab tries to overwrite with an older prefix of length 2 -> skipped.
@@ -129,7 +132,7 @@ describe("IndexedDbAppCache", () => {
         expect((await cache.sessions.get(S1))?.entries).toHaveLength(3);
 
         // Divergent rewrite (e.g. external CLI replaced entry e1 with e1-alt) -> accepted.
-        const divergent = [header("s1"), userEntry("e1-alt", null, "rewritten")];
+        const divergent = [makeSessionHeader({ id: "s1" }), makeUserEntry("e1-alt", null, "rewritten")];
         expect(await cache.sessions.replaceEntries(S1, V152, divergent)).toBe("written");
         expect((await cache.sessions.get(S1))?.entries.map((entry) => entry.id)).toEqual(["s1", "e1-alt"]);
     });
@@ -142,14 +145,14 @@ describe("IndexedDbAppCache", () => {
             maxBytes: 100_000,
         });
 
-        await cache.sessions.replaceEntries(S1, V152, [header("s1")]);
+        await cache.sessions.replaceEntries(S1, V152, [makeSessionHeader({ id: "s1" })]);
         now = 200;
-        await cache.sessions.replaceEntries(S2, V152, [header("s2")]);
+        await cache.sessions.replaceEntries(S2, V152, [makeSessionHeader({ id: "s2" })]);
         now = 300;
         // Touch s1 so s2 becomes the LRU victim when s3 is added.
         await cache.sessions.get(S1);
         now = 400;
-        await cache.sessions.replaceEntries(S3, V152, [header("s3")]);
+        await cache.sessions.replaceEntries(S3, V152, [makeSessionHeader({ id: "s3" })]);
 
         expect(await cache.sessions.get(S2)).toBeNull();
         expect(await cache.sessions.get(S1)).not.toBeNull();
@@ -158,9 +161,9 @@ describe("IndexedDbAppCache", () => {
         await cache.sessions.delete(S1);
         expect(await cache.sessions.get(S1)).toBeNull();
 
-        await cache.catalog.put({ sessions: [summary(S3)], updatedAtMs: 9_000 });
+        await cache.catalog.put({ sessions: [makeSessionSummary(S3)], updatedAtMs: 9_000 });
         expect(await cache.catalog.get()).toEqual({
-            sessions: [summary(S3)],
+            sessions: [makeSessionSummary(S3)],
             updatedAtMs: 9_000,
         });
 
@@ -172,7 +175,10 @@ describe("IndexedDbAppCache", () => {
     it("still deletes persisted rows after a quota failure degraded the cache to memory", async () => {
         const factory = new IDBFactory();
         const seeded = new IndexedDbAppCache({ indexedDB: factory, keyRange: IDBKeyRange });
-        await seeded.sessions.replaceEntries(S1, V152, [header("s1"), userEntry("e1", null, "first")]);
+        await seeded.sessions.replaceEntries(S1, V152, [
+            makeSessionHeader({ id: "s1" }),
+            makeUserEntry("e1", null, "first"),
+        ]);
 
         // Every range write reports a full device, so eviction plus retry cannot succeed.
         const quotaKeyRange = {
@@ -182,7 +188,10 @@ describe("IndexedDbAppCache", () => {
         } as unknown as typeof IDBKeyRange;
         const failing = new IndexedDbAppCache({ indexedDB: factory, keyRange: quotaKeyRange });
         expect(
-            await failing.sessions.replaceEntries(S1, V152, [header("s1"), userEntry("e1-alt", null, "rewritten")]),
+            await failing.sessions.replaceEntries(S1, V152, [
+                makeSessionHeader({ id: "s1" }),
+                makeUserEntry("e1-alt", null, "rewritten"),
+            ]),
         ).toBe("degraded-memory");
 
         // Logout and a removed session must still reach IndexedDB after the degradation.
@@ -194,13 +203,17 @@ describe("IndexedDbAppCache", () => {
 
     it("degrades gracefully to in-memory storage when indexedDB is unavailable", async () => {
         const cache = new IndexedDbAppCache({ indexedDB: undefined });
-        expect(await cache.sessions.replaceEntries(S1, V152, [header("s1")])).toBe("degraded-memory");
-        expect(await cache.sessions.appendEntries(S1, V152, 1, [userEntry("e1", null, "hi")])).toBe("degraded-memory");
+        expect(await cache.sessions.replaceEntries(S1, V152, [makeSessionHeader({ id: "s1" })])).toBe(
+            "degraded-memory",
+        );
+        expect(await cache.sessions.appendEntries(S1, V152, 1, [makeUserEntry("e1", null, "hi")])).toBe(
+            "degraded-memory",
+        );
         expect((await cache.sessions.get(S1))?.entries).toHaveLength(2);
 
-        await cache.catalog.put({ sessions: [summary(S1)], updatedAtMs: 1_000 });
+        await cache.catalog.put({ sessions: [makeSessionSummary(S1)], updatedAtMs: 1_000 });
         expect(await cache.catalog.get()).toEqual({
-            sessions: [summary(S1)],
+            sessions: [makeSessionSummary(S1)],
             updatedAtMs: 1_000,
         });
     });
@@ -208,36 +221,25 @@ describe("IndexedDbAppCache", () => {
     it("rejects and self-heals corrupted IndexedDB meta and catalog records", async () => {
         const factory = new IDBFactory();
         const cache = new IndexedDbAppCache({ indexedDB: factory, keyRange: IDBKeyRange });
-        await cache.sessions.replaceEntries(S1, V152, [header("s1")]);
-        await cache.catalog.put({ sessions: [summary(S1)], updatedAtMs: 5_000 });
+        await cache.sessions.replaceEntries(S1, V152, [makeSessionHeader({ id: "s1" })]);
+        await cache.catalog.put({ sessions: [makeSessionSummary(S1)], updatedAtMs: 5_000 });
 
-        const db = await new Promise<IDBDatabase>((resolve, reject) => {
-            const req = factory.open("pivia.cache.v1", 1);
-            req.onsuccess = () => resolve(req.result);
-            req.onerror = () => reject(req.error ?? new Error("Failed to open IndexedDB."));
-        });
-        await new Promise<void>((resolve, reject) => {
-            const tx = db.transaction(["session_meta", "workspace_catalog"], "readwrite");
+        const db = await openRawDb(factory);
+        await withRawTx(db, ["session_meta", "workspace_catalog"], "readwrite", (tx) => {
             tx.objectStore("session_meta").put({ sessionId: S1, entriesVersion: "corrupt" });
             tx.objectStore("session_meta").put({ sessionId: "s-corrupt", entriesVersion: "bad" });
             tx.objectStore("workspace_catalog").put({
                 key: "default",
                 value: { sessions: [{ id: "../bad" }], updatedAtMs: 1 },
             });
-            tx.oncomplete = () => resolve();
-            tx.onerror = () => reject(tx.error ?? new Error("Failed to write corrupted IndexedDB rows."));
         });
         db.close();
 
         expect(await cache.sessions.get(S1)).toBeNull();
         expect(await cache.catalog.get()).toBeNull();
-        expect(await cache.sessions.replaceEntries(S2, V152, [header("s2")])).toBe("written");
+        expect(await cache.sessions.replaceEntries(S2, V152, [makeSessionHeader({ id: "s2" })])).toBe("written");
 
-        const reopened = await new Promise<IDBDatabase>((resolve, reject) => {
-            const req = factory.open("pivia.cache.v1", 1);
-            req.onsuccess = () => resolve(req.result);
-            req.onerror = () => reject(req.error ?? new Error("Failed to reopen IndexedDB."));
-        });
+        const reopened = await openRawDb(factory);
         const remaining = await new Promise<{
             metaS1: unknown;
             metaCorrupt: unknown;
@@ -265,9 +267,9 @@ describe("IndexedDbAppCache", () => {
     });
 
     it("evicts oldest sessions by maxBytes budget using UTF-16 byte accounting", async () => {
-        const s1Header = header("s1");
-        const s2Header = header("s2");
-        const s3Header = header("s3");
+        const s1Header = makeSessionHeader({ id: "s1" });
+        const s2Header = makeSessionHeader({ id: "s2" });
+        const s3Header = makeSessionHeader({ id: "s3" });
         const singleBytes = JSON.stringify(s1Header).length * 2;
         let now = 100;
         const cache = createTestCache({
@@ -295,38 +297,15 @@ describe("IndexedDbAppCache", () => {
             keyRange: IDBKeyRange,
         });
         const sessions = coordinator.registerSlice(new IndexedDbSessionCacheSlice(coordinator));
-        await sessions.replaceEntries(S1, V152, [header("s1")]);
+        await sessions.replaceEntries(S1, V152, [makeSessionHeader({ id: "s1" })]);
 
         const db = await coordinator.openDb();
         if (db === null) {
             throw new Error("Expected opened IDBDatabase.");
         }
-        let failFirstPut = true;
-        const origTx = db.transaction.bind(db);
-        const txSpy = vi.spyOn(db, "transaction").mockImplementation(((
-            storeNames: string | string[],
-            mode?: IDBTransactionMode,
-        ) => {
-            const tx = origTx(storeNames, mode);
-            const origObjectStore = tx.objectStore.bind(tx);
-            tx.objectStore = (storeName: string) => {
-                const store = origObjectStore(storeName);
-                if (storeName === "session_entries") {
-                    const origPut = store.put.bind(store);
-                    store.put = (value: unknown, key?: IDBValidKey) => {
-                        if (failFirstPut) {
-                            failFirstPut = false;
-                            throw new DOMException("Quota exceeded", "QuotaExceededError");
-                        }
-                        return origPut(value, key);
-                    };
-                }
-                return store;
-            };
-            return tx;
-        }) as typeof db.transaction);
+        const txSpy = failNextPut(db, "session_entries");
 
-        expect(await sessions.replaceEntries(S2, V152, [header("s2")])).toBe("written");
+        expect(await sessions.replaceEntries(S2, V152, [makeSessionHeader({ id: "s2" })])).toBe("written");
         txSpy.mockRestore();
 
         expect(await sessions.get(S1)).toBeNull();
@@ -346,53 +325,30 @@ describe("IndexedDbAppCache", () => {
                 parse: parseCatalogSnapshot,
             }),
         );
-        await sessions.replaceEntries(S1, V152, [header("s1")]);
+        await sessions.replaceEntries(S1, V152, [makeSessionHeader({ id: "s1" })]);
 
         const db = await coordinator.openDb();
         if (db === null) {
             throw new Error("Expected opened IDBDatabase.");
         }
-        let failOnce = true;
-        const origTx = db.transaction.bind(db);
-        const txSpy = vi.spyOn(db, "transaction").mockImplementation(((
-            storeNames: string | string[],
-            mode?: IDBTransactionMode,
-        ) => {
-            const tx = origTx(storeNames, mode);
-            const origObjectStore = tx.objectStore.bind(tx);
-            tx.objectStore = (storeName: string) => {
-                const store = origObjectStore(storeName);
-                if (storeName === "workspace_catalog") {
-                    const origPut = store.put.bind(store);
-                    store.put = (value: unknown, key?: IDBValidKey) => {
-                        if (failOnce) {
-                            failOnce = false;
-                            throw new DOMException("Quota exceeded", "QuotaExceededError");
-                        }
-                        return origPut(value, key);
-                    };
-                }
-                return store;
-            };
-            return tx;
-        }) as typeof db.transaction);
+        const txSpy = failNextPut(db, "workspace_catalog");
 
-        await catalog.put({ sessions: [summary(S1)], updatedAtMs: 12_000 });
+        await catalog.put({ sessions: [makeSessionSummary(S1)], updatedAtMs: 12_000 });
         txSpy.mockRestore();
 
         expect(coordinator.isDegraded()).toBe(false);
         expect(await sessions.get(S1)).toBeNull();
-        expect(await catalog.get()).toEqual({ sessions: [summary(S1)], updatedAtMs: 12_000 });
+        expect(await catalog.get()).toEqual({ sessions: [makeSessionSummary(S1)], updatedAtMs: 12_000 });
     });
 
     it("deletes session on empty replaceEntries in both healthy and degraded modes", async () => {
         const healthy = createTestCache();
-        await healthy.sessions.replaceEntries(S1, V152, [header("s1")]);
+        await healthy.sessions.replaceEntries(S1, V152, [makeSessionHeader({ id: "s1" })]);
         expect(await healthy.sessions.replaceEntries(S1, V152, [])).toBe("written");
         expect(await healthy.sessions.get(S1)).toBeNull();
 
         const degraded = new IndexedDbAppCache({ indexedDB: undefined });
-        await degraded.sessions.replaceEntries(S1, V152, [header("s1")]);
+        await degraded.sessions.replaceEntries(S1, V152, [makeSessionHeader({ id: "s1" })]);
         expect(await degraded.sessions.replaceEntries(S1, V152, [])).toBe("degraded-memory");
         expect(await degraded.sessions.get(S1)).toBeNull();
     });
@@ -404,17 +360,13 @@ describe("IndexedDbAppCache", () => {
         const runCorruptionCase = async (
             mutateTx: (metaStore: IDBObjectStore, entriesStore: IDBObjectStore) => void,
         ): Promise<void> => {
-            await cache.sessions.replaceEntries(S1, V152, [header("s1"), userEntry("e1", null, "one")]);
-            const db = await new Promise<IDBDatabase>((resolve, reject) => {
-                const req = factory.open("pivia.cache.v1", 1);
-                req.onsuccess = () => resolve(req.result);
-                req.onerror = () => reject(req.error ?? new Error("Failed to open DB."));
-            });
-            await new Promise<void>((resolve, reject) => {
-                const tx = db.transaction(["session_meta", "session_entries"], "readwrite");
+            await cache.sessions.replaceEntries(S1, V152, [
+                makeSessionHeader({ id: "s1" }),
+                makeUserEntry("e1", null, "one"),
+            ]);
+            const db = await openRawDb(factory);
+            await withRawTx(db, ["session_meta", "session_entries"], "readwrite", (tx) => {
                 mutateTx(tx.objectStore("session_meta"), tx.objectStore("session_entries"));
-                tx.oncomplete = () => resolve();
-                tx.onerror = () => reject(tx.error ?? new Error("Corruption tx failed."));
             });
             db.close();
 
@@ -424,12 +376,12 @@ describe("IndexedDbAppCache", () => {
         // 1. Gap in row indices ([0, 2] with entryCount === 2).
         await runCorruptionCase((_metaStore, entriesStore) => {
             entriesStore.delete([S1, 1]);
-            entriesStore.put({ sessionId: S1, index: 2, entry: userEntry("e2", "e1", "two") });
+            entriesStore.put({ sessionId: S1, index: 2, entry: makeUserEntry("e2", "e1", "two") });
         });
 
         // 2. Index 0 is not a "session" header.
         await runCorruptionCase((_metaStore, entriesStore) => {
-            entriesStore.put({ sessionId: S1, index: 0, entry: userEntry("e0", null, "not-header") });
+            entriesStore.put({ sessionId: S1, index: 0, entry: makeUserEntry("e0", null, "not-header") });
         });
 
         // 3. Tail entry id disagrees with meta.lastEntryId.
@@ -453,7 +405,10 @@ describe("IndexedDbAppCache", () => {
     it("deletes persisted sessions after degradation, clears memory in degraded mode, and keeps isDegraded intact across cleanup", async () => {
         const factory = new IDBFactory();
         const seeded = new IndexedDbAppCache({ indexedDB: factory, keyRange: IDBKeyRange });
-        await seeded.sessions.replaceEntries(S1, V152, [header("s1"), userEntry("e1", null, "first")]);
+        await seeded.sessions.replaceEntries(S1, V152, [
+            makeSessionHeader({ id: "s1" }),
+            makeUserEntry("e1", null, "first"),
+        ]);
 
         let throwOnBound = true;
         const toggleQuotaKeyRange = {
@@ -466,7 +421,10 @@ describe("IndexedDbAppCache", () => {
         } as unknown as typeof IDBKeyRange;
         const degraded = new IndexedDbAppCache({ indexedDB: factory, keyRange: toggleQuotaKeyRange });
         expect(
-            await degraded.sessions.replaceEntries(S1, V152, [header("s1"), userEntry("e1-alt", null, "rewritten")]),
+            await degraded.sessions.replaceEntries(S1, V152, [
+                makeSessionHeader({ id: "s1" }),
+                makeUserEntry("e1-alt", null, "rewritten"),
+            ]),
         ).toBe("degraded-memory");
         // Allow range creation again so delete() reaches IndexedDB while coordinator remains degraded.
         throwOnBound = false;
@@ -476,8 +434,10 @@ describe("IndexedDbAppCache", () => {
 
         // In-memory-only mode clears memMeta, memEntries, and memSnapshot on clearAll.
         const memoryOnly = new IndexedDbAppCache({ indexedDB: undefined });
-        expect(await memoryOnly.sessions.replaceEntries(S1, V152, [header("s1")])).toBe("degraded-memory");
-        await memoryOnly.catalog.put({ sessions: [summary(S1)], updatedAtMs: 100 });
+        expect(await memoryOnly.sessions.replaceEntries(S1, V152, [makeSessionHeader({ id: "s1" })])).toBe(
+            "degraded-memory",
+        );
+        await memoryOnly.catalog.put({ sessions: [makeSessionSummary(S1)], updatedAtMs: 100 });
         await memoryOnly.clearAll();
         expect(await memoryOnly.sessions.get(S1)).toBeNull();
         expect(await memoryOnly.catalog.get()).toBeNull();
@@ -490,7 +450,9 @@ describe("IndexedDbAppCache", () => {
         } as unknown as IDBFactory;
         const broken = new IndexedDbAppCache({ indexedDB: brokenFactory, keyRange: IDBKeyRange });
         await broken.clearAll();
-        expect(await broken.sessions.replaceEntries(S1, V152, [header("s1")])).toBe("degraded-memory");
+        expect(await broken.sessions.replaceEntries(S1, V152, [makeSessionHeader({ id: "s1" })])).toBe(
+            "degraded-memory",
+        );
     });
 
     it("preserves cross-slice snapshot fallback, isolates domain `key` fields, and recovers from closed/versionchanged connections", async () => {

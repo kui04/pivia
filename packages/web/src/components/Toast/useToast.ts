@@ -24,6 +24,19 @@ function withDefaultTimeout<Data extends object>(options: ToastManagerAddOptions
     return { ...options, timeout: 0 };
 }
 
+type ToastManagerLike = {
+    add: <T extends object = object>(options: ToastManagerAddOptions<T>) => string;
+};
+
+/** Applies the shared timeout rule to every `add` call of one manager, keeping its full type. */
+function wrapToastManager<Manager extends ToastManagerLike>(manager: Manager): Manager {
+    return {
+        ...manager,
+        add: <T extends object = object>(options: ToastManagerAddOptions<T>) =>
+            manager.add(withDefaultTimeout(options)),
+    };
+}
+
 /**
  * Adds and updates toasts inside the nearest `ToastProvider`. The semantic types
  * `info`, `success`, `warning` and `error` add a colored status icon; other
@@ -37,14 +50,7 @@ function withDefaultTimeout<Data extends object>(options: ToastManagerAddOptions
 export function useToast() {
     const manager = BaseToast.useToastManager();
 
-    return useMemo(
-        () => ({
-            ...manager,
-            add: <T extends object = object>(options: ToastManagerAddOptions<T>) =>
-                manager.add(withDefaultTimeout(options)),
-        }),
-        [manager],
-    );
+    return useMemo(() => wrapToastManager(manager), [manager]);
 }
 
 /**
@@ -53,11 +59,5 @@ export function useToast() {
  * manager also stays until the user dismisses it.
  */
 export function createToastManager() {
-    const manager = BaseToast.createToastManager();
-
-    return {
-        ...manager,
-        add: <T extends object = object>(options: ToastManagerAddOptions<T>) =>
-            manager.add(withDefaultTimeout(options)),
-    };
+    return wrapToastManager(BaseToast.createToastManager());
 }

@@ -100,43 +100,25 @@ function hasRenderableText(value: ReactNode): boolean {
     return value !== undefined && value !== null && value !== "";
 }
 
+const STATUS_ICONS: Readonly<Record<string, typeof Info>> = {
+    info: Info,
+    success: CircleCheck,
+    warning: TriangleAlert,
+    error: CircleAlert,
+};
+
 function statusIconFor(type: string | undefined) {
-    switch (type) {
-        case "info":
-            return (
-                <span className={styles.statusIcon} data-slot="toast-icon">
-                    <Icon size="md">
-                        <Info />
-                    </Icon>
-                </span>
-            );
-        case "success":
-            return (
-                <span className={styles.statusIcon} data-slot="toast-icon">
-                    <Icon size="md">
-                        <CircleCheck />
-                    </Icon>
-                </span>
-            );
-        case "warning":
-            return (
-                <span className={styles.statusIcon} data-slot="toast-icon">
-                    <Icon size="md">
-                        <TriangleAlert />
-                    </Icon>
-                </span>
-            );
-        case "error":
-            return (
-                <span className={styles.statusIcon} data-slot="toast-icon">
-                    <Icon size="md">
-                        <CircleAlert />
-                    </Icon>
-                </span>
-            );
-        default:
-            return null;
+    const StatusIcon = type === undefined ? undefined : STATUS_ICONS[type];
+    if (StatusIcon === undefined) {
+        return null;
     }
+    return (
+        <span className={styles.statusIcon} data-slot="toast-icon">
+            <Icon size="md">
+                <StatusIcon />
+            </Icon>
+        </span>
+    );
 }
 
 function swipeDirectionsFor(position: ToastPosition): ("up" | "down" | "left" | "right")[] {

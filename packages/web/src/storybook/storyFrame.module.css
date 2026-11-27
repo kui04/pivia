@@ -1,10 +1,38 @@
 /*
- * Story container sizing a transcript row against the transcript column width.
+ * Shared story layouts.
  *
- *   .frame
+ *   .frame        transcript column width for a single row
+ *   .alignStart   keeps a block element on the start edge of a flex column
+ *   .stack        vertical stack for repeated rows
+ *   .meta         control row above an interactive story
+ *   .bodyText     body copy inside a story block
  */
 .frame {
     max-inline-size: calc(var(--space-64) * 9);
     padding: var(--space-12);
     background-color: var(--color-surface);
+}
+
+.alignStart {
+    align-self: flex-start;
+}
+
+.stack {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+}
+
+.meta {
+    display: flex;
+    align-items: center;
+    gap: var(--space-8);
+    margin-block-end: var(--space-8);
+}
+
+.bodyText {
+    margin: 0;
+    color: var(--color-on-surface-variant);
+    font-size: var(--type-body-size);
+    line-height: var(--type-body-line-height);
 }

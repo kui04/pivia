@@ -1,9 +1,10 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, fn, spyOn, userEvent, waitFor, within } from "storybook/test";
+import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 
 import type { TranscriptBashItem } from "@/stores/session";
-import storyFrame from "@/storybook/storyFrame.module.css";
+import { mockClipboardSuccess } from "@/storybook/dom";
 
+import { TranscriptFrame } from "@/storybook/frames";
 import { BashExecutionBlock } from "./BashExecutionBlock";
 
 const longOutput = Array.from(
@@ -79,13 +80,7 @@ const meta = {
         item: { control: false },
         onCopy: { control: false },
     },
-    decorators: [
-        (Story) => (
-            <div className={storyFrame.frame}>
-                <Story />
-            </div>
-        ),
-    ],
+    decorators: [TranscriptFrame],
 } satisfies Meta<typeof BashExecutionBlock>;
 
 export default meta;
@@ -122,16 +117,16 @@ export const LongOutputScrolls: Story = {
         await expect(wrapButton).toHaveAttribute("aria-pressed", "true");
         await expect(output).toHaveAttribute("data-wrapped", "true");
 
-        const writeText = spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+        const clipboard = mockClipboardSuccess();
         try {
             await userEvent.click(canvas.getByRole("button", { name: "Copy output" }));
             await waitFor(async () => {
                 await expect(canvas.getByRole("status")).toHaveTextContent("Copied");
             });
-            await expect(writeText).toHaveBeenCalledWith(longOutput);
+            await expect(clipboard.writeText).toHaveBeenCalledWith(longOutput);
             await expect(args.onCopy).toHaveBeenCalledWith(longOutput);
         } finally {
-            writeText.mockRestore();
+            clipboard.restore();
         }
     },
 };

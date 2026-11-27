@@ -3,6 +3,7 @@ import { expect, screen, userEvent, waitFor, within } from "storybook/test";
 
 import { Field } from "../Field";
 
+import { requireElement } from "@/storybook/dom";
 import { Select } from "./Select";
 
 const options = [
@@ -51,11 +52,10 @@ export const Default: Story = {
         await userEvent.click(trigger);
 
         const listbox = await screen.findByRole("listbox", { name: "Visibility" }, { timeout: 3000 });
-        const popup = document.querySelector<HTMLElement>("[data-slot='select-popup']");
-
-        if (popup === null) {
-            throw new Error("The select did not render a popup");
-        }
+        const popup = requireElement(
+            document.querySelector<HTMLElement>("[data-slot='select-popup']"),
+            "the select popup",
+        );
 
         await waitFor(() => expect(Number.parseFloat(getComputedStyle(popup).opacity)).toBeGreaterThan(0.99));
 

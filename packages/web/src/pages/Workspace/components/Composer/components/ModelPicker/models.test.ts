@@ -7,7 +7,6 @@ import {
     modelChoiceKey,
     orderModelsByProvider,
     parseAvailableModelsData,
-    parseSetModelData,
 } from "./models";
 
 const CLAUDE: SessionModelInfo = { provider: "anthropic", id: "claude-sonnet-4", name: "Claude Sonnet 4" };
@@ -15,13 +14,10 @@ const GPT: SessionModelInfo = { provider: "openai", id: "gpt-5", name: "GPT-5" }
 const PROXY_GPT: SessionModelInfo = { provider: "openrouter", id: "openai/gpt-5", name: "GPT-5 (OpenRouter)" };
 
 describe("ModelPicker boundary parsers", () => {
-    it("parses valid get_available_models and set_model payloads and rejects malformed data", () => {
+    it("parses valid get_available_models payloads and rejects malformed data", () => {
         expect(parseAvailableModelsData({ models: [CLAUDE, GPT] })).toEqual([CLAUDE, GPT]);
         expect(parseAvailableModelsData({ models: [{ provider: "x" }] })).toBeNull();
         expect(parseAvailableModelsData(null)).toBeNull();
-
-        expect(parseSetModelData(GPT)).toEqual(GPT);
-        expect(parseSetModelData({ provider: "openai" })).toBeNull();
     });
 });
 

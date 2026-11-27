@@ -1,7 +1,8 @@
-import { useState, type ReactElement } from "react";
+import type { ReactElement } from "react";
 
 import type { ImageContent } from "@earendil-works/pi-ai";
 import { Image, ImageViewer } from "@components";
+import { useImageViewer } from "@/hooks";
 import { cn } from "@/lib";
 
 import styles from "./ImageAttachments.module.css";
@@ -27,8 +28,8 @@ export type ImageAttachmentsProps = {
  * @param props - Attachments, their label and the owning item id.
  */
 export function ImageAttachments({ images, label, idPrefix, className }: ImageAttachmentsProps): ReactElement | null {
-    const [viewer, setViewer] = useState<{ open: boolean; index: number } | null>(null);
-    const selectedImage = viewer !== null ? images[viewer.index] : undefined;
+    const viewer = useImageViewer<number>();
+    const selectedImage = viewer.selection === undefined ? undefined : images[viewer.selection];
 
     if (images.length === 0) {
         return null;
@@ -47,22 +48,20 @@ export function ImageAttachments({ images, label, idPrefix, className }: ImageAt
                             openLabel={`Inspect ${name}`}
                             className={styles.imageTrigger}
                             imgClassName={styles.image}
-                            onOpen={() => setViewer({ open: true, index })}
+                            onOpen={() => {
+                                viewer.show(index);
+                            }}
                         />
                     );
                 })}
             </div>
 
-            {viewer !== null && selectedImage !== undefined ? (
+            {viewer.selection !== undefined && selectedImage !== undefined ? (
                 <ImageViewer
                     open={viewer.open}
-                    onOpenChange={(open) => {
-                        if (!open) {
-                            setViewer((prev) => (prev === null ? null : { open: false, index: prev.index }));
-                        }
-                    }}
+                    onOpenChange={viewer.onOpenChange}
                     src={`data:${selectedImage.mimeType};base64,${selectedImage.data}`}
-                    alt={`${label} ${viewer.index + 1}`}
+                    alt={`${label} ${viewer.selection + 1}`}
                 />
             ) : null}
         </>

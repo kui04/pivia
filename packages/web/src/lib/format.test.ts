@@ -2,73 +2,58 @@ import { describe, expect, it } from "vitest";
 
 import { Formatter } from "./format";
 
-describe("Formatter.duration", () => {
-    it("formats milliseconds and tenths below one minute", () => {
-        expect(Formatter.duration(0)).toBe("0ms");
-        expect(Formatter.duration(12.4)).toBe("12ms");
-        expect(Formatter.duration(999.6)).toBe("1.0s");
-        expect(Formatter.duration(1_420)).toBe("1.4s");
-        expect(Formatter.duration(11_200)).toBe("11.2s");
-        expect(Formatter.duration(59_940)).toBe("59.9s");
+const NOW = 1_000_000_000_000;
+
+describe("Formatter", () => {
+    it.each([
+        ["duration", 0, "0ms"],
+        ["duration", 12.4, "12ms"],
+        ["duration", 999.6, "1.0s"],
+        ["duration", 1_420, "1.4s"],
+        ["duration", 11_200, "11.2s"],
+        ["duration", 59_940, "59.9s"],
+        ["duration", 60_000, "1m"],
+        ["duration", 125_000, "2m 5s"],
+        ["duration", 3_600_000, "1h 0m"],
+        ["duration", 3_603_000, "1h 0m 3s"],
+        ["duration", 7_380_000, "2h 3m"],
+        ["duration", 7_383_000, "2h 3m 3s"],
+        ["byteSize", 512, "512B"],
+        ["byteSize", 50 * 1024, "50.0KB"],
+        ["byteSize", 2 * 1024 * 1024, "2.0MB"],
+        ["usdCost", 0.000456, "$0.00046"],
+        ["usdCost", 0.025, "$0.03"],
+        ["usdCost", 0, "$0.0"],
+        ["compactTokenCount", 0, "0"],
+        ["compactTokenCount", 999, "999"],
+        ["compactTokenCount", 1_250, "1.3k"],
+        ["compactTokenCount", 12_400, "12k"],
+        ["compactTokenCount", 1_500_000, "1.5M"],
+        ["compactTokenCount", 12_000_000, "12M"],
+    ] as const)("%s formats %d as %s", (method, value, expected) => {
+        expect(Formatter[method](value)).toBe(expected);
     });
 
-    it("formats minute and hour tiers without trailing zero seconds", () => {
-        expect(Formatter.duration(60_000)).toBe("1m");
-        expect(Formatter.duration(125_000)).toBe("2m 5s");
-        expect(Formatter.duration(3_600_000)).toBe("1h 0m");
-        expect(Formatter.duration(3_603_000)).toBe("1h 0m 3s");
-        expect(Formatter.duration(7_380_000)).toBe("2h 3m");
-        expect(Formatter.duration(7_383_000)).toBe("2h 3m 3s");
+    it.each([
+        [NOW + 10_000, "now"],
+        [NOW - 59_999, "now"],
+        [NOW - 60_000, "1m"],
+        [NOW - 3_599_999, "59m"],
+        [NOW - 3_600_000, "1h"],
+        [NOW - 86_400_000, "1d"],
+        [NOW - 7 * 86_400_000, "1w"],
+        [NOW - 365 * 86_400_000, "1y"],
+    ] as const)("relativeAge formats %d as %s", (timestamp, expected) => {
+        expect(Formatter.relativeAge(timestamp, NOW)).toBe(expected);
     });
-});
 
-describe("Formatter.byteSize", () => {
-    it("formats bytes, kilobytes and megabytes matching pi-coding-agent", () => {
-        expect(Formatter.byteSize(512)).toBe("512B");
-        expect(Formatter.byteSize(50 * 1024)).toBe("50.0KB");
-        expect(Formatter.byteSize(2 * 1024 * 1024)).toBe("2.0MB");
-    });
-});
-
-describe("Formatter.usdCost", () => {
-    it("uses cents for larger amounts and significant digits for fractions", () => {
-        expect(Formatter.usdCost(0.000456)).toBe("$0.00046");
-        expect(Formatter.usdCost(0.025)).toBe("$0.03");
-        expect(Formatter.usdCost(0)).toBe("$0.0");
-    });
-});
-
-describe("Formatter.compactTokenCount", () => {
-    it("formats token counts across unit, k, and M thresholds", () => {
-        expect(Formatter.compactTokenCount(0)).toBe("0");
-        expect(Formatter.compactTokenCount(999)).toBe("999");
-        expect(Formatter.compactTokenCount(1_250)).toBe("1.3k");
-        expect(Formatter.compactTokenCount(12_400)).toBe("12k");
-        expect(Formatter.compactTokenCount(1_500_000)).toBe("1.5M");
-        expect(Formatter.compactTokenCount(12_000_000)).toBe("12M");
-    });
-});
-
-describe("Formatter.relativeAge", () => {
-    it("formats compact ages across thresholds and clamps future timestamps to now", () => {
-        const now = 1_000_000_000_000;
-        expect(Formatter.relativeAge(now + 10_000, now)).toBe("now");
-        expect(Formatter.relativeAge(now - 59_999, now)).toBe("now");
-        expect(Formatter.relativeAge(now - 60_000, now)).toBe("1m");
-        expect(Formatter.relativeAge(now - 3_599_999, now)).toBe("59m");
-        expect(Formatter.relativeAge(now - 3_600_000, now)).toBe("1h");
-        expect(Formatter.relativeAge(now - 86_400_000, now)).toBe("1d");
-        expect(Formatter.relativeAge(now - 7 * 86_400_000, now)).toBe("1w");
-        expect(Formatter.relativeAge(now - 365 * 86_400_000, now)).toBe("1y");
-    });
-});
-
-describe("Formatter invalid input", () => {
-    it("reads negative and non-finite input as zero", () => {
-        expect(Formatter.duration(-5)).toBe("0ms");
-        expect(Formatter.duration(Number.POSITIVE_INFINITY)).toBe("0ms");
-        expect(Formatter.byteSize(Number.NaN)).toBe("0B");
-        expect(Formatter.usdCost(-1)).toBe("$0.0");
-        expect(Formatter.compactTokenCount(Number.NaN)).toBe("0");
+    it.each([
+        ["duration", -5, "0ms"],
+        ["duration", Number.POSITIVE_INFINITY, "0ms"],
+        ["byteSize", Number.NaN, "0B"],
+        ["usdCost", -1, "$0.0"],
+        ["compactTokenCount", Number.NaN, "0"],
+    ] as const)("%s reads invalid input %d as zero", (method, value, expected) => {
+        expect(Formatter[method](value)).toBe(expected);
     });
 });

@@ -10,7 +10,7 @@ import type { SessionLiveActivity } from "@/stores/session";
 export const WORKING_LABEL = "Working...";
 
 /** Formats a {@link SessionLiveActivity} into its visible status label with an optional retry countdown. */
-export function formatActivityLabel(activity: SessionLiveActivity, retryRemainingSeconds = 0): string | null {
+function formatActivityLabel(activity: SessionLiveActivity, retryRemainingSeconds = 0): string | null {
     switch (activity.kind) {
         case "idle":
             return null;

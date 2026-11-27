@@ -11,8 +11,10 @@ import { IconButton } from "../IconButton";
 import { Input } from "../Input";
 import { Select } from "../Select";
 
+import { requireElement, waitForDarkTheme } from "@/storybook/dom";
+import { Button } from "@components/Button";
+
 import { Dialog, DialogActions, DialogClose, DialogDescription, DialogHeader, DialogTitle } from "./Dialog";
-import styles from "./Dialog.stories.module.css";
 
 const onSubmit = fn();
 
@@ -60,12 +62,8 @@ function DialogDemo() {
                     <Input placeholder="Optional" />
                 </Field>
                 <DialogActions>
-                    <DialogClose type="button" className={styles.secondary}>
-                        Cancel
-                    </DialogClose>
-                    <button type="submit" className={styles.primary}>
-                        Create
-                    </button>
+                    <DialogClose render={<Button type="button" variant="secondary" />}>Cancel</DialogClose>
+                    <Button type="submit">Create</Button>
                 </DialogActions>
             </Form>
         </Dialog>
@@ -112,11 +110,10 @@ export const Default: Story = {
         await userEvent.click(visibility);
 
         const listbox = await screen.findByRole("listbox", { name: "Visibility" });
-        const popup = document.querySelector<HTMLElement>("[data-slot='select-popup']");
-
-        if (popup === null) {
-            throw new Error("The select did not render a popup");
-        }
+        const popup = requireElement(
+            document.querySelector<HTMLElement>("[data-slot='select-popup']"),
+            "the select popup",
+        );
 
         await waitFor(() => expect(getComputedStyle(popup).opacity).toBe("1"));
         await userEvent.click(within(listbox).getByRole("option", { name: "Team" }));
@@ -150,7 +147,7 @@ export const Dark: Story = {
     decorators: [DarkTheme],
     render: () => <DialogDemo />,
     play: async ({ canvasElement }) => {
-        await waitFor(() => expect(getComputedStyle(document.documentElement).colorScheme).toBe("dark"));
+        await waitForDarkTheme();
 
         const { dialog } = await openDialog(canvasElement);
 

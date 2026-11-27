@@ -2,7 +2,8 @@ import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
 
 import { IconButton, Image, ImageViewer, ScrollArea, Tabular } from "@components";
-import { cn, Formatter } from "@/lib";
+import { useImageViewer } from "@/hooks";
+import { cn, Formatter, normalizeWheelDelta, prefersReducedMotion } from "@/lib";
 
 import type { AttachmentId, StagedImageAttachment } from "../../types";
 import styles from "./AttachmentStrip.module.css";
@@ -26,7 +27,7 @@ const WHEEL_LINE_PX = 16;
 export function AttachmentStrip({ items, onRemove, className }: AttachmentStripProps): ReactElement | null {
     const viewportRef = useRef<HTMLDivElement | null>(null);
     const [edges, setEdges] = useState({ left: false, right: false });
-    const [viewer, setViewer] = useState<{ readonly open: boolean; readonly id: AttachmentId } | null>(null);
+    const viewer = useImageViewer<AttachmentId>();
 
     const measureEdges = useCallback(() => {
         const element = viewportRef.current;
@@ -54,12 +55,7 @@ export function AttachmentStrip({ items, onRemove, className }: AttachmentStripP
             if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) {
                 return;
             }
-            const delta =
-                event.deltaMode === WheelEvent.DOM_DELTA_LINE
-                    ? event.deltaY * WHEEL_LINE_PX
-                    : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
-                      ? event.deltaY * element.clientWidth
-                      : event.deltaY;
+            const delta = normalizeWheelDelta(event.deltaY, event.deltaMode, element.clientWidth, WHEEL_LINE_PX);
             if (delta === 0) {
                 return;
             }
@@ -86,15 +82,15 @@ export function AttachmentStrip({ items, onRemove, className }: AttachmentStripP
         };
     }, [items.length, measureEdges]);
 
-    const selectedItem = viewer !== null ? items.find((item) => item.id === viewer.id) : undefined;
+    const selectedItem =
+        viewer.selection === undefined ? undefined : items.find((item) => item.id === viewer.selection);
 
     if (items.length === 0) {
         return null;
     }
 
     const nudge = (direction: -1 | 1): void => {
-        const reducedMotion =
-            typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        const reducedMotion = prefersReducedMotion();
         viewportRef.current?.scrollBy({
             left: direction * SCROLL_STEP_PX,
             behavior: reducedMotion ? "auto" : "smooth",
@@ -123,7 +119,7 @@ export function AttachmentStrip({ items, onRemove, className }: AttachmentStripP
                                         className={styles.imageTrigger}
                                         imgClassName={styles.thumb}
                                         onOpen={() => {
-                                            setViewer({ open: true, id: item.id });
+                                            viewer.show(item.id);
                                         }}
                                     />
                                     <div className={styles.meta}>
@@ -183,14 +179,10 @@ export function AttachmentStrip({ items, onRemove, className }: AttachmentStripP
                 ) : null}
             </div>
 
-            {viewer !== null && selectedItem !== undefined ? (
+            {viewer.selection !== undefined && selectedItem !== undefined ? (
                 <ImageViewer
                     open={viewer.open}
-                    onOpenChange={(open) => {
-                        if (!open) {
-                            setViewer((prev) => (prev === null ? null : { open: false, id: prev.id }));
-                        }
-                    }}
+                    onOpenChange={viewer.onOpenChange}
                     src={`data:${selectedItem.image.mimeType};base64,${selectedItem.image.data}`}
                     alt={selectedItem.name}
                     caption={`${selectedItem.name} · ${Formatter.byteSize(selectedItem.byteLength)}`}

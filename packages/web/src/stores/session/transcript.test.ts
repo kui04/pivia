@@ -936,35 +936,6 @@ describe("buildTranscript", () => {
         expect(turnOf(items, 1).timing).toEqual({ kind: "static", durationMs: 2_000 });
     });
 
-    it("surfaces the assistant error message when the turn ends with an error stop reason", () => {
-        const items = buildTranscript(
-            project([
-                userEntry("m1", null, "Hello", 1_000),
-                assistantEntry("m2", "m1", [], {
-                    timestamp: 1_500,
-                    stopReason: "error",
-                    errorMessage: "529 overloaded",
-                }),
-            ]),
-        );
-
-        const turn = turnOf(items, 1);
-        expect(turn.finalReply).toBeNull();
-        expect(turn.outcome).toEqual({ kind: "error", message: "Error: 529 overloaded" });
-        expect(turn.streaming).toBe(false);
-    });
-
-    it("reports a generic assistant failure when an error has no message", () => {
-        const items = buildTranscript(
-            project([
-                userEntry("m1", null, "Hello", 1_000),
-                assistantEntry("m2", "m1", [], { timestamp: 1_500, stopReason: "error" }),
-            ]),
-        );
-
-        expect(turnOf(items, 1).outcome).toEqual({ kind: "error", message: "Error: Assistant request failed" });
-    });
-
     it.each([
         ["stop", null, { kind: "completed" }],
         ["length", null, { kind: "truncated" }],
@@ -974,6 +945,7 @@ describe("buildTranscript", () => {
         ["aborted", null, { kind: "aborted", message: "Operation aborted" }],
         ["aborted", "Request was aborted", { kind: "aborted", message: "Operation aborted" }],
         ["aborted", "Stopped by the reader", { kind: "aborted", message: "Stopped by the reader" }],
+        ["error", null, { kind: "error", message: "Error: Assistant request failed" }],
         ["error", " 529 overloaded ", { kind: "error", message: "Error: 529 overloaded" }],
         ["error", "Error: Rate limit exceeded", { kind: "error", message: "Error: Rate limit exceeded" }],
         ["error", "error: lowercase provider text", { kind: "error", message: "error: lowercase provider text" }],
@@ -1349,74 +1321,26 @@ describe("buildTranscript boundary handling", () => {
 });
 
 describe("describeToolCall", () => {
-    it("classifies built-in tools with single-line summaries", () => {
-        expect(describeToolCall("bash", { command: "git status\n  --short" })).toEqual({
-            toolKind: "bash",
-            summary: "git status --short",
-        });
-        expect(describeToolCall("powershell", { command: "Get-ChildItem   -Force" })).toEqual({
-            toolKind: "powershell",
-            summary: "Get-ChildItem -Force",
-        });
-        expect(describeToolCall("read", { path: "src/main.tsx" })).toEqual({
-            toolKind: "read",
-            summary: "src/main.tsx",
-        });
-        expect(describeToolCall("write", { path: "plan.md" })).toEqual({
-            toolKind: "write",
-            summary: "plan.md",
-        });
-        expect(describeToolCall("edit", { path: "src/App.tsx" })).toEqual({
-            toolKind: "edit",
-            summary: "src/App.tsx",
-        });
-        expect(describeToolCall("grep", { pattern: "useSessionStore", path: "src" })).toEqual({
-            toolKind: "grep",
-            summary: "useSessionStore in src",
-        });
-        expect(describeToolCall("find", { pattern: "*.stories.tsx" })).toEqual({
-            toolKind: "find",
-            summary: "*.stories.tsx",
-        });
-        expect(describeToolCall("ls", {})).toEqual({ toolKind: "ls", summary: "." });
-        expect(describeToolCall("codemode", { code: "\n  // run checks\n  return 1;" })).toEqual({
-            toolKind: "codemode",
-            summary: "// run checks",
-        });
-        expect(describeToolCall("tool_search", { query: "github pull request" })).toEqual({
-            toolKind: "tool_search",
-            summary: "github pull request",
-        });
-    });
-
-    it("includes line ranges, timeouts, globs, limits and legacy file_path in summaries", () => {
-        expect(describeToolCall("read", { file_path: "src/App.tsx", offset: 10, limit: 25 })).toEqual({
-            toolKind: "read",
-            summary: "src/App.tsx:10-34",
-        });
-        expect(describeToolCall("bash", { command: "pnpm test", timeout: 30 })).toEqual({
-            toolKind: "bash",
-            summary: "pnpm test (timeout 30s)",
-        });
-        expect(describeToolCall("grep", { pattern: "foo", path: "src", glob: "*.ts", limit: 20 })).toEqual({
-            toolKind: "grep",
-            summary: "foo in src (*.ts) (limit 20)",
-        });
-        expect(describeToolCall("find", { pattern: "*.css", path: "src", limit: 50 })).toEqual({
-            toolKind: "find",
-            summary: "*.css in src (limit 50)",
-        });
-        expect(describeToolCall("ls", { path: "packages", limit: 10 })).toEqual({
-            toolKind: "ls",
-            summary: "packages (limit 10)",
-        });
-    });
-
-    it("falls back to generic with the first scalar argument", () => {
-        expect(
-            describeToolCall("mcp__github__get_issue", { nested: { ignored: true }, issue_number: 42, repo: "pivia" }),
-        ).toEqual({ toolKind: "generic", summary: "42" });
-        expect(describeToolCall("custom_ping", {})).toEqual({ toolKind: "generic", summary: "" });
+    it.each([
+        ["bash", { command: "git status\n  --short" }, "bash", "git status --short"],
+        ["powershell", { command: "Get-ChildItem   -Force" }, "powershell", "Get-ChildItem -Force"],
+        ["read", { path: "src/main.tsx" }, "read", "src/main.tsx"],
+        ["write", { path: "plan.md" }, "write", "plan.md"],
+        ["edit", { path: "src/App.tsx" }, "edit", "src/App.tsx"],
+        ["grep", { pattern: "useSessionStore", path: "src" }, "grep", "useSessionStore in src"],
+        ["find", { pattern: "*.stories.tsx" }, "find", "*.stories.tsx"],
+        ["ls", {}, "ls", "."],
+        ["codemode", { code: "\n  // run checks\n  return 1;" }, "codemode", "// run checks"],
+        ["tool_search", { query: "github pull request" }, "tool_search", "github pull request"],
+        ["read", { file_path: "src/App.tsx", offset: 10, limit: 25 }, "read", "src/App.tsx:10-34"],
+        ["bash", { command: "pnpm test", timeout: 30 }, "bash", "pnpm test (timeout 30s)"],
+        ["grep", { pattern: "foo", path: "src", glob: "*.ts", limit: 20 }, "grep", "foo in src (*.ts) (limit 20)"],
+        ["find", { pattern: "*.css", path: "src", limit: 50 }, "find", "*.css in src (limit 50)"],
+        ["ls", { path: "packages", limit: 10 }, "ls", "packages (limit 10)"],
+        ["mcp__github__get_issue", { nested: { ignored: true }, issue_number: 42, repo: "pivia" }, "generic", "42"],
+        ["custom_ping", {}, "generic", ""],
+    ] as const)("classifies %s as %s with a single-line summary", (name, args, toolKind, summary) => {
+        expect(describeToolCall(name, args)).toEqual({ toolKind, summary });
     });
 });
 

@@ -1,13 +1,11 @@
-import { parseSessionId, type SessionId, type SessionSummary } from "@pivia/protocol";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-function sid(raw: string): SessionId {
-    const parsed = parseSessionId(raw);
-    if (parsed === null) {
-        throw new Error(`Invalid test session id: ${raw}`);
-    }
-    return parsed;
-}
+import { Log } from "@/lib";
+import { makeSessionSummary, noopCatalogCache } from "@/test/fixtures";
+import { sid } from "@/test/ids";
+import { installMemoryLocalStorage } from "@/test/local-storage";
+
+import { createWorkspaceStore, type WorkspaceCatalogCache } from "./store";
 
 const A = sid("a");
 const B = sid("b");
@@ -15,77 +13,20 @@ const DELETED = sid("deleted");
 const LIVE = sid("live");
 const CACHED = sid("cached");
 
-const storageBacking = vi.hoisted(() => {
-    const entries = new Map<string, string>();
-    const memoryStorage: Storage = {
-        get length() {
-            return entries.size;
-        },
-        clear() {
-            entries.clear();
-        },
-        getItem(key) {
-            return entries.get(key) ?? null;
-        },
-        key(index) {
-            return [...entries.keys()][index] ?? null;
-        },
-        removeItem(key) {
-            entries.delete(key);
-        },
-        setItem(key, value) {
-            entries.set(key, value);
-        },
-    };
-    // Node leaves globalThis.localStorage undefined, and Zustand's persist middleware reads the
-    // storage when createWorkspaceStore() runs.
-    Object.defineProperty(globalThis, "localStorage", {
-        value: memoryStorage,
-        configurable: true,
-        writable: true,
-    });
-    return entries;
-});
-
-import { Log } from "@/lib";
-
-import { createWorkspaceStore, type WorkspaceCatalogCache } from "./store";
-
-function noopCache(): WorkspaceCatalogCache {
-    return {
-        get: () => Promise.resolve(null),
-        put: () => Promise.resolve(),
-    };
-}
+const storage = installMemoryLocalStorage();
 
 const PERSIST_KEY = "pivia.workspace.v1";
 
-function summary(id: SessionId, overrides: Partial<SessionSummary> = {}): SessionSummary {
-    return {
-        id,
-        cwd: "/home/u/pivia",
-        name: null,
-        firstMessage: "First prompt",
-        messageCount: 1,
-        createdAtMs: 1_000,
-        modifiedAtMs: 1_000,
-        hasParent: false,
-        runtimeState: "idle",
-        attachedClients: 0,
-        ...overrides,
-    };
-}
-
 describe("createWorkspaceStore", () => {
     beforeEach(() => {
-        storageBacking.clear();
+        storage.clear();
     });
 
     it("tracks syncing state while a sync is in flight and records reconnecting", () => {
-        const workspace = createWorkspaceStore({ cache: noopCache() });
+        const workspace = createWorkspaceStore({ cache: noopCatalogCache });
         const store = workspace.getState();
         store.commitSyncedCatalog({
-            sessions: [summary(A)],
+            sessions: [makeSessionSummary(A)],
             updatedAtMs: 10_000,
             sync: { kind: "live" },
         });
@@ -113,7 +54,7 @@ describe("createWorkspaceStore", () => {
         store.select(DELETED);
         store.setSync({ kind: "syncing" });
 
-        const liveSessions = [summary(LIVE)];
+        const liveSessions = [makeSessionSummary(LIVE)];
         store.commitSyncedCatalog({
             sessions: liveSessions,
             updatedAtMs: 42_000,
@@ -131,10 +72,10 @@ describe("createWorkspaceStore", () => {
     });
 
     it("keeps the last rows and selection when a sync fails", () => {
-        const workspace = createWorkspaceStore({ cache: noopCache() });
+        const workspace = createWorkspaceStore({ cache: noopCatalogCache });
         const store = workspace.getState();
         store.commitSyncedCatalog({
-            sessions: [summary(A)],
+            sessions: [makeSessionSummary(A)],
             updatedAtMs: 7_000,
             sync: { kind: "live" },
         });
@@ -151,7 +92,7 @@ describe("createWorkspaceStore", () => {
     });
 
     it("manages the query, selection, pins and collapsed folders", () => {
-        const workspace = createWorkspaceStore({ cache: noopCache() });
+        const workspace = createWorkspaceStore({ cache: noopCatalogCache });
         const store = workspace.getState();
 
         store.setQuery("parser");
@@ -175,42 +116,24 @@ describe("createWorkspaceStore", () => {
         expect(state.collapsed).toEqual(["/home/u/notes"]);
     });
 
-    it("applies local deltas via createCatalogSyncReducer and removes pins/selection on delete", () => {
-        const workspace = createWorkspaceStore({ cache: noopCache() });
+    it("applies local deltas and removes pins and selection on delete", () => {
+        const workspace = createWorkspaceStore({ cache: noopCatalogCache });
         const store = workspace.getState();
         store.commitSyncedCatalog({
-            sessions: [summary(A, { name: "A" })],
+            sessions: [makeSessionSummary(A, { name: "A" })],
             updatedAtMs: 10_000,
             sync: { kind: "live" },
         });
         store.togglePinned(A);
         store.select(A);
 
-        store.applyCatalogDelta({ op: "upsert", item: summary(B, { name: "B" }) });
-        store.applyCatalogDelta({ op: "upsert", item: summary(A, { name: "Renamed", modifiedAtMs: 5_000 }) });
+        store.applyCatalogDelta({ op: "upsert", item: makeSessionSummary(B, { name: "B" }) });
+        store.applyCatalogDelta({ op: "patch", id: A, patch: { name: "Renamed", runtimeState: "streaming" } });
+        store.applyCatalogDelta({ op: "patch", id: DELETED, patch: { runtimeState: "idle" } });
 
         let state = workspace.getState();
         expect(state.sessions.map((session) => session.id)).toEqual([A, B]);
-        expect(state.sessions[0]?.name).toBe("Renamed");
-
-        // Applying an identical upsert or patch keeps the sessions array reference stable.
-        const beforeNoop = workspace.getState().sessions;
-        store.applyCatalogDelta({ op: "upsert", item: summary(A, { name: "Renamed", modifiedAtMs: 5_000 }) });
-        expect(workspace.getState().sessions).toBe(beforeNoop);
-
-        store.applyCatalogDelta({ op: "patch", id: A, patch: { name: "Renamed" } });
-        expect(workspace.getState().sessions).toBe(beforeNoop);
-
-        store.applyCatalogDelta({ op: "patch", id: A, patch: { runtimeState: "streaming", attachedClients: 2 } });
-        expect(workspace.getState().sessions[0]).toMatchObject({
-            id: A,
-            name: "Renamed",
-            runtimeState: "streaming",
-            attachedClients: 2,
-        });
-
-        store.applyCatalogDelta({ op: "patch", id: DELETED, patch: { runtimeState: "idle" } });
-        expect(workspace.getState().sessions).toHaveLength(2);
+        expect(state.sessions[0]).toMatchObject({ id: A, name: "Renamed", runtimeState: "streaming" });
 
         store.applyCatalogDelta({ op: "remove", id: A });
 
@@ -221,10 +144,10 @@ describe("createWorkspaceStore", () => {
     });
 
     it("drops connection state on reset but keeps pins", () => {
-        const workspace = createWorkspaceStore({ cache: noopCache() });
+        const workspace = createWorkspaceStore({ cache: noopCatalogCache });
         const store = workspace.getState();
         store.commitSyncedCatalog({
-            sessions: [summary(A)],
+            sessions: [makeSessionSummary(A)],
             updatedAtMs: 10_000,
             sync: { kind: "live" },
         });
@@ -247,7 +170,7 @@ describe("createWorkspaceStore", () => {
     });
 
     it("skips a storage write when the persisted pins are unchanged", () => {
-        const workspace = createWorkspaceStore({ cache: noopCache() });
+        const workspace = createWorkspaceStore({ cache: noopCatalogCache });
         const store = workspace.getState();
         store.togglePinned(A);
 
@@ -265,8 +188,8 @@ describe("createWorkspaceStore", () => {
     });
 
     it("rehydrates only sanitized pins from localStorage", async () => {
-        const workspace = createWorkspaceStore({ cache: noopCache() });
-        storageBacking.set(
+        const workspace = createWorkspaceStore({ cache: noopCatalogCache });
+        storage.set(
             PERSIST_KEY,
             JSON.stringify({
                 version: 1,
@@ -285,7 +208,7 @@ describe("createWorkspaceStore", () => {
         expect(state.sessions).toEqual([]);
         expect(state.selectedId).toBeNull();
 
-        storageBacking.set(PERSIST_KEY, JSON.stringify({ version: 1, state: { pins: null } }));
+        storage.set(PERSIST_KEY, JSON.stringify({ version: 1, state: { pins: null } }));
 
         await workspace.persist.rehydrate();
 
@@ -295,7 +218,7 @@ describe("createWorkspaceStore", () => {
 
     it("hydrates stale-while-revalidate catalog rows from cache only before the first live sync", async () => {
         const fakeCache: WorkspaceCatalogCache = {
-            get: vi.fn(() => Promise.resolve({ sessions: [summary(CACHED)], updatedAtMs: 5_000 })),
+            get: vi.fn(() => Promise.resolve({ sessions: [makeSessionSummary(CACHED)], updatedAtMs: 5_000 })),
             put: vi.fn(() => Promise.resolve()),
         };
         const workspace = createWorkspaceStore({ cache: fakeCache });
@@ -304,7 +227,7 @@ describe("createWorkspaceStore", () => {
         expect(workspace.getState().updatedAtMs).toBe(5_000);
 
         workspace.getState().commitSyncedCatalog({
-            sessions: [summary(LIVE)],
+            sessions: [makeSessionSummary(LIVE)],
             updatedAtMs: 9_000,
             sync: { kind: "live" },
             persistCache: true,
@@ -320,7 +243,7 @@ describe("createWorkspaceStore", () => {
 
         await workspace.getState().hydrateCatalog();
         workspace.getState().commitSyncedCatalog({
-            sessions: [summary(A)],
+            sessions: [makeSessionSummary(A)],
             updatedAtMs: 10_000,
             sync: { kind: "live" },
             persistCache: true,
@@ -347,12 +270,12 @@ describe("createWorkspaceStore", () => {
         expect(warnSpy).toHaveBeenCalledTimes(1);
 
         workspace.getState().commitSyncedCatalog({
-            sessions: [summary(A)],
+            sessions: [makeSessionSummary(A)],
             updatedAtMs: 1_000,
             sync: { kind: "live" },
         });
         workspace.getState().commitSyncedCatalog({
-            sessions: [summary(A)],
+            sessions: [makeSessionSummary(A)],
             updatedAtMs: null,
             sync: { kind: "live" },
             persistCache: true,

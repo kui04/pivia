@@ -1,34 +1,18 @@
-import { parseSessionId, type SessionStateSnapshot } from "@pivia/protocol";
 import { describe, expect, it } from "vitest";
+
+import { makeSessionStateSnapshot } from "@/test/fixtures";
 
 import { toComposerRuntimePhase } from "./types";
 
-function makeState(overrides: Partial<SessionStateSnapshot> = {}): SessionStateSnapshot {
-    const sessionId = parseSessionId("session-1");
-    if (sessionId === null) {
-        throw new Error("Invalid session id");
-    }
-    return {
-        sessionId,
-        cwd: "/repo/pivia",
-        name: "Task",
-        model: { provider: "anthropic", id: "claude-sonnet-4", name: "Claude Sonnet 4" },
-        thinkingLevel: "medium",
-        isStreaming: false,
-        isCompacting: false,
-        steeringMode: "one-at-a-time",
-        followUpMode: "one-at-a-time",
-        autoCompactionEnabled: true,
-        messageCount: 2,
-        steeringMessages: [],
-        followUpMessages: [],
-        ...overrides,
-    };
+const MODEL = { provider: "anthropic", id: "claude-sonnet-4", name: "Claude Sonnet 4" } as const;
+
+function state(overrides: Partial<Parameters<typeof makeSessionStateSnapshot>[0]> = {}) {
+    return makeSessionStateSnapshot({ model: MODEL, ...overrides });
 }
 
 describe("toComposerRuntimePhase", () => {
     it("returns unavailable when disconnected or missing initial state", () => {
-        expect(toComposerRuntimePhase(false, makeState(), "Session closed.")).toEqual({
+        expect(toComposerRuntimePhase(false, state(), "Session closed.")).toEqual({
             kind: "unavailable",
             reason: "Session closed.",
         });
@@ -39,20 +23,12 @@ describe("toComposerRuntimePhase", () => {
     });
 
     it("projects connected state snapshot into ready phase", () => {
-        const state = makeState({
-            isStreaming: true,
-            isCompacting: false,
-            steeringMessages: ["steer-1"],
-            followUpMessages: ["follow-1", "follow-2"],
-        });
-        expect(toComposerRuntimePhase(true, state, "")).toEqual({
+        const ready = state({ isStreaming: true });
+        expect(toComposerRuntimePhase(true, ready, "")).toEqual({
             kind: "ready",
             isStreaming: true,
-            isCompacting: false,
-            model: state.model,
+            model: ready.model,
             thinkingLevel: "medium",
-            queuedCount: 3,
-            sessionName: "Task",
         });
     });
 });

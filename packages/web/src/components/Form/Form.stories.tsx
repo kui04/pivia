@@ -7,8 +7,8 @@ import { Fieldset } from "../Fieldset";
 import { Input } from "../Input";
 import { Select } from "../Select";
 
+import storyFrame from "@/storybook/storyFrame.module.css";
 import { Form } from "./Form";
-import styles from "./Form.stories.module.css";
 
 const onFormSubmit = fn();
 
@@ -28,7 +28,7 @@ function FormDemo() {
                     <Select options={visibilityOptions} defaultValue="private" />
                 </Field>
             </Fieldset>
-            <Button type="submit" className={styles.submit}>
+            <Button type="submit" className={storyFrame.alignStart}>
                 Save
             </Button>
         </Form>

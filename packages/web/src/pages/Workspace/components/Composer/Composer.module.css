@@ -41,7 +41,6 @@
     }
 
     .textarea {
-        box-sizing: border-box;
         display: block;
         inline-size: 100%;
         min-block-size: calc(var(--type-body-line-height) * 2 + var(--space-12));

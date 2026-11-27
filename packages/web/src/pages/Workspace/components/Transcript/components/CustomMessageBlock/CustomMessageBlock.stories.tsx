@@ -2,29 +2,13 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 
 import type { TranscriptCustomItem } from "@/stores/session";
-import storyFrame from "@/storybook/storyFrame.module.css";
 
+import { storyImageData } from "@/storybook/fixtures";
+import { TranscriptFrame } from "@/storybook/frames";
 import { CustomMessageBlock } from "./CustomMessageBlock";
 
-const SAMPLE_SVG = [
-    '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="100" viewBox="0 0 160 100">',
-    '<rect width="160" height="100" rx="8" fill="#1f1f1f"/>',
-    '<rect x="16" y="20" width="128" height="16" rx="4" fill="#6750a4"/>',
-    '<rect x="16" y="48" width="96" height="12" rx="4" fill="#3c3c3c"/>',
-    "</svg>",
-].join("");
-
-const SAMPLE_IMAGE_BASE64 = btoa(SAMPLE_SVG);
-
-const SECOND_SVG = [
-    '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="100" viewBox="0 0 160 100">',
-    '<rect width="160" height="100" rx="8" fill="#1f1f1f"/>',
-    '<rect x="16" y="20" width="128" height="16" rx="4" fill="#c72e0f"/>',
-    '<rect x="16" y="48" width="64" height="12" rx="4" fill="#3c3c3c"/>',
-    "</svg>",
-].join("");
-
-const SECOND_IMAGE_BASE64 = btoa(SECOND_SVG);
+const SAMPLE_IMAGE_BASE64 = storyImageData("#6750a4");
+const SECOND_IMAGE_BASE64 = storyImageData("#c72e0f");
 
 const taskMessageItem: TranscriptCustomItem = {
     kind: "custom",
@@ -73,13 +57,7 @@ const meta = {
         item: { control: false },
         onOpenLink: { control: false },
     },
-    decorators: [
-        (Story) => (
-            <div className={storyFrame.frame}>
-                <Story />
-            </div>
-        ),
-    ],
+    decorators: [TranscriptFrame],
 } satisfies Meta<typeof CustomMessageBlock>;
 
 export default meta;

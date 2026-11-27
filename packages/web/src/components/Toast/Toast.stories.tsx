@@ -4,6 +4,7 @@ import { expect, screen, userEvent, waitFor, within } from "storybook/test";
 
 import { DarkTheme } from "@/storybook/theme";
 
+import { requireElement, waitForDarkTheme } from "@/storybook/dom";
 import { ToastProvider } from "./Toast";
 import { createToastManager, useToast } from "./useToast";
 
@@ -107,11 +108,10 @@ export const Stacked: Story = {
         const front = visible[0] as HTMLElement;
         const behind = visible[1] as HTMLElement;
         const frontClose = within(front).getByRole("button", { name: "Dismiss toast" });
-        const behindClose = behind.querySelector<HTMLElement>("[data-slot='toast-close']");
-
-        if (behindClose === null) {
-            throw new Error("The behind toast close button is missing");
-        }
+        const behindClose = requireElement(
+            behind.querySelector<HTMLElement>("[data-slot='toast-close']"),
+            "the behind toast close button",
+        );
 
         await expect(getComputedStyle(frontClose).visibility).toBe("visible");
         await expect(getComputedStyle(behindClose).visibility).toBe("hidden");
@@ -296,11 +296,7 @@ export const BodyOnly: Story = {
         await userEvent.click(canvas.getByRole("button", { name: "Show body-only toast" }));
 
         const body = await screen.findByText("This toast has no icon and no title.");
-        const toast = body.closest<HTMLElement>("[data-slot='toast']");
-
-        if (toast === null) {
-            throw new Error("The toast root is missing");
-        }
+        const toast = requireElement(body.closest<HTMLElement>("[data-slot='toast']"), "the toast root");
 
         await expect(toast.querySelector("[data-slot='toast-icon']")).toBeNull();
         await expect(toast.querySelector("h2")).toBeNull();
@@ -391,7 +387,7 @@ export const Dark: Story = {
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
 
-        await waitFor(() => expect(getComputedStyle(document.documentElement).colorScheme).toBe("dark"));
+        await waitForDarkTheme();
         await userEvent.click(canvas.getByRole("button", { name: "Show toast" }));
 
         const toast = await screen.findByRole("dialog", { name: "Changes saved" });

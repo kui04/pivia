@@ -11,7 +11,7 @@ import {
     useMemo,
     useState,
 } from "react";
-import type { ComponentProps, MouseEvent as ReactMouseEvent, ReactNode } from "react";
+import type { ComponentProps, MouseEvent as ReactMouseEvent, ReactElement, ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import type { Components, ExtraProps, Options } from "react-markdown";
 import rehypeKatex from "rehype-katex";
@@ -20,7 +20,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 
 import { useFontRole } from "@/hooks";
-import { cn } from "@/lib";
+import { cn, prefersReducedMotion } from "@/lib";
 
 import { CodeBlock } from "../CodeBlock";
 import { Image } from "../Image";
@@ -166,15 +166,24 @@ function codeOf(children: ReactNode): Fence {
     };
 }
 
-function toText(value: ReactNode): string {
+/**
+ * Flattens rendered children to plain text.
+ *
+ * `skip` drops an element that carries no readable text, such as a task checkbox whose state is
+ * announced separately.
+ */
+function toText(value: ReactNode, skip?: (element: ReactElement) => boolean): string {
     if (typeof value === "string" || typeof value === "number") {
         return String(value);
     }
     if (Array.isArray(value)) {
-        return value.map(toText).join("");
+        return value.map((child: ReactNode) => toText(child, skip)).join("");
     }
     if (isValidElement<{ children?: ReactNode }>(value)) {
-        return toText(value.props.children);
+        if (skip !== undefined && skip(value)) {
+            return "";
+        }
+        return toText(value.props.children, skip);
     }
     return "";
 }
@@ -206,7 +215,9 @@ function ListItem({ className, children, node, ...props }: ComponentProps<"li"> 
         );
     }
 
-    const text = itemText(children).replace(/\s+/g, " ").trim();
+    const text = toText(children, (element) => element.type === TaskCheckbox)
+        .replace(/\s+/g, " ")
+        .trim();
 
     return (
         <li className={className} {...props}>
@@ -229,22 +240,6 @@ function TaskCheckbox({ checked }: ComponentProps<"input"> & ExtraProps) {
             aria-label={item ?? (checked === true ? "Completed task" : "Open task")}
         />
     );
-}
-
-function itemText(value: ReactNode): string {
-    if (typeof value === "string" || typeof value === "number") {
-        return String(value);
-    }
-    if (Array.isArray(value)) {
-        return value.map(itemText).join("");
-    }
-    if (isValidElement<{ children?: ReactNode }>(value)) {
-        if (value.type === TaskCheckbox) {
-            return "";
-        }
-        return itemText(value.props.children);
-    }
-    return "";
 }
 
 function MarkdownLink({ href, title, className, children, node, ...props }: ComponentProps<"a"> & ExtraProps) {
@@ -329,7 +324,7 @@ async function followFragment(url: string): Promise<void> {
         return;
     }
 
-    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const reduceMotion = prefersReducedMotion();
     const scroll = target.scrollIntoView({
         behavior: reduceMotion ? "auto" : "smooth",
         block: "start",

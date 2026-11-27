@@ -3,7 +3,7 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 import { expect, userEvent, waitFor, within } from "storybook/test";
 
-import { requireElement, requireViewport } from "@/storybook/dom";
+import { requireElement, requireViewport, waitForDarkTheme } from "@/storybook/dom";
 import { DarkTheme } from "@/storybook/theme";
 
 import { ScrollArea } from "./ScrollArea";
@@ -288,7 +288,7 @@ export const Dark: Story = {
         </Demo>
     ),
     play: async ({ canvasElement }) => {
-        await waitFor(() => expect(getComputedStyle(document.documentElement).colorScheme).toBe("dark"));
+        await waitForDarkTheme();
         await waitFor(() => expect(queryScrollbar(canvasElement, "horizontal")).not.toBeNull());
 
         const viewport = requireViewport(canvasElement, "the viewport");

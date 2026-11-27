@@ -29,8 +29,6 @@ export type CodeBlockProps = {
     lineNumbers?: boolean;
     /** Number of the first line. Only used together with `lineNumbers`. */
     startLine?: number;
-    /** Turns a line number into its gutter label. Defaults to the decimal number. */
-    formatLineNumber?: (line: number) => string;
     /** Hide the copy button. */
     copyable?: boolean;
     /** Called after the clipboard write succeeds. */
@@ -49,7 +47,6 @@ export function CodeBlock({
     defaultWrap = false,
     lineNumbers = false,
     startLine = 1,
-    formatLineNumber,
     copyable = true,
     onCopy,
     scrollClassName,
@@ -72,16 +69,10 @@ export function CodeBlock({
                 : sourceLines.map((line) => ({ marker: "", content: line, variant: "default" as const })),
         [isDiff, sourceLines],
     );
-    const lineLabels = useMemo(() => {
-        if (!lineNumbers) {
-            return [];
-        }
-
-        return sourceLines.map((_, index) => {
-            const line = startLine + index;
-            return formatLineNumber === undefined ? `${line}` : formatLineNumber(line);
-        });
-    }, [formatLineNumber, lineNumbers, sourceLines, startLine]);
+    const lineLabels = useMemo(
+        () => (lineNumbers ? sourceLines.map((_, index) => `${startLine + index}`) : []),
+        [lineNumbers, sourceLines, startLine],
+    );
     // The block is monospace, so one character is exactly one ch and a
     // right-aligned gutter of N ch fits any label of N characters.
     const gutterChars = lineLabels.reduce((max, label) => Math.max(max, label.length), 0);

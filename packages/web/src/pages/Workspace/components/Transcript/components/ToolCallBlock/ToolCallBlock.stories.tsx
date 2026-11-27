@@ -1,13 +1,13 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, fn, spyOn, userEvent, waitFor, within } from "storybook/test";
+import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 
 import { cn } from "@/lib";
 import type { TranscriptToolCallStep } from "@/stores/session";
-import { requireElement } from "@/storybook/dom";
+import { mockClipboardSuccess, requireElement } from "@/storybook/dom";
 import storyFrame from "@/storybook/storyFrame.module.css";
 
+import { TranscriptFrame } from "@/storybook/frames";
 import { ToolCallBlock } from "./ToolCallBlock";
-import styles from "./ToolCallBlock.stories.module.css";
 
 const longBashOutput = Array.from(
     { length: 24 },
@@ -116,13 +116,7 @@ const meta = {
         onOpenChange: { control: false },
         onCopy: { control: false },
     },
-    decorators: [
-        (Story) => (
-            <div className={storyFrame.frame}>
-                <Story />
-            </div>
-        ),
-    ],
+    decorators: [TranscriptFrame],
 } satisfies Meta<typeof ToolCallBlock>;
 
 export default meta;
@@ -170,16 +164,16 @@ export const BashExpanded: Story = {
         await expect(wrapButton).toHaveAttribute("aria-pressed", "true");
         await expect(pre).toHaveAttribute("data-wrapped", "true");
 
-        const writeText = spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+        const clipboard = mockClipboardSuccess();
         try {
             await userEvent.click(canvas.getByRole("button", { name: "Copy output" }));
             await waitFor(async () => {
                 await expect(canvas.getByRole("status")).toHaveTextContent("Copied");
             });
-            await expect(writeText).toHaveBeenCalledWith(longBashOutput);
+            await expect(clipboard.writeText).toHaveBeenCalledWith(longBashOutput);
             await expect(args.onCopy).toHaveBeenCalledWith(longBashOutput);
         } finally {
-            writeText.mockRestore();
+            clipboard.restore();
         }
     },
 };
@@ -249,7 +243,7 @@ export const EditDiff: Story = {
         await expect(canvas.getByText("const count = 1;")).toBeVisible();
         await expect(canvas.getByText("const count = 2;")).toBeVisible();
 
-        const writeText = spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+        const clipboard = mockClipboardSuccess();
         try {
             await userEvent.click(canvas.getByRole("button", { name: "Copy code" }));
             await waitFor(async () => {
@@ -257,7 +251,7 @@ export const EditDiff: Story = {
             });
             await expect(args.onCopy).toHaveBeenCalled();
         } finally {
-            writeText.mockRestore();
+            clipboard.restore();
         }
     },
 };
@@ -408,7 +402,7 @@ export const CodemodeScriptWithNestedCalls: Story = {
 
 export const BuiltinAndGenericIcons: Story = {
     render: () => (
-        <div className={cn(storyFrame.frame, styles.stack)}>
+        <div className={cn(storyFrame.frame, storyFrame.stack)}>
             {builtinAndGenericSteps.map((step) => (
                 <ToolCallBlock key={step.id} step={step} />
             ))}

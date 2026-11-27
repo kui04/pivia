@@ -169,6 +169,8 @@ export function ToolCallBlock({
         open: controlledOpen,
         onOpenChange,
     });
+    // The preview CodeBlock takes defaultWrapped only as its starting value; its own toolbar owns
+    // later toggles. This state wraps the output card instead.
     const [wrapped, setWrapped] = useState(defaultWrapped);
     const { status: copyStatus, copy } = useCopyFeedback(onCopy);
 

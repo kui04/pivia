@@ -2,26 +2,14 @@ import { type SessionId } from "@pivia/protocol";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, within } from "storybook/test";
 
-import { sid } from "@/storybook/ids";
+import { makeStorySessionRow, STORY_NOW } from "@/storybook/fixtures";
 import type { FolderSection as FolderSectionModel, SessionRow as SessionRowModel } from "@/stores/workspace";
 
 import { FolderSection } from "./FolderSection";
 import styles from "./FolderSection.stories.module.css";
 
-const NOW = Date.parse("2026-01-03T12:00:00.000Z");
-
 function row(id: string, title: string): SessionRowModel {
-    return {
-        id: sid(id),
-        title,
-        named: true,
-        cwd: "/home/u/pivia",
-        modifiedAtMs: NOW - 30 * 60 * 1000,
-        runtimeState: "idle",
-        attachedClients: 0,
-        pinned: false,
-        selected: false,
-    };
+    return makeStorySessionRow(id, title, { modifiedAtMs: STORY_NOW - 30 * 60 * 1000 });
 }
 
 const folder: FolderSectionModel = {
@@ -36,7 +24,7 @@ const meta = {
     component: FolderSection,
     args: {
         folder,
-        nowMs: NOW,
+        nowMs: STORY_NOW,
         closingIds: new Set<SessionId>(),
         onToggle: fn(),
         onSelect: fn(),

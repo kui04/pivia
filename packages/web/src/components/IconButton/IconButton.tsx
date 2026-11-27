@@ -4,16 +4,18 @@ import type { ComponentProps, ReactNode } from "react";
 
 import { cn } from "@/lib";
 
+import radiusStyles from "@/styles/radius.module.css";
+
 import { Icon, type IconSize } from "../Icon";
 import styles from "./IconButton.module.css";
 
 const radiusClasses = {
-    none: styles.radiusNone,
-    "extra-small": styles.radiusExtraSmall,
-    small: styles.radiusSmall,
-    medium: styles.radiusMedium,
-    large: styles.radiusLarge,
-    full: styles.radiusFull,
+    none: radiusStyles.radiusNone,
+    "extra-small": radiusStyles.radiusExtraSmall,
+    small: radiusStyles.radiusSmall,
+    medium: radiusStyles.radiusMedium,
+    large: radiusStyles.radiusLarge,
+    full: radiusStyles.radiusFull,
 } as const;
 
 export type IconButtonRadius = keyof typeof radiusClasses;

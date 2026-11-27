@@ -1,14 +1,11 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { Bookmark, Copy, Plus, Search } from "lucide-react";
-import type { ReactNode } from "react";
 import { useState } from "react";
 import { expect, screen, userEvent, waitFor, within } from "storybook/test";
 
-import { IconButton } from "./IconButton";
+import { StoryRow } from "@/storybook/frames";
 
-function Row({ children }: { children: ReactNode }) {
-    return <div style={{ display: "flex", alignItems: "center", gap: "var(--space-16)" }}>{children}</div>;
-}
+import { IconButton } from "./IconButton";
 
 function ToggleIconButton() {
     const [pressed, setPressed] = useState(false);
@@ -84,7 +81,7 @@ export const Disabled: Story = {
 
 export const Sizes: Story = {
     render: () => (
-        <Row>
+        <StoryRow>
             <IconButton size="sm" label="Small">
                 <Plus />
             </IconButton>
@@ -100,13 +97,13 @@ export const Sizes: Story = {
             <IconButton size="xl" label="Extra large">
                 <Plus />
             </IconButton>
-        </Row>
+        </StoryRow>
     ),
 };
 
 export const Radii: Story = {
     render: () => (
-        <Row>
+        <StoryRow>
             <IconButton radius="none" label="No radius">
                 <Search />
             </IconButton>
@@ -122,6 +119,6 @@ export const Radii: Story = {
             <IconButton radius="full" label="Full radius">
                 <Search />
             </IconButton>
-        </Row>
+        </StoryRow>
     ),
 };

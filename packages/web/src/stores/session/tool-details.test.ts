@@ -14,7 +14,23 @@ import {
     parseShellToolDetails,
     parseTruncationResult,
     readToolFilePath,
+    type BuildToolPresentationInput,
+    type TranscriptToolPresentation,
 } from "./tool-details";
+
+/** Builds a presentation with the common test defaults; `overrides` sets the case's own fields. */
+function present(overrides: Partial<BuildToolPresentationInput> = {}): TranscriptToolPresentation {
+    return buildToolPresentation({
+        toolKind: "generic",
+        args: {},
+        argumentsError: null,
+        status: "done",
+        output: "",
+        hasImages: false,
+        details: undefined,
+        ...overrides,
+    });
+}
 
 function makeTruncation(overrides: Partial<NonNullable<ReturnType<typeof parseTruncationResult>>> = {}) {
     return {
@@ -42,40 +58,38 @@ describe("readToolFilePath", () => {
 });
 
 describe("formatReadLineRangeSummary", () => {
-    it("formats positive integer offset and limit into colon-prefixed line ranges", () => {
-        expect(formatReadLineRangeSummary(undefined, undefined)).toBe("");
-        expect(formatReadLineRangeSummary(null, null)).toBe("");
-        expect(formatReadLineRangeSummary(10, undefined)).toBe(":10");
-        expect(formatReadLineRangeSummary(undefined, 20)).toBe(":1-20");
-        expect(formatReadLineRangeSummary(10, 50)).toBe(":10-59");
-        expect(formatReadLineRangeSummary("10", "5")).toBe(":10-14");
-    });
-
-    it("ignores non-positive, fractional, non-finite or malformed range inputs", () => {
-        expect(formatReadLineRangeSummary(Number.NaN, 10)).toBe("");
-        expect(formatReadLineRangeSummary(0, 10)).toBe("");
-        expect(formatReadLineRangeSummary(1, -1)).toBe("");
-        expect(formatReadLineRangeSummary(1.5, 10)).toBe("");
-        expect(formatReadLineRangeSummary(10, "abc")).toBe("");
-        expect(formatReadLineRangeSummary({}, [])).toBe("");
+    it.each([
+        [undefined, undefined, ""],
+        [null, null, ""],
+        [10, undefined, ":10"],
+        [undefined, 20, ":1-20"],
+        [10, 50, ":10-59"],
+        ["10", "5", ":10-14"],
+        [Number.NaN, 10, ""],
+        [0, 10, ""],
+        [1, -1, ""],
+        [1.5, 10, ""],
+        [10, "abc", ""],
+        [{}, [], ""],
+    ] as const)("formats offset %s and limit %s as %s", (offset, limit, expected) => {
+        expect(formatReadLineRangeSummary(offset, limit)).toBe(expected);
     });
 });
 
 describe("inferLanguageFromPath", () => {
-    it("resolves Shiki-supported language identifiers from file paths", () => {
-        expect(inferLanguageFromPath("src/App.tsx")).toBe("tsx");
-        expect(inferLanguageFromPath("packages/server/src/index.ts")).toBe("typescript");
-        expect(inferLanguageFromPath("script.mjs")).toBe("javascript");
-        expect(inferLanguageFromPath("flake.nix")).toBe("nix");
-        expect(inferLanguageFromPath("Makefile")).toBe("make");
-        expect(inferLanguageFromPath("Dockerfile")).toBe("docker");
-        expect(inferLanguageFromPath("README.md")).toBe("markdown");
-    });
-
-    it("returns undefined for extensionless unknown files or binary images", () => {
-        expect(inferLanguageFromPath("LICENSE")).toBeUndefined();
-        expect(inferLanguageFromPath("assets/logo.png")).toBeUndefined();
-        expect(inferLanguageFromPath("")).toBeUndefined();
+    it.each([
+        ["src/App.tsx", "tsx"],
+        ["packages/server/src/index.ts", "typescript"],
+        ["script.mjs", "javascript"],
+        ["flake.nix", "nix"],
+        ["Makefile", "make"],
+        ["Dockerfile", "docker"],
+        ["README.md", "markdown"],
+        ["LICENSE", undefined],
+        ["assets/logo.png", undefined],
+        ["", undefined],
+    ] as const)("resolves %s to %s", (path, expected) => {
+        expect(inferLanguageFromPath(path)).toBe(expected);
     });
 });
 
@@ -128,13 +142,11 @@ describe("boundary parsers for SDK tool details", () => {
 
 describe("buildToolPresentation", () => {
     it("prefers unified patch over display diff for succeeded edit calls and suppresses it on error", () => {
-        const ok = buildToolPresentation({
+        const ok = present({
             toolKind: "edit",
             args: { path: "src/App.tsx" },
-            argumentsError: null,
             status: "done",
             output: "Successfully replaced 1 block(s) in src/App.tsx.",
-            hasImages: false,
             details: {
                 diff: "-1 old\n+1 new",
                 patch: "--- a/src/App.tsx\n+++ b/src/App.tsx\n@@ -1 +1 @@\n-old\n+new",
@@ -146,13 +158,11 @@ describe("buildToolPresentation", () => {
         });
         expect(ok.warnings).toEqual([]);
 
-        const legacy = buildToolPresentation({
+        const legacy = present({
             toolKind: "edit",
             args: { path: "src/App.tsx" },
-            argumentsError: null,
             status: "done",
             output: "Successfully replaced 1 block(s) in src/App.tsx.",
-            hasImages: false,
             details: { diff: "-old\n+new" },
         });
         expect(legacy.preview).toEqual({
@@ -160,27 +170,22 @@ describe("buildToolPresentation", () => {
             diff: "-old\n+new",
         });
 
-        const err = buildToolPresentation({
+        const err = present({
             toolKind: "edit",
             args: { path: "src/App.tsx" },
-            argumentsError: null,
             status: "error",
             output: "Target text not found",
-            hasImages: false,
             details: { patch: "-old\n+new" },
         });
         expect(err.preview).toEqual({ kind: "none" });
     });
 
     it("produces a syntax-highlighted code preview for succeeded write calls and falls back to output on error", () => {
-        const result = buildToolPresentation({
+        const result = present({
             toolKind: "write",
             args: { path: "src/helper.ts", content: "export const ok = true;\n" },
-            argumentsError: null,
             status: "done",
             output: "Successfully wrote to src/helper.ts",
-            hasImages: false,
-            details: undefined,
         });
         expect(result.preview).toEqual({
             kind: "code",
@@ -189,52 +194,42 @@ describe("buildToolPresentation", () => {
             startLine: 1,
         });
 
-        const failedWrite = buildToolPresentation({
+        const failedWrite = present({
             toolKind: "write",
             args: { path: "/root/locked.ts", content: "export const ok = true;\n" },
-            argumentsError: null,
             status: "error",
             output: "EACCES: permission denied",
-            hasImages: false,
-            details: undefined,
         });
         expect(failedWrite.preview).toEqual({ kind: "none" });
     });
 
     it("returns none preview for empty write content or argument parse errors", () => {
         expect(
-            buildToolPresentation({
+            present({
                 toolKind: "write",
                 args: { path: "empty.txt", content: "" },
-                argumentsError: null,
                 status: "done",
                 output: "Successfully wrote to empty.txt",
-                hasImages: false,
-                details: undefined,
             }).preview,
         ).toEqual({ kind: "none" });
 
         expect(
-            buildToolPresentation({
+            present({
                 toolKind: "write",
                 args: { path: "broken.ts", content: "const x = 1;" },
                 argumentsError: "Unexpected EOF",
                 status: "error",
                 output: "",
-                hasImages: false,
-                details: undefined,
             }).preview,
         ).toEqual({ kind: "none" });
     });
 
     it("strips read continuation footers from code preview and keeps accurate startLine and warnings", () => {
-        const truncated = buildToolPresentation({
+        const truncated = present({
             toolKind: "read",
             args: { path: "src/App.tsx", offset: 15 },
-            argumentsError: null,
             status: "done",
             output: "const a = 1;\nconst b = 2;\n\n[Showing lines 15-16 of 3000. Use offset=17 to continue.]",
-            hasImages: false,
             details: {
                 truncation: makeTruncation({
                     truncatedBy: "lines",
@@ -257,14 +252,11 @@ describe("buildToolPresentation", () => {
             },
         ]);
 
-        const limited = buildToolPresentation({
+        const limited = present({
             toolKind: "read",
             args: { path: "src/App.tsx", offset: 1, limit: 2 },
-            argumentsError: null,
             status: "done",
             output: "const a = 1;\nconst b = 2;\n\n[40 more lines in file. Use offset=3 to continue.]",
-            hasImages: false,
-            details: undefined,
         });
         expect(limited.preview).toEqual({
             kind: "code",
@@ -281,13 +273,11 @@ describe("buildToolPresentation", () => {
     });
 
     it("skips code preview on read calls with firstLineExceedsLimit, images or errors", () => {
-        const firstLineOver = buildToolPresentation({
+        const firstLineOver = present({
             toolKind: "read",
             args: { path: "minified.js" },
-            argumentsError: null,
             status: "done",
             output: "[Line 1 is 80.0KB, exceeds 50.0KB limit. Use bash: ...]",
-            hasImages: false,
             details: {
                 truncation: makeTruncation({ firstLineExceedsLimit: true, truncatedBy: "bytes" }),
             },
@@ -296,38 +286,31 @@ describe("buildToolPresentation", () => {
         expect(firstLineOver.warnings).toEqual([{ kind: "notice", message: "First line exceeds 50.0KB limit" }]);
 
         expect(
-            buildToolPresentation({
+            present({
                 toolKind: "read",
                 args: { path: "diagram.png" },
-                argumentsError: null,
                 status: "done",
                 output: "Read image file [image/png]",
                 hasImages: true,
-                details: undefined,
             }).preview,
         ).toEqual({ kind: "none" });
 
         expect(
-            buildToolPresentation({
+            present({
                 toolKind: "read",
                 args: { path: "missing.ts" },
-                argumentsError: null,
                 status: "error",
                 output: "ENOENT",
-                hasImages: false,
-                details: undefined,
             }).preview,
         ).toEqual({ kind: "none" });
     });
 
     it("extracts truncation and fullOutput warnings for bash, grep, find, ls and generic tools", () => {
-        const bash = buildToolPresentation({
+        const bash = present({
             toolKind: "bash",
             args: { command: "cat huge.log" },
-            argumentsError: null,
             status: "done",
             output: "tail...",
-            hasImages: false,
             details: {
                 truncation: makeTruncation({ truncatedBy: "bytes", outputLines: 120, maxBytes: 50 * 1024 }),
                 fullOutputPath: "/tmp/pi-bash-123.log",
@@ -338,13 +321,11 @@ describe("buildToolPresentation", () => {
             { kind: "notice", message: "Truncated: 120 lines shown (50.0KB limit)" },
         ]);
 
-        const grep = buildToolPresentation({
+        const grep = present({
             toolKind: "grep",
             args: { pattern: "foo" },
-            argumentsError: null,
             status: "done",
             output: "src/a.ts:1:foo",
-            hasImages: false,
             details: {
                 matchLimitReached: 100,
                 linesTruncated: true,
@@ -355,35 +336,29 @@ describe("buildToolPresentation", () => {
             { kind: "notice", message: "Truncated: 100 matches limit, 50.0KB limit, some lines truncated" },
         ]);
 
-        const find = buildToolPresentation({
+        const find = present({
             toolKind: "find",
             args: { pattern: "*.ts" },
-            argumentsError: null,
             status: "done",
             output: "a.ts",
-            hasImages: false,
             details: { resultLimitReached: 1000 },
         });
         expect(find.warnings).toEqual([{ kind: "notice", message: "Truncated: 1000 results limit" }]);
 
-        const ls = buildToolPresentation({
+        const ls = present({
             toolKind: "ls",
             args: {},
-            argumentsError: null,
             status: "done",
             output: "a.ts",
-            hasImages: false,
             details: { entryLimitReached: 500 },
         });
         expect(ls.warnings).toEqual([{ kind: "notice", message: "Truncated: 500 entries limit" }]);
 
-        const generic = buildToolPresentation({
+        const generic = present({
             toolKind: "generic",
             args: {},
-            argumentsError: null,
             status: "done",
             output: "partial",
-            hasImages: false,
             details: { fullOutputPath: "/tmp/mcp-out.txt" },
         });
         expect(generic.warnings).toEqual([{ kind: "fullOutput", path: "/tmp/mcp-out.txt" }]);
@@ -474,13 +449,11 @@ describe("buildToolPresentation", () => {
     });
 
     it("builds javascript script preview, strips header, and summarizes nested calls without duplication", () => {
-        const cm = buildToolPresentation({
+        const cm = present({
             toolKind: "codemode",
             args: { code: "const files = await tools.find({ pattern: '*.ts' });\nreturn files;\n" },
-            argumentsError: null,
             status: "done",
             output: "Script completed\nWall time 0.12 seconds\nOutput:\nsrc/a.ts\n",
-            hasImages: false,
             details: {
                 calls: [
                     { id: "cm/1", name: "find", args: '{"pattern":"*.ts"}', status: "ok", durationMs: 14, cost: 0.002 },
@@ -525,14 +498,11 @@ describe("buildToolPresentation", () => {
             totalCost: 0.005,
         });
 
-        const fallbackTool = buildToolPresentation({
+        const fallbackTool = present({
             toolKind: "generic",
             args: {},
-            argumentsError: null,
             status: "done",
             output: "ok",
-            hasImages: false,
-            details: undefined,
             nestedCalls: {
                 calls: [
                     {

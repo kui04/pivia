@@ -6,6 +6,7 @@ import type { SessionRpcResponseMessage } from "@/lib/transport";
 import { sid } from "@/storybook/ids";
 import { DarkTheme } from "@/storybook/theme";
 
+import { requireElement } from "@/storybook/dom";
 import { Composer } from "./Composer";
 import styles from "./Composer.stories.module.css";
 
@@ -106,10 +107,7 @@ export const Default: Story = {
         const modelButton = canvas.getByRole("button", { name: /^Model:/ });
         await userEvent.click(modelButton);
         const search = await screen.findByRole("combobox", { name: "Search models" });
-        const modelPopup = search.closest('[data-slot="popover"]');
-        if (modelPopup === null) {
-            throw new Error("Missing model popover popup");
-        }
+        const modelPopup = requireElement(search.closest('[data-slot="popover"]'), "modelPopup");
         const modelOption = await screen.findByRole("option", { name: "Claude Sonnet 4" });
         const modelViewport = modelOption.closest('[data-slot="scroll-area-viewport"]');
         if (!(modelViewport instanceof HTMLElement)) {
@@ -132,10 +130,7 @@ export const Default: Story = {
         const thinkingButton = canvas.getByRole("button", { name: /^Thinking level:/ });
         await userEvent.click(thinkingButton);
         const highOption = await screen.findByRole("option", { name: "high" });
-        const thinkingPopup = highOption.closest('[data-slot="popover"]');
-        if (thinkingPopup === null) {
-            throw new Error("Missing thinking popover popup");
-        }
+        const thinkingPopup = requireElement(highOption.closest('[data-slot="popover"]'), "thinkingPopup");
         await waitFor(() =>
             expect(thinkingPopup.getBoundingClientRect().bottom).toBeLessThanOrEqual(
                 thinkingButton.getBoundingClientRect().top,
@@ -235,12 +230,5 @@ export const Unavailable: Story = {
 
 export const Dark: Story = {
     ...Default,
-    decorators: [
-        DarkTheme,
-        (Story) => (
-            <div className={styles.frame}>
-                <Story />
-            </div>
-        ),
-    ],
+    decorators: [DarkTheme],
 };

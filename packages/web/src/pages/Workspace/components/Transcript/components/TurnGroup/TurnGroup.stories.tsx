@@ -3,8 +3,8 @@ import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 
 import type { TranscriptTurnItem } from "@/stores/session";
 import { requireElement, requireViewport } from "@/storybook/dom";
-import storyFrame from "@/storybook/storyFrame.module.css";
 
+import { TranscriptFrame } from "@/storybook/frames";
 import { TurnGroup } from "./TurnGroup";
 
 const completedTurn: TranscriptTurnItem = {
@@ -262,13 +262,7 @@ const meta = {
         onOpenChange: { control: false },
         onOpenLink: { control: false },
     },
-    decorators: [
-        (Story) => (
-            <div className={storyFrame.frame}>
-                <Story />
-            </div>
-        ),
-    ],
+    decorators: [TranscriptFrame],
 } satisfies Meta<typeof TurnGroup>;
 
 export default meta;

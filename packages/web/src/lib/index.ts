@@ -25,3 +25,5 @@ export {
 export { Fuzzy, type FuzzyMatch } from "./fuzzy";
 export { isImeComposition } from "./ime";
 export { createLog, Log, type LogLevel, type LogOptions } from "./log";
+export { prefersReducedMotion } from "./motion";
+export { normalizeWheelDelta } from "./wheel";

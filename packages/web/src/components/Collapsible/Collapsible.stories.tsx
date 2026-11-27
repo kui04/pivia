@@ -1,6 +1,8 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 
+import { Button } from "@components/Button";
+
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "./Collapsible";
 import styles from "./Collapsible.stories.module.css";
 
@@ -11,7 +13,7 @@ const meta = {
         onOpenChange: fn(),
         children: (
             <>
-                <CollapsibleTrigger className={styles.trigger}>Details</CollapsibleTrigger>
+                <CollapsibleTrigger render={<Button type="button" variant="secondary" />}>Details</CollapsibleTrigger>
                 <CollapsiblePanel>
                     <p className={styles.body}>Collapsible content mounts on open and unmounts on close.</p>
                 </CollapsiblePanel>

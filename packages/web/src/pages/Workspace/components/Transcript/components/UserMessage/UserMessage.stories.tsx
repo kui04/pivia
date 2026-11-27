@@ -2,19 +2,13 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, userEvent, waitFor, within } from "storybook/test";
 
 import type { TranscriptUserItem } from "@/stores/session";
-import storyFrame from "@/storybook/storyFrame.module.css";
 
+import { requireElement } from "@/storybook/dom";
+import { storyImageData } from "@/storybook/fixtures";
+import { TranscriptFrame } from "@/storybook/frames";
 import { UserMessage } from "./UserMessage";
 
-const SAMPLE_SVG = [
-    '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="100" viewBox="0 0 160 100">',
-    '<rect width="160" height="100" rx="8" fill="#1f1f1f"/>',
-    '<rect x="16" y="20" width="128" height="16" rx="4" fill="#0078d4"/>',
-    '<rect x="16" y="48" width="96" height="12" rx="4" fill="#3c3c3c"/>',
-    "</svg>",
-].join("");
-
-const SAMPLE_IMAGE_BASE64 = btoa(SAMPLE_SVG);
+const SAMPLE_IMAGE_BASE64 = storyImageData("#0078d4");
 
 const shortPromptItem: TranscriptUserItem = {
     kind: "user",
@@ -51,13 +45,7 @@ const meta = {
     argTypes: {
         item: { control: false },
     },
-    decorators: [
-        (Story) => (
-            <div className={storyFrame.frame}>
-                <Story />
-            </div>
-        ),
-    ],
+    decorators: [TranscriptFrame],
 } satisfies Meta<typeof UserMessage>;
 
 export default meta;
@@ -70,10 +58,7 @@ export const ShortPrompt: Story = {
         const bubble = canvas.getByText("Ship the transcript view.");
         await expect(bubble).toBeVisible();
 
-        const root = bubble.parentElement;
-        if (root === null) {
-            throw new Error("The story did not render the user message container");
-        }
+        const root = requireElement(bubble.parentElement, "root");
         const rootRect = root.getBoundingClientRect();
         const bubbleRect = bubble.getBoundingClientRect();
         // A right-aligned prompt sits closer to the end edge than to the start edge.

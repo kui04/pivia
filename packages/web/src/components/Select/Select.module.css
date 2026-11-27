@@ -31,7 +31,6 @@
  *               └─ .indicator                             Base UI Select.ItemIndicator, inside the slot
  */
 .trigger {
-    box-sizing: border-box;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -132,7 +131,6 @@
     .popup {
         --select-list-max-height: 18rem;
 
-        box-sizing: border-box;
         min-width: var(--anchor-width);
         max-width: var(--available-width);
         padding: var(--space-4);

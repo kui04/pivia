@@ -1,11 +1,13 @@
 import type { SessionId } from "@pivia/protocol";
-import { Copy, EllipsisVertical, Pin, PinOff, X } from "lucide-react";
+import { EllipsisVertical, Pin, PinOff } from "lucide-react";
 import { memo, useEffect, useRef, useState, type PointerEvent, type ReactElement } from "react";
 
 import { IconButton, Menu, MenuItem } from "@components";
 import { useMediaQuery } from "@/hooks";
 import { Formatter } from "@/lib";
 import { sessionRowStatus, type SessionRow as SessionRowModel } from "@/stores/workspace";
+
+import { SessionCommonMenuItems } from "../SessionCommonMenuItems";
 
 import styles from "./SessionRow.module.css";
 
@@ -185,23 +187,12 @@ function SessionRowInner({
                             {session.pinned ? "Unpin session" : "Pin session"}
                         </MenuItem>
                     ) : null}
-                    <MenuItem
-                        icon={<Copy />}
-                        onClick={() => {
-                            onCopySessionId(session.id);
-                        }}
-                    >
-                        Copy session ID
-                    </MenuItem>
-                    <MenuItem
-                        icon={<X />}
-                        disabled={closeDisabled}
-                        onClick={() => {
-                            onCloseSession(session.id);
-                        }}
-                    >
-                        Close session
-                    </MenuItem>
+                    <SessionCommonMenuItems
+                        sessionId={session.id}
+                        closeDisabled={closeDisabled}
+                        onCopySessionId={onCopySessionId}
+                        onCloseSession={onCloseSession}
+                    />
                 </Menu>
             </span>
         </li>

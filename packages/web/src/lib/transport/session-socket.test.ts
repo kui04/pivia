@@ -1,121 +1,39 @@
 import {
-    parseEntriesVersion,
-    parseSessionId,
-    parseSyncEpoch,
-    parseSyncSeq,
     SESSION_CLOSE_CODE,
-    type EntriesVersion,
-    type SessionId,
     type SessionRpcServerMessage,
     type SessionSyncFrame,
     type SessionWsServerMessage,
-    type SyncEpoch,
-    type SyncSeq,
 } from "@pivia/protocol";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-function sid(raw: string): SessionId {
-    const parsed = parseSessionId(raw);
-    if (parsed === null) {
-        throw new Error(`Invalid test session id: ${raw}`);
-    }
-    return parsed;
-}
-
-function ev(raw: string): EntriesVersion {
-    const parsed = parseEntriesVersion(raw);
-    if (parsed === null) {
-        throw new Error(`Invalid test entries version: ${raw}`);
-    }
-    return parsed;
-}
-
-function rt(raw: string): SyncEpoch<"session"> {
-    const parsed = parseSyncEpoch<"session">(raw);
-    if (parsed === null) {
-        throw new Error(`Invalid test runtime id: ${raw}`);
-    }
-    return parsed;
-}
-
-function seq(raw: number): SyncSeq<"session"> {
-    const parsed = parseSyncSeq<"session">(raw);
-    if (parsed === null) {
-        throw new Error(`Invalid test session seq: ${raw}`);
-    }
-    return parsed;
-}
-
 const SESSION_1 = sid("session-1");
-const RUNTIME_1 = rt("runtime-1");
+const RUNTIME_1 = sessionEpoch("runtime-1");
 const V152 = ev("3:1.5.2");
 
+import { FakeWebSocket } from "@/test/fake-socket";
+import { ev, sessionEpoch, sessionSeq, sid } from "@/test/ids";
+
 import { buildSessionSocketUrl, SessionCommandError, SessionSocket, SessionSocketClosedError } from "./session-socket";
-import type { WebSocketLike } from "./websocket";
-
-class FakeSocket implements WebSocketLike {
-    static instances: FakeSocket[] = [];
-
-    readonly url: string;
-    readonly sent: string[] = [];
-    readonly closeCalls: { code?: number; reason?: string }[] = [];
-    readyState = 0;
-    onopen: (() => void) | null = null;
-    onmessage: ((event: MessageEvent) => void) | null = null;
-    onclose: ((event: CloseEvent) => void) | null = null;
-    onerror: (() => void) | null = null;
-
-    constructor(url: string) {
-        this.url = url;
-        FakeSocket.instances.push(this);
-    }
-
-    send(data: string): void {
-        this.sent.push(data);
-    }
-
-    close(code?: number, reason?: string): void {
-        this.closeCalls.push({
-            ...(code === undefined ? {} : { code }),
-            ...(reason === undefined ? {} : { reason }),
-        });
-        this.readyState = 3;
-    }
-
-    open(): void {
-        this.readyState = 1;
-        this.onopen?.();
-    }
-
-    receive(message: SessionWsServerMessage): void {
-        this.onmessage?.({ data: JSON.stringify(message) } as MessageEvent);
-    }
-
-    serverClose(code: number, reason = ""): void {
-        this.readyState = 3;
-        this.onclose?.({ code, reason, wasClean: code === 1000 } as CloseEvent);
-    }
-}
 
 function openSocket(options: Partial<ConstructorParameters<typeof SessionSocket>[0]> = {}): {
     socket: SessionSocket;
-    instance: FakeSocket;
+    instance: FakeWebSocket;
 } {
     const socket = new SessionSocket({
         sessionId: SESSION_1,
         url: "ws://example.test/ws/sessions/session-1",
-        WebSocket: FakeSocket,
+        WebSocket: FakeWebSocket,
         ...options,
     });
     socket.connect();
-    const instance = FakeSocket.instances.at(-1);
+    const instance = FakeWebSocket.instances.at(-1);
     if (instance === undefined) {
         throw new Error("The socket did not connect");
     }
     return { socket, instance };
 }
 
-function parseSent(instance: FakeSocket, index: number): Record<string, unknown> {
+function parseSent(instance: FakeWebSocket, index: number): Record<string, unknown> {
     const sent = instance.sent[index];
     if (sent === undefined) {
         throw new Error(`No message was sent at index ${String(index)}`);
@@ -124,7 +42,7 @@ function parseSent(instance: FakeSocket, index: number): Record<string, unknown>
 }
 
 beforeEach(() => {
-    FakeSocket.instances = [];
+    FakeWebSocket.reset();
 });
 
 describe("buildSessionSocketUrl", () => {
@@ -142,7 +60,7 @@ describe("buildSessionSocketUrl", () => {
             buildSessionSocketUrl(
                 sid("session.1_a-b"),
                 {
-                    cursor: { epoch: rt("runtime-1"), seq: seq(12) },
+                    cursor: { epoch: sessionEpoch("runtime-1"), seq: sessionSeq(12) },
                     hint: { entriesVersion: V152, afterCount: 3, afterEntryId: "e3" },
                 },
                 "http://127.0.0.1:3141/workspace?x=1#top",
@@ -332,7 +250,7 @@ describe("SessionSocket", () => {
         const messages: SessionWsServerMessage[] = [
             {
                 type: "sync:snapshot",
-                cursor: { epoch: RUNTIME_1, seq: seq(0) },
+                cursor: { epoch: RUNTIME_1, seq: sessionSeq(0) },
                 snapshot: {
                     entriesVersion: V152,
                     baseEntryCount: 0,
@@ -344,18 +262,18 @@ describe("SessionSocket", () => {
             },
             {
                 type: "sync:replay",
-                cursor: { epoch: RUNTIME_1, seq: seq(0) },
-                fromSeq: seq(0),
+                cursor: { epoch: RUNTIME_1, seq: sessionSeq(0) },
+                fromSeq: sessionSeq(0),
                 deltas: [],
             },
             {
                 type: "sync:delta",
-                cursor: { epoch: RUNTIME_1, seq: seq(1) },
+                cursor: { epoch: RUNTIME_1, seq: sessionSeq(1) },
                 delta: { kind: "agent_event", event: { type: "agent_start" } },
             },
             {
                 type: "sync:delta",
-                cursor: { epoch: RUNTIME_1, seq: seq(2) },
+                cursor: { epoch: RUNTIME_1, seq: sessionSeq(2) },
                 delta: {
                     kind: "ui_request",
                     request: {
@@ -369,12 +287,12 @@ describe("SessionSocket", () => {
             },
             {
                 type: "sync:delta",
-                cursor: { epoch: RUNTIME_1, seq: seq(3) },
+                cursor: { epoch: RUNTIME_1, seq: sessionSeq(3) },
                 delta: { kind: "ui_resolved", requestId: "dialog" },
             },
             {
                 type: "sync:delta",
-                cursor: { epoch: RUNTIME_1, seq: seq(4) },
+                cursor: { epoch: RUNTIME_1, seq: sessionSeq(4) },
                 delta: {
                     kind: "extension_error",
                     extensionPath: "/ext.js",

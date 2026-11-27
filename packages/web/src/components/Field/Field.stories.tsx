@@ -4,6 +4,7 @@ import { expect, userEvent, waitFor, within } from "storybook/test";
 
 import { Input } from "../Input";
 
+import { requireElement } from "@/storybook/dom";
 import { Field } from "./Field";
 
 const meta = {
@@ -46,10 +47,10 @@ export const WithoutDescription: Story = {
         </Field>
     ),
     play: async ({ canvasElement }) => {
-        const messages = canvasElement.querySelector<HTMLElement>("[data-slot='field-messages']");
-        if (messages === null) {
-            throw new Error("The field did not render");
-        }
+        const messages = requireElement(
+            canvasElement.querySelector<HTMLElement>("[data-slot='field-messages']"),
+            "messages",
+        );
 
         await expect(getComputedStyle(messages).display).toBe("none");
         await expect(canvasElement.querySelector("[data-slot='field-description']")).toBeNull();
@@ -113,11 +114,7 @@ export const StableLayout: Story = {
     render: () => <StableLayoutField />,
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
-        const field = canvasElement.querySelector<HTMLElement>("[data-slot='field']");
-
-        if (field === null) {
-            throw new Error("The field did not render");
-        }
+        const field = requireElement(canvasElement.querySelector<HTMLElement>("[data-slot='field']"), "the field");
 
         const height = field.getBoundingClientRect().height;
 

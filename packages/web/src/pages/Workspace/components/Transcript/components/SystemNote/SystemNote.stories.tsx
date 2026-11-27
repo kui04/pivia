@@ -2,8 +2,8 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 
 import type { TranscriptNoteItem } from "@/stores/session";
-import storyFrame from "@/storybook/storyFrame.module.css";
 
+import { TranscriptFrame } from "@/storybook/frames";
 import { SystemNote } from "./SystemNote";
 
 const compactionNote: TranscriptNoteItem = {
@@ -39,13 +39,7 @@ const meta = {
         item: { control: false },
         onOpenLink: { control: false },
     },
-    decorators: [
-        (Story) => (
-            <div className={storyFrame.frame}>
-                <Story />
-            </div>
-        ),
-    ],
+    decorators: [TranscriptFrame],
 } satisfies Meta<typeof SystemNote>;
 
 export default meta;

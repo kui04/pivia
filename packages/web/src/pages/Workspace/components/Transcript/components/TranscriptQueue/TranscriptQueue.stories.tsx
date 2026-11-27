@@ -1,8 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, within } from "storybook/test";
 
-import storyFrame from "@/storybook/storyFrame.module.css";
-
+import { TranscriptFrame } from "@/storybook/frames";
 import { TranscriptQueue } from "./TranscriptQueue";
 import { collectQueuedEntries } from "./queue";
 
@@ -20,13 +19,7 @@ const meta = {
             ],
         }),
     },
-    decorators: [
-        (Story) => (
-            <div className={storyFrame.frame}>
-                <Story />
-            </div>
-        ),
-    ],
+    decorators: [TranscriptFrame],
 } satisfies Meta<typeof TranscriptQueue>;
 
 export default meta;

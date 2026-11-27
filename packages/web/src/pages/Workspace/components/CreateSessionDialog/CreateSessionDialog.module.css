@@ -136,7 +136,6 @@
     padding: var(--space-4) var(--space-16) var(--space-8);
 
     .inputShell {
-        box-sizing: border-box;
         display: flex;
         align-items: center;
         gap: var(--space-8);
@@ -374,7 +373,6 @@
 }
 
 .rowButton {
-    box-sizing: border-box;
     display: flex;
     align-items: center;
     gap: var(--space-8);

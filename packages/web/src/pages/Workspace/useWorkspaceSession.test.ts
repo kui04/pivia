@@ -1,4 +1,3 @@
-import { parseSessionId, type SessionId } from "@pivia/protocol";
 import { describe, expect, it, vi } from "vitest";
 
 vi.hoisted(() => {
@@ -32,19 +31,13 @@ vi.hoisted(() => {
     });
 });
 
+import { sid } from "@/test/ids";
+
 import {
     attachWorkspaceSession,
     parseWorkspaceSessionRoute,
     type WorkspaceSessionBinding,
 } from "./useWorkspaceSession";
-
-function sid(raw: string): SessionId {
-    const parsed = parseSessionId(raw);
-    if (parsed === null) {
-        throw new Error(`Invalid test session id: ${raw}`);
-    }
-    return parsed;
-}
 
 function fakeStore() {
     return {

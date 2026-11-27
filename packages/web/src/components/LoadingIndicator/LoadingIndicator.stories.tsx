@@ -1,14 +1,12 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import type { ReactNode } from "react";
-import { expect, waitFor, within } from "storybook/test";
+import { expect, within } from "storybook/test";
 
 import { DarkTheme } from "@/storybook/theme";
 
-import { LoadingIndicator } from "./LoadingIndicator";
+import { requireElement, waitForDarkTheme } from "@/storybook/dom";
+import { StoryRow } from "@/storybook/frames";
 
-function Row({ children }: { children: ReactNode }) {
-    return <div style={{ display: "flex", alignItems: "center", gap: "var(--space-16)" }}>{children}</div>;
-}
+import { LoadingIndicator } from "./LoadingIndicator";
 
 const meta = {
     title: "Components/LoadingIndicator",
@@ -37,17 +35,11 @@ export const Default: Story = {
         await expect(indicator).not.toHaveAttribute("aria-valuenow");
         await expect(indicator).toHaveAttribute("aria-valuetext", "indeterminate progress");
 
-        const svg = indicator.querySelector("svg");
-        const spinner = svg?.querySelector("g");
-        const track = indicator.querySelector("circle");
-        if (svg === null || spinner === null || spinner === undefined || track === null) {
-            throw new Error("The loading indicator did not render a track and a spinner");
-        }
+        const svg = requireElement(indicator.querySelector("svg"), "the spinner svg");
+        const spinner = requireElement(svg.querySelector("g"), "the spinning group");
+        const track = requireElement(indicator.querySelector("circle"), "the spinner track");
 
-        const arc = spinner.querySelector("circle");
-        if (arc === null) {
-            throw new Error("The loading indicator did not render an arc");
-        }
+        const arc = requireElement(spinner.querySelector("circle"), "arc");
 
         await expect(Math.round(indicator.getBoundingClientRect().width)).toBe(24);
         // Computed lengths can be fractional under browser zoom; compare snapped CSS pixels.
@@ -65,13 +57,13 @@ export const Default: Story = {
 
 export const Sizes: Story = {
     render: () => (
-        <Row>
+        <StoryRow>
             <LoadingIndicator size="sm" label="Small" />
             <LoadingIndicator size="no-container" label="No container" />
             <LoadingIndicator size="md" label="Medium" />
             <LoadingIndicator size="lg" label="Large" />
             <LoadingIndicator size="xl" label="Extra large" />
-        </Row>
+        </StoryRow>
     ),
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
@@ -85,10 +77,7 @@ export const Sizes: Story = {
 
         for (const { name, box, glyph } of sizes) {
             const indicator = canvas.getByRole("progressbar", { name });
-            const svg = indicator.querySelector("svg");
-            if (svg === null) {
-                throw new Error(`${name} did not render a spinner`);
-            }
+            const svg = requireElement(indicator.querySelector("svg"), "svg");
 
             // Bounding boxes and computed lengths can be fractional at non-integer device pixel
             // ratios; compare snapped layout pixels instead of raw strings.
@@ -119,17 +108,14 @@ export const LabelledBy: Story = {
 export const Dark: Story = {
     decorators: [DarkTheme],
     play: async ({ canvasElement }) => {
-        await waitFor(() => expect(getComputedStyle(document.documentElement).colorScheme).toBe("dark"));
+        await waitForDarkTheme();
 
         const canvas = within(canvasElement);
         const indicator = canvas.getByRole("progressbar", { name: "Loading" });
 
         await expect(getComputedStyle(indicator).color).toBe("rgb(0, 120, 212)");
 
-        const track = indicator.querySelector("circle");
-        if (track === null) {
-            throw new Error("The loading indicator did not render a track");
-        }
+        const track = requireElement(indicator.querySelector("circle"), "track");
 
         await expect(getComputedStyle(track).stroke).toBe("rgb(43, 43, 43)");
     },

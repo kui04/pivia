@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { prefersReducedMotion } from "@/lib";
+
 /** Sub-pixel tolerance so DPI scaling does not trigger false overflow fades. */
 const EDGE_TOLERANCE_PX = 2;
 
@@ -25,6 +27,13 @@ export type UseAutoScrollOptions = {
     streaming?: boolean | undefined;
     /** Jumps to the bottom once when enabled becomes true while not streaming. */
     initialBottom?: boolean | undefined;
+    /**
+     * Called after every geometry sync, so a sibling such as a scroll rail can remeasure.
+     *
+     * The hook keeps the latest callback in a ref, so an inline function does not resubscribe the
+     * observers.
+     */
+    onViewportChange?: (() => void) | undefined;
 };
 
 /** State and controls returned by {@link useAutoScroll}. */
@@ -73,14 +82,6 @@ function sameEdges(a: ScrollEdges, b: ScrollEdges): boolean {
     return a.fadeTop === b.fadeTop && a.fadeBottom === b.fadeBottom && a.atBottom === b.atBottom;
 }
 
-function prefersReducedMotion(): boolean {
-    return (
-        typeof window !== "undefined" &&
-        typeof window.matchMedia === "function" &&
-        window.matchMedia("(prefers-reduced-motion: reduce)").matches
-    );
-}
-
 /**
  * Track top and bottom scroll overflow and keep a streaming viewport pinned to the bottom.
  *
@@ -91,6 +92,7 @@ export function useAutoScroll({
     enabled = true,
     streaming = false,
     initialBottom = false,
+    onViewportChange,
 }: UseAutoScrollOptions = {}): UseAutoScrollResult {
     const viewportNodeRef = useRef<HTMLDivElement | null>(null);
     const [mountKey, setMountKey] = useState(0);
@@ -101,6 +103,7 @@ export function useAutoScroll({
     const wasEnabledRef = useRef(false);
     const wasStreamingRef = useRef(streaming);
     const lastNodeRef = useRef<HTMLDivElement | null>(null);
+    const onViewportChangeRef = useRef(onViewportChange);
 
     const viewportRef = useCallback((node: HTMLDivElement | null) => {
         if (viewportNodeRef.current === node) {
@@ -113,6 +116,10 @@ export function useAutoScroll({
     const commitEdges = useCallback((next: ScrollEdges) => {
         setEdges((prev) => (sameEdges(prev, next) ? prev : next));
     }, []);
+
+    useEffect(() => {
+        onViewportChangeRef.current = onViewportChange;
+    }, [onViewportChange]);
 
     useEffect(() => {
         const node = viewportNodeRef.current;
@@ -157,6 +164,7 @@ export function useAutoScroll({
                 jumpToBottom();
             }
             commitEdges(measureScrollEdges(node));
+            onViewportChangeRef.current?.();
         };
 
         let rafId = 0;

@@ -39,7 +39,8 @@
  *   .search .searchInput
  *   ├─ &:hover:not(:disabled)
  *   ├─ &:focus-visible
- *   └─ &::-webkit-search-cancel-button
+ *   ├─ &::-webkit-search-cancel-button
+ *   └─ @media (any-pointer: coarse)
  */
 .root {
     /*
@@ -320,13 +321,13 @@
     &::-webkit-search-cancel-button {
         appearance: none;
     }
-}
 
-/* Keep 16px on touch so mobile browsers do not zoom when the search field focuses. */
-@media (any-pointer: coarse) {
-    .searchInput {
-        font-size: var(--type-body-large-size);
-        line-height: var(--type-body-large-line-height);
+    /* Keep 16px on touch so mobile browsers do not zoom when the search field focuses. */
+    @media (any-pointer: coarse) {
+        & {
+            font-size: var(--type-body-large-size);
+            line-height: var(--type-body-large-line-height);
+        }
     }
 }
 

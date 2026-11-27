@@ -8,82 +8,67 @@ function skillBlock(name: string, location: string, body: string, prompt?: strin
     return prompt === undefined ? block : `${block}\n\n${prompt}`;
 }
 
-describe("parseSkillBlock", () => {
-    it("splits the block fields and the prompt typed after the command", () => {
-        const text = skillBlock(
+const LOCATION = "/skills/tydd/SKILL.md";
+
+/**
+ * Every input the transcript can hand the parser, with the expected parse.
+ *
+ * The browser cannot import the SDK parser (it pulls Node built-ins), so the web module mirrors it.
+ * Each row also runs through the installed SDK, so a release that changes the block format fails
+ * here instead of silently rendering skill bodies as user text.
+ */
+const CORPUS = [
+    [
+        skillBlock(
             "tydd",
             "/home/kui04/.pi/agent/skills/tydd/SKILL.md",
-            "References are relative to /home/kui04/.pi/agent/skills/tydd.\n\n## Role\n\nAct.",
+            "References are relative to /skills.\n\nAct.",
             "  Review this diff  ",
-        );
-
-        expect(parseSkillBlock(text)).toEqual({
+        ),
+        {
             name: "tydd",
             location: "/home/kui04/.pi/agent/skills/tydd/SKILL.md",
-            content: "References are relative to /home/kui04/.pi/agent/skills/tydd.\n\n## Role\n\nAct.",
+            content: "References are relative to /skills.\n\nAct.",
             userMessage: "Review this diff",
-        });
+        },
+    ],
+    [
+        skillBlock("tydd", LOCATION, "Body"),
+        { name: "tydd", location: LOCATION, content: "Body", userMessage: undefined },
+    ],
+    [
+        skillBlock("tydd", LOCATION, "Body", "Review this diff"),
+        { name: "tydd", location: LOCATION, content: "Body", userMessage: "Review this diff" },
+    ],
+    [
+        skillBlock("tydd", LOCATION, "Line one\nLine two"),
+        { name: "tydd", location: LOCATION, content: "Line one\nLine two", userMessage: undefined },
+    ],
+    [
+        skillBlock("tydd", LOCATION, "Write the tag\n</skill>\ninside prose"),
+        { name: "tydd", location: LOCATION, content: "Write the tag\n</skill>\ninside prose", userMessage: undefined },
+    ],
+    [skillBlock("tydd", LOCATION, ""), { name: "tydd", location: LOCATION, content: "", userMessage: undefined }],
+    [
+        skillBlock("tydd", LOCATION, "Body", "   "),
+        { name: "tydd", location: LOCATION, content: "Body", userMessage: undefined },
+    ],
+    [
+        skillBlock("tydd", LOCATION, "Body", "trailing\n\nparagraph"),
+        { name: "tydd", location: LOCATION, content: "Body", userMessage: "trailing\n\nparagraph" },
+    ],
+    ["Explain the <skill> tag of a session file.", null],
+    ['<skill name="tydd" location="/skills/tydd/SKILL.md">\nBody', null],
+    [`${skillBlock("tydd", LOCATION, "Body")} trailing`, null],
+    [`  ${skillBlock("tydd", LOCATION, "Body")}`, null],
+    ['<skill name="" location="/skills/x/SKILL.md">\nBody\n</skill>', null],
+    ['<skill name="x" location="">\nBody\n</skill>', null],
+] as const;
+
+describe("parseSkillBlock", () => {
+    it.each(CORPUS)("parses %#", (text, expected) => {
+        expect(parseSkillBlock(text)).toEqual(expected);
     });
-
-    it("returns no user message when the command had no prompt", () => {
-        const parsed = parseSkillBlock(skillBlock("tydd", "/skills/tydd/SKILL.md", "Body"));
-
-        expect(parsed).toEqual({
-            name: "tydd",
-            location: "/skills/tydd/SKILL.md",
-            content: "Body",
-            userMessage: undefined,
-        });
-    });
-
-    it("keeps a closing tag that appears inside the body", () => {
-        const parsed = parseSkillBlock(
-            skillBlock("tydd", "/skills/tydd/SKILL.md", "Write the tag\n</skill>\ninside prose"),
-        );
-
-        expect(parsed?.content).toBe("Write the tag\n</skill>\ninside prose");
-    });
-
-    it("keeps an empty body", () => {
-        expect(parseSkillBlock(skillBlock("tydd", "/skills/tydd/SKILL.md", ""))?.content).toBe("");
-    });
-
-    it("does not treat plain text or a partial block as an invocation", () => {
-        expect(parseSkillBlock("Explain the <skill> tag of a session file.")).toBeNull();
-        expect(parseSkillBlock('<skill name="tydd" location="/skills/tydd/SKILL.md">\nBody')).toBeNull();
-        expect(
-            parseSkillBlock('<skill name="tydd" location="/skills/tydd/SKILL.md">\nBody\n</skill> trailing'),
-        ).toBeNull();
-        expect(parseSkillBlock('  <skill name="tydd" location="/skills/tydd/SKILL.md">\nBody\n</skill>')).toBeNull();
-    });
-
-    it("requires a non-empty name and location", () => {
-        expect(parseSkillBlock('<skill name="" location="/skills/x/SKILL.md">\nBody\n</skill>')).toBeNull();
-        expect(parseSkillBlock('<skill name="x" location="">\nBody\n</skill>')).toBeNull();
-    });
-
-    /**
-     * Every input the transcript can hand the parser.
-     *
-     * The browser cannot import the SDK parser (it pulls Node built-ins), so the web module mirrors
-     * it. These cases pin the mirror to the installed SDK; a release that changes the block format
-     * fails here instead of silently rendering skill bodies as user text.
-     */
-    const CORPUS: readonly string[] = [
-        '<skill name="tydd" location="/skills/tydd/SKILL.md">\nBody\n</skill>',
-        '<skill name="tydd" location="/skills/tydd/SKILL.md">\nBody\n</skill>\n\nReview this diff',
-        '<skill name="tydd" location="/skills/tydd/SKILL.md">\nLine one\nLine two\n</skill>',
-        '<skill name="tydd" location="/skills/tydd/SKILL.md">\nWrite the tag\n</skill>\ninside prose\n</skill>',
-        '<skill name="tydd" location="/skills/tydd/SKILL.md">\n\n</skill>',
-        '<skill name="tydd" location="/skills/tydd/SKILL.md">\nBody\n</skill>\n\n   ',
-        '<skill name="tydd" location="/skills/tydd/SKILL.md">\nBody\n</skill>\n\ntrailing\n\nparagraph',
-        "Explain the <skill> tag of a session file.",
-        '<skill name="tydd" location="/skills/tydd/SKILL.md">\nBody',
-        '<skill name="tydd" location="/skills/tydd/SKILL.md">\nBody\n</skill> trailing',
-        '  <skill name="tydd" location="/skills/tydd/SKILL.md">\nBody\n</skill>',
-        '<skill name="" location="/skills/x/SKILL.md">\nBody\n</skill>',
-        '<skill name="x" location="">\nBody\n</skill>',
-    ];
 
     describe("parity with the SDK", () => {
         it.each(CORPUS)("matches the sdk parser for %#", (text) => {

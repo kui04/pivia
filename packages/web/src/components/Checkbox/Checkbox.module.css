@@ -58,7 +58,6 @@
  * in global.css draws its ring. Base UI keeps focus on this span, not the hidden input.
  */
 .box {
-    box-sizing: border-box;
     display: inline-flex;
     flex: none;
     align-items: center;

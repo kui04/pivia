@@ -22,8 +22,6 @@ export type DisclosureProps = {
     tone?: "neutral" | "accent" | "primary" | "error" | undefined;
     /** True while the label still streams; animates the label text. */
     streaming?: boolean | undefined;
-    /** Initial expanded state for uncontrolled usage. */
-    defaultOpen?: boolean | undefined;
     /** Controlled expanded state. */
     open?: boolean | undefined;
     /** Called when Base UI toggles the row. */
@@ -49,7 +47,6 @@ export function Disclosure({
     metaRunning = false,
     tone = "neutral",
     streaming = false,
-    defaultOpen,
     open,
     onOpenChange,
     className,
@@ -58,7 +55,6 @@ export function Disclosure({
     return (
         <Collapsible
             open={open}
-            defaultOpen={defaultOpen}
             onOpenChange={(nextOpen) => {
                 onOpenChange?.(nextOpen);
             }}

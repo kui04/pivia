@@ -102,11 +102,6 @@ export async function readClipboardImages(
     return readImageFiles(files, maxBytes);
 }
 
-/** Returns true when `transfer` carries at least one file or item that may hold an image. */
-export function hasClipboardImageOrFiles(transfer: DataTransfer | null): boolean {
-    return Clipboard.hasFiles(transfer);
-}
-
 /** Format a human-readable message for an {@link AttachmentReadError}. */
 export function formatAttachmentError(error: AttachmentReadError): string {
     switch (error.kind) {

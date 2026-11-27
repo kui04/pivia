@@ -16,13 +16,6 @@
     color: var(--color-on-surface-variant);
 
     .label {
-        /*
-         * CSS Modules localizes a bare animation name to a scoped keyframe that token.css does not
-         * define, so the global name travels through a custom property. The property must not end in
-         * "animation" or "animation-name", or its value would be localized too.
-         */
-        --shimmer-keyframes: shimmer;
-
         font-size: var(--type-label-size);
         font-weight: var(--type-label-weight);
         letter-spacing: var(--type-label-tracking);
@@ -32,10 +25,8 @@
         -webkit-background-clip: text;
         background-clip: text;
         -webkit-text-fill-color: transparent;
-        animation-name: var(--shimmer-keyframes);
-        animation-duration: var(--shimmer-duration);
-        animation-timing-function: linear;
-        animation-iteration-count: infinite;
+        /* The whole shorthand lives in token.css, so CSS Modules never localizes the keyframe name. */
+        animation: var(--shimmer-animation);
 
         /* Forced colors removes the gradient that paints the glyphs, so fall back to text color. */
         @media (forced-colors: active) {

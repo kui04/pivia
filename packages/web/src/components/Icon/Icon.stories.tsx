@@ -1,13 +1,11 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { Check, Plus, Search, X } from "lucide-react";
-import type { CSSProperties, ReactNode } from "react";
+import type { CSSProperties } from "react";
 import { expect } from "storybook/test";
 
-import { Icon } from "./Icon";
+import { StoryRow } from "@/storybook/frames";
 
-function Row({ children }: { children: ReactNode }) {
-    return <div style={{ display: "flex", alignItems: "center", gap: "var(--space-24)" }}>{children}</div>;
-}
+import { Icon } from "./Icon";
 
 // getBoundingClientRect is fractional at non-integer device pixel ratios; compare snapped CSS
 // pixels so the same layout passes in the CLI and in a zoomed or scaled browser.
@@ -50,7 +48,7 @@ export const Default: Story = {
 
 export const Sizes: Story = {
     render: () => (
-        <Row>
+        <StoryRow gap="var(--space-24)">
             <Icon size="sm">
                 <Plus />
             </Icon>
@@ -66,7 +64,7 @@ export const Sizes: Story = {
             <Icon size="no-container">
                 <Plus />
             </Icon>
-        </Row>
+        </StoryRow>
     ),
     play: async ({ canvasElement }) => {
         await expect(boxWidths(canvasElement)).toEqual([16, 24, 32, 40, 16]);
@@ -77,31 +75,31 @@ export const Sizes: Story = {
 export const Overrides: Story = {
     render: () => (
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-16)" }}>
-            <Row>
+            <StoryRow gap="var(--space-24)">
                 <Icon glyphSize={12}>
                     <Search />
                 </Icon>
                 <Icon glyphSize={20}>
                     <Search />
                 </Icon>
-            </Row>
-            <Row>
+            </StoryRow>
+            <StoryRow gap="var(--space-24)">
                 <Icon padding={0}>
                     <X />
                 </Icon>
                 <Icon padding={8}>
                     <X />
                 </Icon>
-            </Row>
-            <Row>
+            </StoryRow>
+            <StoryRow gap="var(--space-24)">
                 <Icon boxSize={32}>
                     <Check />
                 </Icon>
                 <Icon boxSize={40}>
                     <Check />
                 </Icon>
-            </Row>
-            <Row>
+            </StoryRow>
+            <StoryRow gap="var(--space-24)">
                 <Icon
                     style={
                         {
@@ -111,7 +109,7 @@ export const Overrides: Story = {
                 >
                     <Check />
                 </Icon>
-            </Row>
+            </StoryRow>
         </div>
     ),
     play: async ({ canvasElement }) => {

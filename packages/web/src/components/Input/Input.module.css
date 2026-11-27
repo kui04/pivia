@@ -13,7 +13,6 @@
  *   └─ &:disabled                             the filled, muted and inert field
  */
 .input {
-    box-sizing: border-box;
     width: 100%;
     min-height: var(--space-40);
     padding: 0 var(--space-12);

@@ -9,7 +9,6 @@
  *   └─ &:disabled            muted inert appearance when the runtime is unavailable
  */
 .pill {
-    box-sizing: border-box;
     display: inline-flex;
     align-items: center;
     justify-content: center;

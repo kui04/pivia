@@ -1,58 +1,29 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { FileEntry } from "@earendil-works/pi-coding-agent";
 import {
-    parseEntriesVersion,
-    parseSyncEpoch,
-    parseSyncSeq,
     SESSION_CLOSE_CODE,
-    type EntriesVersion,
     type SessionDelta,
     type SessionDetailResponse,
     type SessionStateSnapshot,
     type SessionSummary,
     type SessionWsServerMessage,
-    type SyncEpoch,
-    type SyncSeq,
 } from "@pivia/protocol";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useEffect, useRef, useState, type ReactElement } from "react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { expect, userEvent, waitFor, within } from "storybook/test";
 
-import type { WebSocketConstructor, WebSocketLike } from "@/lib/transport";
-import { sid } from "@/storybook/ids";
+import { ev, sessionEpoch, sessionSeq, sid } from "@/storybook/ids";
+import { makeStorySessionState, makeStorySessionSummary } from "@/storybook/fixtures";
+import { createStorySocket } from "@/storybook/socket";
 import { createSessionStore } from "@/stores/session";
 
 import { WorkspacePage } from "./WorkspacePage";
 import styles from "./WorkspacePage.stories.module.css";
 
-function ev(raw: string): EntriesVersion {
-    const parsed = parseEntriesVersion(raw);
-    if (parsed === null) {
-        throw new Error(`Invalid story entries version: ${raw}`);
-    }
-    return parsed;
-}
-
-function runtimeId(raw: string): SyncEpoch<"session"> {
-    const parsed = parseSyncEpoch<"session">(raw);
-    if (parsed === null) {
-        throw new Error(`Invalid story runtime id: ${raw}`);
-    }
-    return parsed;
-}
-
-function seq(raw: number): SyncSeq<"session"> {
-    const parsed = parseSyncSeq<"session">(raw);
-    if (parsed === null) {
-        throw new Error(`Invalid story session seq: ${raw}`);
-    }
-    return parsed;
-}
-
 const SESSION_ID = sid("session-1");
 const ENTRIES_VERSION = ev("3:1.5.2");
-const RUNTIME = runtimeId("story-runtime-1");
+const RUNTIME = sessionEpoch("story-runtime-1");
 const EMPTY_USAGE = {
     input: 0,
     output: 0,
@@ -62,39 +33,16 @@ const EMPTY_USAGE = {
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 };
 
-function summary(): SessionSummary {
-    return {
-        id: SESSION_ID,
-        cwd: "/home/u/pivia",
-        name: "First task",
+const summary = (): SessionSummary =>
+    makeStorySessionSummary(SESSION_ID, {
         firstMessage: "Show the transcript view.",
         messageCount: 4,
-        createdAtMs: 1_000,
-        modifiedAtMs: 5_000,
-        hasParent: false,
-        runtimeState: "idle",
         attachedClients: 1,
-    };
-}
+    });
 
-function sessionState(overrides: Partial<SessionStateSnapshot> = {}): SessionStateSnapshot {
-    return {
-        sessionId: SESSION_ID,
-        cwd: "/home/u/pivia",
-        name: "First task",
-        model: null,
-        thinkingLevel: "medium",
-        isStreaming: false,
-        isCompacting: false,
-        steeringMode: "one-at-a-time",
-        followUpMode: "one-at-a-time",
-        autoCompactionEnabled: true,
-        messageCount: 4,
-        steeringMessages: [],
-        followUpMessages: [],
-        ...overrides,
-    };
-}
+/** The page story renders a finished four-message session unless a scenario changes it. */
+const sessionState = (overrides: Partial<SessionStateSnapshot> = {}): SessionStateSnapshot =>
+    makeStorySessionState(SESSION_ID, { messageCount: 4, ...overrides });
 
 function userEntry(id: string, parentId: string | null, text: string, timestamp: number): FileEntry {
     return {
@@ -173,7 +121,7 @@ function inlineSnapshot(
 ): SessionWsServerMessage {
     return {
         type: "sync:snapshot",
-        cursor: { epoch: RUNTIME, seq: seq(1) },
+        cursor: { epoch: RUNTIME, seq: sessionSeq(1) },
         snapshot: {
             entriesVersion: ENTRIES_VERSION,
             baseEntryCount: 0,
@@ -188,7 +136,7 @@ function inlineSnapshot(
 function httpSnapshot(entryCount: number): SessionWsServerMessage {
     return {
         type: "sync:snapshot",
-        cursor: { epoch: RUNTIME, seq: seq(1) },
+        cursor: { epoch: RUNTIME, seq: sessionSeq(1) },
         snapshot: {
             entriesVersion: ENTRIES_VERSION,
             baseEntryCount: 0,
@@ -201,54 +149,7 @@ function httpSnapshot(entryCount: number): SessionWsServerMessage {
 }
 
 function deltaFrame(seqNumber: number, delta: SessionDelta): SessionWsServerMessage {
-    return { type: "sync:delta", cursor: { epoch: RUNTIME, seq: seq(seqNumber) }, delta };
-}
-
-class StorySessionSocket implements WebSocketLike {
-    readyState = 0;
-    onopen: (() => void) | null = null;
-    onmessage: ((event: MessageEvent) => void) | null = null;
-    onclose: ((event: CloseEvent) => void) | null = null;
-    onerror: (() => void) | null = null;
-
-    constructor(public readonly url: string) {}
-
-    send(): void {}
-
-    close(): void {
-        this.readyState = 3;
-    }
-
-    open(): void {
-        this.readyState = 1;
-        this.onopen?.();
-    }
-
-    receive(message: unknown): void {
-        this.onmessage?.({ data: JSON.stringify(message) } as MessageEvent);
-    }
-
-    serverClose(code: number, reason: string): void {
-        this.readyState = 3;
-        this.onclose?.({ code, reason, wasClean: true } as CloseEvent);
-    }
-}
-
-function createStorySocket(): {
-    readonly WebSocket: WebSocketConstructor;
-    latest: () => StorySessionSocket | null;
-} {
-    const instances: StorySessionSocket[] = [];
-    class Socket extends StorySessionSocket {
-        constructor(url: string) {
-            super(url);
-            instances.push(this);
-        }
-    }
-    return {
-        WebSocket: Socket,
-        latest: () => instances.at(-1) ?? null,
-    };
+    return { type: "sync:delta", cursor: { epoch: RUNTIME, seq: sessionSeq(seqNumber) }, delta };
 }
 
 function createStoryApi(): { getSession: () => Promise<SessionDetailResponse> } {

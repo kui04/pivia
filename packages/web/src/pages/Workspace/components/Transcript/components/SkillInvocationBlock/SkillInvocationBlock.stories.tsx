@@ -2,8 +2,8 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, within } from "storybook/test";
 
 import type { TranscriptSkillItem } from "@/stores/session";
-import storyFrame from "@/storybook/storyFrame.module.css";
 
+import { TranscriptFrame } from "@/storybook/frames";
 import { SkillInvocationBlock } from "./SkillInvocationBlock";
 
 const skillItem: TranscriptSkillItem = {
@@ -34,13 +34,7 @@ const meta = {
         item: { control: false },
         onOpenLink: { control: false },
     },
-    decorators: [
-        (Story) => (
-            <div className={storyFrame.frame}>
-                <Story />
-            </div>
-        ),
-    ],
+    decorators: [TranscriptFrame],
 } satisfies Meta<typeof SkillInvocationBlock>;
 
 export default meta;

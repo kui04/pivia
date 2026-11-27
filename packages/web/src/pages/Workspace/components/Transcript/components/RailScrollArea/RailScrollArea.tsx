@@ -11,7 +11,7 @@ import {
     type ReactNode,
 } from "react";
 
-import { cn } from "@/lib";
+import { cn, normalizeWheelDelta } from "@/lib";
 
 import { useAutoScroll } from "../../useAutoScroll";
 import styles from "./RailScrollArea.module.css";
@@ -56,17 +56,6 @@ type DragState = { readonly kind: "idle" } | { readonly kind: "dragging"; readon
 
 const IDLE_DRAG: DragState = { kind: "idle" };
 
-function normalizeWheelDeltaY(event: WheelEvent, viewportHeight: number): number {
-    switch (event.deltaMode) {
-        case WheelEvent.DOM_DELTA_LINE:
-            return event.deltaY * LINE_DELTA_PX;
-        case WheelEvent.DOM_DELTA_PAGE:
-            return event.deltaY * viewportHeight;
-        default:
-            return event.deltaY;
-    }
-}
-
 /**
  * Bounded scroll panel that pairs a continuous 1px left guide rail with a fixed-length vertical
  * scroll thumb riding directly on that rail.
@@ -84,27 +73,15 @@ export function RailScrollArea({
     contentClassName,
     children,
 }: RailScrollAreaProps): ReactElement {
-    const { viewportRef: autoScrollViewportRef, fadeTop, fadeBottom } = useAutoScroll({ enabled, streaming });
     const viewportNodeRef = useRef<HTMLDivElement | null>(null);
     const railRef = useRef<HTMLDivElement | null>(null);
     const thumbRef = useRef<HTMLDivElement | null>(null);
     const dragRef = useRef<DragState>(IDLE_DRAG);
+    const thumbFrameRef = useRef(0);
 
     const [mountKey, setMountKey] = useState(0);
     const [overflowing, setOverflowing] = useState(false);
     const [dragging, setDragging] = useState(false);
-
-    const handleViewportRef = useCallback(
-        (node: HTMLDivElement | null) => {
-            if (viewportNodeRef.current === node) {
-                return;
-            }
-            viewportNodeRef.current = node;
-            autoScrollViewportRef(node);
-            setMountKey((prev) => prev + 1);
-        },
-        [autoScrollViewportRef],
-    );
 
     const syncThumb = useCallback(() => {
         const viewport = viewportNodeRef.current;
@@ -127,6 +104,39 @@ export function RailScrollArea({
         thumb.style.transform = `translate3d(0, ${ratio * maxOffset}px, 0)`;
     }, [enabled]);
 
+    // Content and viewport resizes arrive in bursts; one thumb update per frame is enough.
+    const scheduleThumbSync = useCallback(() => {
+        if (thumbFrameRef.current !== 0) {
+            return;
+        }
+        thumbFrameRef.current = window.requestAnimationFrame(() => {
+            thumbFrameRef.current = 0;
+            syncThumb();
+        });
+    }, [syncThumb]);
+
+    const {
+        viewportRef: autoScrollViewportRef,
+        fadeTop,
+        fadeBottom,
+    } = useAutoScroll({
+        enabled,
+        streaming,
+        onViewportChange: scheduleThumbSync,
+    });
+
+    const handleViewportRef = useCallback(
+        (node: HTMLDivElement | null) => {
+            if (viewportNodeRef.current === node) {
+                return;
+            }
+            viewportNodeRef.current = node;
+            autoScrollViewportRef(node);
+            setMountKey((prev) => prev + 1);
+        },
+        [autoScrollViewportRef],
+    );
+
     useEffect(() => {
         const viewport = viewportNodeRef.current;
         const rail = railRef.current;
@@ -134,48 +144,17 @@ export function RailScrollArea({
             return;
         }
 
-        let rafId = 0;
-        const scheduleSync = () => {
-            if (rafId !== 0) {
-                return;
-            }
-            rafId = window.requestAnimationFrame(() => {
-                rafId = 0;
-                syncThumb();
-            });
-        };
-
-        scheduleSync();
+        scheduleThumbSync();
         viewport.addEventListener("scroll", syncThumb, { passive: true });
 
-        const observedChildren = new Set<Element>();
-        const resizeObserver = new ResizeObserver(() => {
+        // useAutoScroll already watches the viewport content and size; this observer only covers
+        // the rail, whose height the thumb offset depends on.
+        const railResizeObserver = new ResizeObserver(() => {
             syncThumb();
         });
-        resizeObserver.observe(viewport);
         if (rail !== null) {
-            resizeObserver.observe(rail);
+            railResizeObserver.observe(rail);
         }
-
-        const observeDirectChildren = () => {
-            for (const child of viewport.children) {
-                if (!observedChildren.has(child)) {
-                    observedChildren.add(child);
-                    resizeObserver.observe(child);
-                }
-            }
-        };
-        observeDirectChildren();
-
-        const mutationObserver = new MutationObserver(() => {
-            observeDirectChildren();
-            scheduleSync();
-        });
-        mutationObserver.observe(viewport, {
-            childList: true,
-            subtree: true,
-            characterData: true,
-        });
 
         const handleRailWheel = (event: WheelEvent) => {
             if (event.ctrlKey || event.deltaY === 0) {
@@ -185,7 +164,7 @@ export function RailScrollArea({
             if (maxScroll <= OVERFLOW_TOLERANCE_PX) {
                 return;
             }
-            const deltaPx = normalizeWheelDeltaY(event, viewport.clientHeight);
+            const deltaPx = normalizeWheelDelta(event.deltaY, event.deltaMode, viewport.clientHeight, LINE_DELTA_PX);
             if (deltaPx === 0) {
                 return;
             }
@@ -206,8 +185,9 @@ export function RailScrollArea({
         rail?.addEventListener("wheel", handleRailWheel, { passive: false });
 
         return () => {
-            if (rafId !== 0) {
-                window.cancelAnimationFrame(rafId);
+            if (thumbFrameRef.current !== 0) {
+                window.cancelAnimationFrame(thumbFrameRef.current);
+                thumbFrameRef.current = 0;
             }
             if (dragRef.current.kind === "dragging") {
                 const { pointerId } = dragRef.current.session;
@@ -218,10 +198,9 @@ export function RailScrollArea({
             }
             viewport.removeEventListener("scroll", syncThumb);
             rail?.removeEventListener("wheel", handleRailWheel);
-            resizeObserver.disconnect();
-            mutationObserver.disconnect();
+            railResizeObserver.disconnect();
         };
-    }, [enabled, mountKey, syncThumb]);
+    }, [enabled, mountKey, scheduleThumbSync, syncThumb]);
 
     const releaseDrag = useCallback((pointerId: number) => {
         if (dragRef.current.kind !== "dragging" || dragRef.current.session.pointerId !== pointerId) {

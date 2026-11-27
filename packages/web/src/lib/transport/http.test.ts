@@ -1,52 +1,9 @@
-import {
-    parseEntriesVersion,
-    parseSessionId,
-    type EntriesVersion,
-    type SessionId,
-    type SessionSummary,
-} from "@pivia/protocol";
 import { describe, expect, it, vi } from "vitest";
 
+import { ev, sid } from "@/test/ids";
+import { jsonResponse, makeSessionSummary } from "@/test/fixtures";
+
 import { ApiClientError, createApiClient, type FetchLike } from "./http";
-
-function sid(raw: string): SessionId {
-    const parsed = parseSessionId(raw);
-    if (parsed === null) {
-        throw new Error(`Invalid test session id: ${raw}`);
-    }
-    return parsed;
-}
-
-function ev(raw: string): EntriesVersion {
-    const parsed = parseEntriesVersion(raw);
-    if (parsed === null) {
-        throw new Error(`Invalid test entries version: ${raw}`);
-    }
-    return parsed;
-}
-
-function summary(id = "s1"): SessionSummary {
-    return {
-        id: sid(id),
-        cwd: "/home/u/project",
-        name: null,
-        firstMessage: "hi",
-        messageCount: 1,
-        createdAtMs: 1_000,
-        modifiedAtMs: 2_000,
-        hasParent: false,
-        runtimeState: "idle",
-        attachedClients: 0,
-    };
-}
-
-function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
-    return new Response(JSON.stringify(body), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-        ...init,
-    });
-}
 
 function errorResponse(status: number, body: unknown, headers: Record<string, string> = {}): Response {
     return new Response(typeof body === "string" ? body : JSON.stringify(body), {
@@ -111,7 +68,7 @@ describe("createApiClient", () => {
             }
             return Promise.resolve(
                 jsonResponse({
-                    session: summary("session.1_a-b"),
+                    session: makeSessionSummary("session.1_a-b"),
                     entriesVersion: "3:1.5.2",
                     baseEntryCount: 0,
                     entries: [],
@@ -169,7 +126,7 @@ describe("createApiClient", () => {
     });
 
     it("creates and closes sessions with the typed payloads", async () => {
-        const createdSummary = summary("s1");
+        const createdSummary = makeSessionSummary("s1");
         const requests: { url: string; init: RequestInit | undefined }[] = [];
         const fetchImpl: FetchLike = (url, init) => {
             requests.push({ url: urlString(url), init });
@@ -192,7 +149,7 @@ describe("createApiClient", () => {
     });
 
     it("forwards createDirectory on createSession and decodes directory_not_found", async () => {
-        const createdSummary = summary("s1");
+        const createdSummary = makeSessionSummary("s1");
         const requests: { url: string; init: RequestInit | undefined }[] = [];
         const fetchImpl: FetchLike = (url, init) => {
             requests.push({ url: urlString(url), init });
@@ -369,7 +326,12 @@ describe("createApiClient", () => {
         const fetchImpl: FetchLike = (url, init) => {
             seen.push({ url: urlString(url), signal: init?.signal });
             return Promise.resolve(
-                jsonResponse({ session: summary("s1"), entriesVersion: "3:1.5.2", baseEntryCount: 2, entries: [] }),
+                jsonResponse({
+                    session: makeSessionSummary("s1"),
+                    entriesVersion: "3:1.5.2",
+                    baseEntryCount: 2,
+                    entries: [],
+                }),
             );
         };
         const client = createApiClient({ fetch: fetchImpl });

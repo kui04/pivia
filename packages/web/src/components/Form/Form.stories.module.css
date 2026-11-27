@@ -1,8 +1,0 @@
-/*
- * The form story aligns the shared Button with the start edge.
- *
- *   .submit
- */
-.submit {
-    align-self: flex-start;
-}

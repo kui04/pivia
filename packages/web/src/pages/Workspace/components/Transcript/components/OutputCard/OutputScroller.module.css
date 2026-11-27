@@ -27,38 +27,37 @@
  * never stops partially faded under an edge.
  */
 .viewport {
-    --fade-size: var(--space-24);
-    --fade-top: black;
-    --fade-bottom: black;
+    --fade-size: var(--fade-size-default);
+    --fade-top: var(--mask-edge-opaque);
+    --fade-bottom: var(--mask-edge-opaque);
 
     max-block-size: calc(var(--space-64) * 3.5);
     scroll-padding-block: var(--fade-size);
     -webkit-mask-image: linear-gradient(
         to bottom,
-        var(--fade-top) 0,
-        black var(--fade-size),
-        black calc(100% - var(--fade-size)),
-        var(--fade-bottom) 100%
+        var(--fade-top, var(--mask-edge-opaque)) 0,
+        var(--mask-edge-opaque) var(--fade-size),
+        var(--mask-edge-opaque) calc(100% - var(--fade-size)),
+        var(--fade-bottom, var(--mask-edge-opaque)) 100%
     );
     mask-image: linear-gradient(
         to bottom,
-        var(--fade-top) 0,
-        black var(--fade-size),
-        black calc(100% - var(--fade-size)),
-        var(--fade-bottom) 100%
+        var(--fade-top, var(--mask-edge-opaque)) 0,
+        var(--mask-edge-opaque) var(--fade-size),
+        var(--mask-edge-opaque) calc(100% - var(--fade-size)),
+        var(--fade-bottom, var(--mask-edge-opaque)) 100%
     );
 }
 
 .fadeTop {
-    --fade-top: transparent;
+    --fade-top: var(--mask-edge-transparent);
 }
 
 .fadeBottom {
-    --fade-bottom: transparent;
+    --fade-bottom: var(--mask-edge-transparent);
 }
 
 .content {
-    box-sizing: border-box;
     min-inline-size: 100%;
     inline-size: max-content;
     padding: var(--space-12);
@@ -75,7 +74,6 @@
  * inline on the content element, so the reset needs an important declaration.
  */
 .contentWrapped {
-    box-sizing: border-box;
     inline-size: 100%;
     min-inline-size: 0 !important;
 }

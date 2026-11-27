@@ -2,6 +2,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useState } from "react";
 import { expect, fn, userEvent, within } from "storybook/test";
 
+import { requireElement } from "@/storybook/dom";
 import { Checkbox } from "./Checkbox";
 
 const onCheckedChange = fn();
@@ -97,22 +98,17 @@ export const Disabled: Story = {
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
         const box = canvas.getByRole("checkbox", { name: "Remember this key" });
-        const input = canvasElement.querySelector<HTMLInputElement>('input[type="checkbox"]');
-        const check = canvasElement.querySelector('[data-slot="checkbox"] svg');
+        const input = requireElement(
+            canvasElement.querySelector<HTMLInputElement>('input[type="checkbox"]'),
+            "the hidden input",
+        );
+        const check = requireElement(canvasElement.querySelector('[data-slot="checkbox"] svg'), "the check");
 
         await expect(box).toHaveAttribute("aria-disabled", "true");
         await expect(box).toHaveAttribute("tabindex", "-1");
         await expect(Math.round(box.getBoundingClientRect().width)).toBe(16);
 
-        if (input === null) {
-            throw new Error("The disabled checkbox did not render a hidden input");
-        }
-
         await expect(input).toBeDisabled();
-
-        if (check === null) {
-            throw new Error("The disabled checkbox did not render a check");
-        }
 
         await expect(Math.round(check.getBoundingClientRect().width)).toBe(12);
     },

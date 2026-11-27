@@ -4,6 +4,7 @@ import { expect, screen, userEvent, waitFor, within } from "storybook/test";
 
 import { DarkTheme } from "@/storybook/theme";
 
+import { requireElement } from "@/storybook/dom";
 import { ImageViewer } from "./ImageViewer";
 import { imageAlt, imageCaption, imageSrc } from "../Image/imageFixture";
 
@@ -51,16 +52,10 @@ export const Default: Story = {
 
         await waitFor(() => expect(image).toHaveAttribute("data-status", "loaded"), { timeout: 5000 });
 
-        const caption = dialog.querySelector("[data-slot='image-viewer-caption']");
-        if (caption === null) {
-            throw new Error("The viewer did not render the caption");
-        }
+        const caption = requireElement(dialog.querySelector("[data-slot='image-viewer-caption']"), "caption");
         await expect(caption).toHaveTextContent(imageCaption);
 
-        const zoom = dialog.querySelector("[data-slot='image-viewer-zoom']");
-        if (zoom === null) {
-            throw new Error("The viewer did not render the zoom status");
-        }
+        const zoom = requireElement(dialog.querySelector("[data-slot='image-viewer-zoom']"), "zoom");
 
         await expect(zoom).toHaveTextContent("100%");
 
@@ -88,10 +83,7 @@ export const Dark: Story = {
     play: async () => {
         await screen.findByRole("dialog", { name: "Image viewer" });
 
-        const backdrop = document.querySelector("[data-slot='image-viewer-backdrop']");
-        if (backdrop === null) {
-            throw new Error("The viewer did not render a backdrop");
-        }
+        const backdrop = requireElement(document.querySelector("[data-slot='image-viewer-backdrop']"), "backdrop");
 
         await expect(getComputedStyle(backdrop).backgroundColor).toBe("rgba(0, 0, 0, 0.85)");
     },
