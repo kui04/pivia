@@ -1,4 +1,5 @@
 import js from "@eslint/js";
+import { defineConfig } from "eslint/config";
 import prettier from "eslint-config-prettier/flat";
 import jsxA11y from "eslint-plugin-jsx-a11y";
 import reactHooks from "eslint-plugin-react-hooks";
@@ -8,7 +9,7 @@ import tseslint from "typescript-eslint";
 
 // Each package owns its tsconfig.json. projectService finds the nearest one for every file, so this
 // root config needs no list of projects.
-export default tseslint.config(
+export default defineConfig(
     { ignores: ["**/dist", "**/node_modules", "**/storybook-static", ".devenv", ".direnv"] },
     {
         files: ["**/*.{js,mjs,cjs}"],
