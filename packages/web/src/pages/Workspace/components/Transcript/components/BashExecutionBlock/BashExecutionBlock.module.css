@@ -43,9 +43,9 @@
             margin: 0;
             color: var(--color-on-surface);
             font-family: var(--font-mono);
-            font-size: var(--type-body-medium-size);
-            letter-spacing: var(--type-body-medium-tracking);
-            line-height: var(--type-body-medium-line-height);
+            font-size: var(--type-code-size);
+            letter-spacing: var(--type-code-tracking);
+            line-height: var(--type-code-line-height);
             white-space: pre-wrap;
             overflow-wrap: anywhere;
 

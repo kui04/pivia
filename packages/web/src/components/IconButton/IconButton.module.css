@@ -99,9 +99,10 @@
         color: var(--color-on-surface);
         box-shadow: var(--elevation-2);
         font-family: var(--font-sans);
-        font-size: var(--type-label-medium-size);
-        line-height: var(--type-label-medium-line-height);
-        letter-spacing: var(--type-label-medium-tracking);
+        font-size: var(--type-caption-size);
+        font-weight: var(--type-caption-weight);
+        line-height: var(--type-caption-line-height);
+        letter-spacing: var(--type-caption-tracking);
         transform-origin: var(--transform-origin);
         transition:
             opacity var(--motion-duration-effects-fast) var(--motion-easing-standard),

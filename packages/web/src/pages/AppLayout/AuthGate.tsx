@@ -1,4 +1,5 @@
 import { Button, Field, Form, Input } from "@components";
+import { useFontRole } from "@/hooks";
 
 import styles from "./AuthGate.module.css";
 
@@ -26,6 +27,7 @@ function passwordFrom(values: Record<string, unknown>): string | null {
  * contract. A successful login replaces the gate with the workspace outlet in `AppLayout`.
  */
 export function AuthGate({ error, submitting, onSubmit }: AuthGateProps) {
+    useFontRole("serif");
     return (
         <div className={styles.auth}>
             <section className={styles.panel} aria-labelledby="auth-gate-title">

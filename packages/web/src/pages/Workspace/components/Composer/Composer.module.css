@@ -5,6 +5,9 @@
  *
  *   .card                   rounded flat card surface owning focus-within outline
  *   ├─ .textarea            auto-sizing multi-line prompt input
+ *   │   ├─ @media (any-pointer: coarse)
+ *   │   └─ @supports not (field-sizing: content)
+ *   │       └─ @media (any-pointer: coarse)
  *   ├─ .fileInput           visually hidden image file input
  *   └─ .controls            footer row splitting pickers and actions
  *       ├─ .pickers         model and thinking level pills
@@ -13,7 +16,9 @@
  * Classes passed to child components stay top-level:
  *
  *   .inputScroll            ScrollArea root bounding the auto-sizing textarea
+ *   └─ @media (any-pointer: coarse)
  *   .inputViewport          ScrollArea viewport matching the capped textarea height
+ *   └─ @media (any-pointer: coarse)
  *   .attachButton           IconButton for picking image files
  *   .sendButton             primary IconButton for send / steer
  *   .stopButton             destructive IconButton for aborting streaming
@@ -39,7 +44,7 @@
         box-sizing: border-box;
         display: block;
         inline-size: 100%;
-        min-block-size: calc(var(--type-body-large-line-height) * 2 + var(--space-12));
+        min-block-size: calc(var(--type-body-line-height) * 2 + var(--space-12));
         padding: var(--space-12) var(--space-16) 0;
         border: 0;
         outline: none;
@@ -48,10 +53,10 @@
         background: transparent;
         color: var(--color-on-surface);
         font-family: var(--font-sans);
-        font-size: var(--type-body-large-size);
-        font-weight: var(--type-body-large-weight);
-        letter-spacing: var(--type-body-large-tracking);
-        line-height: var(--type-body-large-line-height);
+        font-size: var(--type-body-size);
+        font-weight: var(--type-body-weight);
+        letter-spacing: var(--type-body-tracking);
+        line-height: var(--type-body-line-height);
         field-sizing: content;
 
         &::placeholder {
@@ -64,10 +69,25 @@
             cursor: not-allowed;
         }
 
+        /* A coarse pointer needs 16px text to keep mobile browsers from zooming the composer. */
+        @media (any-pointer: coarse) {
+            & {
+                min-block-size: calc(var(--type-body-large-line-height) * 2 + var(--space-12));
+                font-size: var(--type-body-large-size);
+                line-height: var(--type-body-large-line-height);
+            }
+        }
+
         @supports not (field-sizing: content) {
             & {
-                max-block-size: calc(var(--type-body-large-line-height) * 6 + var(--space-12));
+                max-block-size: calc(var(--type-body-line-height) * 6 + var(--space-12));
                 overflow-y: auto;
+            }
+
+            @media (any-pointer: coarse) {
+                & {
+                    max-block-size: calc(var(--type-body-large-line-height) * 6 + var(--space-12));
+                }
             }
         }
     }
@@ -114,7 +134,13 @@
 
 .inputScroll,
 .inputViewport {
-    max-block-size: calc(var(--type-body-large-line-height) * 6 + var(--space-12));
+    max-block-size: calc(var(--type-body-line-height) * 6 + var(--space-12));
+
+    @media (any-pointer: coarse) {
+        & {
+            max-block-size: calc(var(--type-body-large-line-height) * 6 + var(--space-12));
+        }
+    }
 }
 
 .attachButton,

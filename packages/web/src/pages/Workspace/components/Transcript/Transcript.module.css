@@ -24,7 +24,7 @@
  */
 .root {
     --transcript-bottom-offset: 0px;
-    --transcript-line-reserve: calc(var(--type-body-medium-line-height) * 3);
+    --transcript-line-reserve: calc(var(--type-body-line-height) * 3);
 
     position: relative;
     display: flex;

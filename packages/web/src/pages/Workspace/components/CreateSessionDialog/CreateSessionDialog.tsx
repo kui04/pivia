@@ -28,6 +28,7 @@ import {
     LoadingIndicator,
     ScrollArea,
 } from "@components";
+import { ensureFontRole } from "@/lib";
 
 import styles from "./CreateSessionDialog.module.css";
 
@@ -191,6 +192,7 @@ function CreateSessionBody({
                 return;
             }
             if (result.code === "directory_not_found" && !createDirectory) {
+                void ensureFontRole("mono");
                 setSubmission({ kind: "idle" });
                 setConfirmCreatePath(targetPath);
                 return;

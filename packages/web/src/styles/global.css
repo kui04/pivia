@@ -1,5 +1,6 @@
 :root {
     font-synthesis: none;
+    font-size-adjust: from-font;
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
 }
@@ -14,6 +15,11 @@ body {
     position: relative;
     background: var(--color-surface);
     color: var(--color-on-surface);
+    font-family: var(--font-sans);
+    font-size: var(--type-body-size);
+    font-weight: var(--type-body-weight);
+    letter-spacing: var(--type-body-tracking);
+    line-height: var(--type-body-line-height);
     overscroll-behavior: none;
 }
 

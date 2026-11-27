@@ -2,13 +2,12 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { RouterProvider } from "react-router/dom";
 
-import "@/styles/fonts.css";
 import "@/styles/token.css";
 import "@/styles/reset.css";
 import "@/styles/global.css";
 
 import { ToastProvider } from "@components/Toast";
-import { Log } from "@/lib";
+import { Log, scheduleDefaultFonts } from "@/lib";
 import { toastManager } from "@/lib/toast";
 import { router } from "./router";
 
@@ -95,6 +94,7 @@ function installViewportMetrics(): void {
 }
 
 installViewportMetrics();
+scheduleDefaultFonts();
 
 const container = document.getElementById("root");
 if (container === null) {

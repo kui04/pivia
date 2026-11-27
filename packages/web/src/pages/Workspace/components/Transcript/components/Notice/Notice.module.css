@@ -12,10 +12,11 @@
     align-items: flex-start;
     gap: var(--space-8);
     color: var(--color-on-surface-variant);
-    font-size: var(--type-body-medium-size);
+    font-size: var(--type-body-size);
     font-variant-numeric: tabular-nums;
-    letter-spacing: var(--type-body-medium-tracking);
-    line-height: var(--type-body-medium-line-height);
+    font-feature-settings: "tnum" 1;
+    letter-spacing: var(--type-body-tracking);
+    line-height: var(--type-body-line-height);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
 

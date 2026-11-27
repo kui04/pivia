@@ -7,8 +7,8 @@
     margin: var(--space-8) 0 0;
     color: var(--color-on-surface-variant);
     font-family: var(--font-mono);
-    font-size: var(--type-label-medium-size);
-    letter-spacing: var(--type-label-medium-tracking);
-    line-height: var(--type-label-medium-line-height);
+    font-size: var(--type-caption-size);
+    letter-spacing: var(--type-caption-tracking);
+    line-height: var(--type-caption-line-height);
     overflow-wrap: anywhere;
 }

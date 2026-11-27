@@ -20,9 +20,9 @@ Component conventions live in [components.md](components.md). Frontend code live
 - `packages/web/src/styles/token.css` holds the design tokens (VS Code Modern colors mapped to Material 3 roles, M3 Expressive type/shape scales, spacing, elevation, and motion). Use tokens instead of raw values; ask before adding tokens or using raw values.
 - `--color-outline-control` provides the 3:1 boundary for interactive controls (`Input`, `Select`, `Checkbox`, secondary `Button`); `--color-outline` stays the decorative separator.
 - `--color-tertiary` is the single purple accent for skill invocation headers, extension message headers, and non-failed `!!` command borders. Keep it out of error and warning roles.
-- Load order in `packages/web/src/main.tsx` (and mirrored in `packages/web/.storybook/preview.ts`) is `fonts.css`, `token.css`, `reset.css`, `global.css`. `reset.css` is a trimmed Tailwind v4 Preflight; `global.css` holds only document-level rules.
+- Load order in `packages/web/src/main.tsx` (and mirrored in `packages/web/.storybook/preview.ts`) is `token.css`, `reset.css`, `global.css`. `reset.css` is a trimmed Tailwind v4 Preflight; `global.css` holds document-level defaults (`font-sans`, `--type-body-*`, `font-size-adjust: from-font`, `font-synthesis: none`).
 - Colors use `light-dark()` with `color-scheme`. Set `data-theme="light"` or `data-theme="dark"` on `<html>` to override the system theme.
-- `packages/web/src/styles/fonts.css` bundles IBM Plex Sans, Serif, and Mono via `@fontsource`. Because `global.css` sets `font-synthesis: none`, every new weight or style needs a real face in `fonts.css`.
+- Fonts (`Google Sans`, `Newsreader`, and `JetBrains Mono` via `@fontsource-variable/*`, Latin subset only) live in `packages/web/src/styles/fonts/*.css` and load lazily through `packages/web/src/lib/fonts.ts` (`scheduleDefaultFonts`, `ensureFontRole`, `applyFontPreset`) and `useFontRole`: `sans` loads during browser idle time, while `mono` and `serif` load on demand when matching surfaces mount. Because `global.css` sets `font-synthesis: none`, every weight and style must be covered by the active variable face.
 
 ### CSS Nesting
 

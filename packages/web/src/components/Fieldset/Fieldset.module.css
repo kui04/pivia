@@ -31,8 +31,8 @@
 .legend {
     padding: 0;
     color: var(--color-on-surface);
-    font-size: var(--type-title-small-size);
-    font-weight: var(--type-title-small-emphasized-weight);
-    letter-spacing: var(--type-title-small-tracking);
-    line-height: var(--type-title-small-line-height);
+    font-size: var(--type-subtitle-size);
+    font-weight: var(--type-subtitle-weight);
+    letter-spacing: var(--type-subtitle-tracking);
+    line-height: var(--type-subtitle-line-height);
 }

@@ -25,20 +25,20 @@
 
     .title {
         font-family: var(--font-sans);
-        font-size: var(--type-headline-small-size);
-        font-weight: var(--type-headline-small-emphasized-weight);
-        letter-spacing: var(--type-headline-small-tracking);
-        line-height: var(--type-headline-small-line-height);
+        font-size: var(--type-heading-size);
+        font-weight: var(--type-heading-weight);
+        letter-spacing: var(--type-heading-tracking);
+        line-height: var(--type-heading-line-height);
     }
 
     .message {
         max-inline-size: 60ch;
         color: var(--color-on-surface-variant);
         font-family: var(--font-sans);
-        font-size: var(--type-body-medium-size);
-        font-weight: var(--type-body-medium-weight);
-        letter-spacing: var(--type-body-medium-tracking);
-        line-height: var(--type-body-medium-line-height);
+        font-size: var(--type-body-size);
+        font-weight: var(--type-body-weight);
+        letter-spacing: var(--type-body-tracking);
+        line-height: var(--type-body-line-height);
         text-wrap: pretty;
     }
 }
@@ -50,10 +50,10 @@
        surface, below the 4.5:1 a 14px label needs. */
     color: var(--color-on-primary-container);
     font-family: var(--font-sans);
-    font-size: var(--type-label-large-size);
-    font-weight: var(--type-label-large-weight);
-    letter-spacing: var(--type-label-large-tracking);
-    line-height: var(--type-label-large-line-height);
+    font-size: var(--type-label-size);
+    font-weight: var(--type-label-weight);
+    letter-spacing: var(--type-label-tracking);
+    line-height: var(--type-label-line-height);
     text-decoration: underline;
     transition: background-color var(--motion-duration-effects-fast) var(--motion-easing-standard);
 

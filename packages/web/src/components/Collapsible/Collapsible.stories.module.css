@@ -21,10 +21,10 @@
     color: var(--color-on-surface);
     cursor: pointer;
     font-family: var(--font-sans);
-    font-size: var(--type-body-medium-size);
-    font-weight: var(--type-body-medium-emphasized-weight);
-    letter-spacing: var(--type-body-medium-tracking);
-    line-height: var(--type-body-medium-line-height);
+    font-size: var(--type-label-size);
+    font-weight: var(--type-label-weight);
+    letter-spacing: var(--type-label-tracking);
+    line-height: var(--type-label-line-height);
 
     &[data-disabled] {
         color: var(--color-on-surface-variant);
@@ -40,6 +40,6 @@
     border-radius: var(--shape-corner-small);
     background-color: var(--color-surface-container);
     color: var(--color-on-surface-variant);
-    font-size: var(--type-body-medium-size);
-    line-height: var(--type-body-medium-line-height);
+    font-size: var(--type-body-size);
+    line-height: var(--type-body-line-height);
 }

@@ -80,16 +80,19 @@
 
         .command {
             flex: none;
-            font-size: var(--type-body-medium-size);
-            font-weight: var(--type-body-medium-emphasized-weight);
-            line-height: var(--type-body-medium-line-height);
+            font-size: var(--type-label-size);
+            font-weight: var(--type-label-weight);
+            letter-spacing: var(--type-label-tracking);
+            line-height: var(--type-label-line-height);
         }
 
         .argHint {
             flex: none;
             color: var(--color-on-surface-variant);
-            font-size: var(--type-label-medium-size);
-            line-height: var(--type-label-medium-line-height);
+            font-size: var(--type-caption-size);
+            font-weight: var(--type-caption-weight);
+            letter-spacing: var(--type-caption-tracking);
+            line-height: var(--type-caption-line-height);
         }
 
         .description {
@@ -97,8 +100,9 @@
             min-inline-size: 0;
             overflow: hidden;
             color: var(--color-on-surface-variant);
-            font-size: var(--type-body-medium-size);
-            line-height: var(--type-body-medium-line-height);
+            font-size: var(--type-body-size);
+            letter-spacing: var(--type-body-tracking);
+            line-height: var(--type-body-line-height);
             text-overflow: ellipsis;
             white-space: nowrap;
         }

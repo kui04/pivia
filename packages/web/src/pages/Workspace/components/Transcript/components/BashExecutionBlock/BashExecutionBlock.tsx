@@ -3,7 +3,7 @@ import { Terminal } from "lucide-react";
 import { useState, type ReactElement } from "react";
 
 import { Icon } from "@components";
-import { useCopyFeedback } from "@/hooks";
+import { useCopyFeedback, useFontRole } from "@/hooks";
 import { cn } from "@/lib";
 import type { TranscriptBashItem, TranscriptBashStatus } from "@/stores/session";
 
@@ -55,6 +55,7 @@ export function BashExecutionBlock({
     defaultWrapped = false,
     className,
 }: BashExecutionBlockProps): ReactElement {
+    useFontRole("mono");
     const [wrapped, setWrapped] = useState(defaultWrapped);
     const { status: copyStatus, copy } = useCopyFeedback(onCopy);
     // The record never grows, so the viewport only needs scroll listeners for the edge masks.

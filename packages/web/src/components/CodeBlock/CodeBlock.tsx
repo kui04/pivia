@@ -2,7 +2,7 @@ import { Check, Copy, WrapText, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { ThemedToken } from "shiki";
 
-import { copyFeedbackText, useCopyFeedback } from "@/hooks";
+import { copyFeedbackText, useCopyFeedback, useFontRole } from "@/hooks";
 
 import { cn } from "@/lib";
 
@@ -56,6 +56,7 @@ export function CodeBlock({
     viewportClassName,
     className,
 }: CodeBlockProps) {
+    useFontRole("mono");
     const [wrapped, setWrapped] = useState(defaultWrap);
     const { status: copyStatus, copy } = useCopyFeedback(onCopy);
     const [rendered, setRendered] = useState<{ code: string; language: string; lines: ThemedToken[][] }>();

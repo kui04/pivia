@@ -1,7 +1,8 @@
 import { assertNever } from "@pivia/protocol";
-import type { ReactElement } from "react";
+import { useEffect, type ReactElement } from "react";
 
-import { Button, Dialog, DialogActions, DialogDescription, DialogHeader, DialogTitle } from "@components";
+import { Button, Dialog, DialogActions, DialogDescription, DialogHeader, DialogTitle, Tabular } from "@components";
+import { ensureFontRole } from "@/lib";
 import type { CatalogSyncPhase } from "@/stores/workspace";
 
 import styles from "./SettingsDialog.module.css";
@@ -52,6 +53,12 @@ export function SettingsDialog({
     onRefresh,
     authAction,
 }: SettingsDialogProps): ReactElement {
+    useEffect(() => {
+        if (open) {
+            void ensureFontRole("mono");
+        }
+    }, [open]);
+
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogHeader>
@@ -60,14 +67,24 @@ export function SettingsDialog({
             </DialogHeader>
             <dl className={styles.facts}>
                 <dt className={styles.term}>Host</dt>
-                <dd className={styles.value}>{origin}</dd>
+                <dd className={styles.monoValue}>{origin}</dd>
                 <dt className={styles.term}>Connection</dt>
-                <dd className={styles.value}>{formatSyncStatus(sync)}</dd>
+                <dd className={styles.value}>
+                    <Tabular>{formatSyncStatus(sync)}</Tabular>
+                </dd>
                 <dt className={styles.term}>Sessions</dt>
-                <dd className={styles.value}>{String(sessionCount)}</dd>
+                <dd className={styles.value}>
+                    <Tabular>{String(sessionCount)}</Tabular>
+                </dd>
                 <dt className={styles.term}>Last updated</dt>
                 <dd className={styles.value}>
-                    {updatedAtMs === null ? "Never" : new Date(updatedAtMs).toLocaleString()}
+                    {updatedAtMs === null ? (
+                        "Never"
+                    ) : (
+                        <Tabular as="time" dateTime={new Date(updatedAtMs).toISOString()}>
+                            {new Date(updatedAtMs).toLocaleString()}
+                        </Tabular>
+                    )}
                 </dd>
             </dl>
             <DialogActions>

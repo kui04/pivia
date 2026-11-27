@@ -96,8 +96,9 @@
             flex: 1;
             min-inline-size: 0;
             overflow: hidden;
-            font-size: var(--type-body-medium-size);
-            line-height: var(--type-body-medium-line-height);
+            font-size: var(--type-body-size);
+            letter-spacing: var(--type-body-tracking);
+            line-height: var(--type-body-line-height);
             text-overflow: ellipsis;
             white-space: nowrap;
         }
@@ -139,7 +140,8 @@
 
     .statusText {
         color: var(--color-on-surface-variant);
-        font-size: var(--type-body-medium-size);
-        line-height: var(--type-body-medium-line-height);
+        font-size: var(--type-body-size);
+        letter-spacing: var(--type-body-tracking);
+        line-height: var(--type-body-line-height);
     }
 }

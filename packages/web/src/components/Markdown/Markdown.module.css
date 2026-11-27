@@ -53,9 +53,9 @@
  *   .mathScroll                                      className of ScrollArea around the display math
  */
 .root {
-    /* Families. IBM Plex ships with the app in src/styles/fonts.css. */
-    --md-font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-    --md-font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    /* Families follow the active system role tokens unless overridden for reading mode. */
+    --md-font-sans: var(--font-reading, var(--font-sans));
+    --md-font-mono: var(--font-mono);
 
     /* Type scale: 14px body, 17/15/14 headings, 13px code and data. */
     --md-text-size: 0.875rem;
@@ -327,9 +327,8 @@
 }
 
 /*
- * The standalone block sets its own UI size (14px). In a transcript code sits
- * one step below the prose and level with the tables, so the mono text does not
- * outweigh the paragraph it belongs to.
+ * A fenced block in a transcript shares the 13px code scale with tables so mono text
+ * does not outweigh the prose around it.
  */
 .codeBlock {
     margin-block: var(--md-space-3);
@@ -359,6 +358,7 @@
         font-size: var(--md-table-size);
         line-height: 1.5;
         font-variant-numeric: tabular-nums;
+        font-feature-settings: "tnum" 1;
 
         :is(th, td) {
             padding: var(--md-space-2) var(--md-space-3);

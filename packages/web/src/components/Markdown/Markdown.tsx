@@ -19,6 +19,7 @@ import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 
+import { useFontRole } from "@/hooks";
 import { cn } from "@/lib";
 
 import { CodeBlock } from "../CodeBlock";
@@ -186,6 +187,7 @@ function CodeFence({ children }: ComponentProps<"pre"> & ExtraProps) {
 }
 
 function InlineCode({ children }: ComponentProps<"code"> & ExtraProps) {
+    useFontRole("mono");
     return <code className={styles.inlineCode}>{children}</code>;
 }
 

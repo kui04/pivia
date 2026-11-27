@@ -1,7 +1,8 @@
 import { assertNever } from "@pivia/protocol";
-import { useCallback, useMemo, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
 
 import { Button, LoadingIndicator } from "@components";
+import { ensureFontRole } from "@/lib";
 import { showError, showWarning, toastManager } from "@/lib/toast";
 import { useSessionStore as defaultSessionStore } from "@/stores";
 import {
@@ -146,6 +147,12 @@ export function WorkspacePage(props: WorkspacePageProps = {}): ReactElement {
     const sessionStore = props.sessionStore ?? defaultSessionStore;
     const onOpenLink = props.onOpenLink ?? openExternalLink;
     const route = useWorkspaceSession({ sessionStore });
+
+    useEffect(() => {
+        if (route.kind === "invalid") {
+            void ensureFontRole("mono");
+        }
+    }, [route.kind]);
 
     const [clearingQueue, setClearingQueue] = useState(false);
 

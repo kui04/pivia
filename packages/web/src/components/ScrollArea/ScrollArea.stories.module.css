@@ -41,9 +41,9 @@
         background-color: var(--color-surface-container-high);
         color: var(--color-on-surface);
         font-family: var(--font-sans);
-        font-size: var(--type-label-large-size);
-        line-height: var(--type-label-large-line-height);
-        font-weight: var(--type-label-large-weight);
+        font-size: var(--type-label-size);
+        line-height: var(--type-label-line-height);
+        font-weight: var(--type-label-weight);
         cursor: pointer;
 
         @media (hover: hover) {
@@ -69,9 +69,9 @@
         background-color: var(--color-surface-container-high);
         color: var(--color-on-surface-variant);
         font-family: var(--font-sans);
-        font-size: var(--type-label-medium-size);
-        line-height: var(--type-label-medium-line-height);
-        font-weight: var(--type-label-medium-weight);
+        font-size: var(--type-caption-size);
+        line-height: var(--type-caption-line-height);
+        font-weight: var(--type-caption-weight);
     }
 }
 
@@ -85,8 +85,8 @@
     margin: 0;
     color: var(--color-on-surface);
     font-family: var(--font-sans);
-    font-size: var(--type-body-medium-size);
-    line-height: var(--type-body-medium-line-height);
+    font-size: var(--type-body-size);
+    line-height: var(--type-body-line-height);
 }
 
 .row {
@@ -105,8 +105,8 @@
         background-color: var(--color-surface-container-high);
         color: var(--color-on-surface-variant);
         font-family: var(--font-sans);
-        font-size: var(--type-label-medium-size);
-        line-height: var(--type-label-medium-line-height);
-        font-weight: var(--type-label-medium-weight);
+        font-size: var(--type-caption-size);
+        line-height: var(--type-caption-line-height);
+        font-weight: var(--type-caption-weight);
     }
 }

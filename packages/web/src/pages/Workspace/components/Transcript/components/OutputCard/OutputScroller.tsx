@@ -1,6 +1,7 @@
 import type { ReactElement, ReactNode } from "react";
 
 import { ScrollArea } from "@components";
+import { useFontRole } from "@/hooks";
 import { cn } from "@/lib";
 
 import styles from "./OutputScroller.module.css";
@@ -48,6 +49,7 @@ export function OutputScroller({
     fadeTop,
     fadeBottom,
 }: OutputScrollerProps): ReactElement {
+    useFontRole("mono");
     return (
         <ScrollArea
             label={label}

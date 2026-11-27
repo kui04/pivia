@@ -1,7 +1,7 @@
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
 
-import { IconButton, Image, ImageViewer, ScrollArea } from "@components";
+import { IconButton, Image, ImageViewer, ScrollArea, Tabular } from "@components";
 import { cn, Formatter } from "@/lib";
 
 import type { AttachmentId, StagedImageAttachment } from "../../types";
@@ -130,7 +130,7 @@ export function AttachmentStrip({ items, onRemove, className }: AttachmentStripP
                                         <span className={styles.name} title={item.name}>
                                             {item.name}
                                         </span>
-                                        <span className={styles.subtitle}>{sizeLabel}</span>
+                                        <Tabular className={styles.subtitle}>{sizeLabel}</Tabular>
                                     </div>
                                     <IconButton
                                         type="button"

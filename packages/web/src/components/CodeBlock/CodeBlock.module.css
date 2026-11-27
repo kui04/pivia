@@ -38,10 +38,10 @@
         border-block-end: var(--border-width) solid var(--color-outline-variant);
 
         .language {
-            font-family: var(--font-mono);
-            font-size: var(--type-label-medium-size);
-            line-height: var(--type-label-medium-line-height);
-            letter-spacing: var(--type-label-medium-tracking);
+            font-size: var(--type-caption-size);
+            font-weight: var(--type-caption-weight);
+            line-height: var(--type-caption-line-height);
+            letter-spacing: var(--type-caption-tracking);
             color: var(--color-on-surface-variant);
         }
 
@@ -64,15 +64,16 @@
     padding-block: var(--space-8);
     background-color: transparent;
     font-family: var(--font-mono);
-    font-size: var(--type-body-medium-size);
-    line-height: var(--type-body-medium-line-height);
+    font-size: var(--type-code-size);
+    letter-spacing: var(--type-code-tracking);
+    line-height: var(--type-code-line-height);
     /* Tabs are a code convention rather than a design value; 8 columns is unreadable. */
     tab-size: 4;
     white-space: pre;
 
     .line {
         display: flex;
-        min-height: var(--type-body-medium-line-height);
+        min-height: var(--type-code-line-height);
         padding-inline-end: var(--space-16);
 
         /* The tint is translucent, so the sticky gutter layers the same tint over the surface. */

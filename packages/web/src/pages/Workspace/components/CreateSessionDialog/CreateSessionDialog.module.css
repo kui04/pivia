@@ -112,10 +112,10 @@
         margin: 0;
         color: var(--color-on-surface);
         font-family: var(--font-sans);
-        font-size: var(--type-title-medium-size);
-        font-weight: var(--type-title-medium-weight);
-        letter-spacing: var(--type-title-medium-tracking);
-        line-height: var(--type-title-medium-line-height);
+        font-size: var(--type-title-size);
+        font-weight: var(--type-title-weight);
+        letter-spacing: var(--type-title-tracking);
+        line-height: var(--type-title-line-height);
     }
 }
 
@@ -213,8 +213,9 @@
     outline: none;
     background-color: transparent;
     font-family: var(--font-sans);
-    font-size: var(--type-body-medium-size);
-    line-height: var(--type-body-medium-line-height);
+    font-size: var(--type-body-size);
+    letter-spacing: var(--type-body-tracking);
+    line-height: var(--type-body-line-height);
 
     &:hover:not(:disabled) {
         border-color: transparent;
@@ -315,10 +316,10 @@
         margin: 0;
         color: var(--color-on-surface-variant);
         font-family: var(--font-sans);
-        font-size: var(--type-label-large-size);
-        font-weight: var(--type-label-large-weight);
-        letter-spacing: var(--type-label-large-tracking);
-        line-height: var(--type-label-large-line-height);
+        font-size: var(--type-label-size);
+        font-weight: var(--type-label-weight);
+        letter-spacing: var(--type-label-tracking);
+        line-height: var(--type-label-line-height);
     }
 
     .rowList {
@@ -356,8 +357,9 @@
     .browserEmpty {
         margin: 0;
         font-family: var(--font-sans);
-        font-size: var(--type-body-medium-size);
-        line-height: var(--type-body-medium-line-height);
+        font-size: var(--type-body-size);
+        letter-spacing: var(--type-body-tracking);
+        line-height: var(--type-body-line-height);
     }
 
     .browserStatus,
@@ -386,10 +388,10 @@
     background-color: transparent;
     color: var(--color-on-surface);
     font-family: var(--font-sans);
-    font-size: var(--type-body-medium-size);
-    font-weight: var(--type-body-medium-weight);
-    letter-spacing: var(--type-body-medium-tracking);
-    line-height: var(--type-body-medium-line-height);
+    font-size: var(--type-body-size);
+    font-weight: var(--type-body-weight);
+    letter-spacing: var(--type-body-tracking);
+    line-height: var(--type-body-line-height);
     text-align: start;
     cursor: pointer;
     transition:
@@ -418,7 +420,7 @@
         --row-check-color: var(--color-on-primary-container);
         background-color: var(--color-primary-container);
         color: var(--color-on-primary-container);
-        font-weight: var(--type-body-medium-emphasized-weight);
+        font-weight: var(--font-weight-medium);
     }
 
     &:disabled {
@@ -503,9 +505,10 @@
     border-radius: var(--shape-corner-small);
     background-color: var(--color-surface-container);
     color: var(--color-on-surface);
-    font-family: var(--font-sans);
-    font-size: var(--type-body-medium-size);
-    line-height: var(--type-body-medium-line-height);
+    font-family: var(--font-mono);
+    font-size: var(--type-code-size);
+    letter-spacing: var(--type-code-tracking);
+    line-height: var(--type-code-line-height);
     overflow-wrap: anywhere;
 }
 

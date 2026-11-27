@@ -3,7 +3,8 @@
  *
  *   .facts (dl)
  *   ├─ .term (dt)
- *   └─ .value (dd)
+ *   ├─ .value (dd)
+ *   └─ .monoValue (dd)
  */
 .facts {
     display: grid;
@@ -13,20 +14,30 @@
 
     .term {
         color: var(--color-on-surface-variant);
-        font-size: var(--type-label-large-size);
-        font-weight: var(--type-label-large-weight);
-        letter-spacing: var(--type-label-large-tracking);
-        line-height: var(--type-label-large-line-height);
+        font-size: var(--type-label-size);
+        font-weight: var(--type-label-weight);
+        letter-spacing: var(--type-label-tracking);
+        line-height: var(--type-label-line-height);
     }
 
     /* A host origin and status break anywhere rather than widening the dialog. */
-    .value {
+    .value,
+    .monoValue {
         margin: 0;
         color: var(--color-on-surface);
-        font-family: var(--font-mono);
-        font-size: var(--type-body-medium-size);
-        letter-spacing: var(--type-body-medium-tracking);
-        line-height: var(--type-body-medium-line-height);
         overflow-wrap: anywhere;
+    }
+
+    .value {
+        font-size: var(--type-body-size);
+        letter-spacing: var(--type-body-tracking);
+        line-height: var(--type-body-line-height);
+    }
+
+    .monoValue {
+        font-family: var(--font-mono);
+        font-size: var(--type-code-size);
+        letter-spacing: var(--type-code-tracking);
+        line-height: var(--type-code-line-height);
     }
 }

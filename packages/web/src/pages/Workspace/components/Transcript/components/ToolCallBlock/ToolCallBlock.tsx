@@ -1,10 +1,10 @@
 import { assertNever } from "@pivia/protocol";
 import { Ban, Check, CircleDashed, X, type LucideIcon } from "lucide-react";
-import { useMemo, useState, type ReactElement } from "react";
+import { useEffect, useMemo, useState, type ReactElement } from "react";
 
 import { CodeBlock, Icon, Image, ScrollArea, VisuallyHidden } from "@components";
 import { useCopyFeedback } from "@/hooks";
-import { Formatter } from "@/lib";
+import { ensureFontRole, Formatter } from "@/lib";
 import {
     type TranscriptNestedCallStatus,
     type TranscriptNestedCallsSummary,
@@ -180,6 +180,12 @@ export function ToolCallBlock({
     const hasArguments = Object.keys(step.arguments).length > 0;
     const showScriptOutputCard = step.preview.kind === "script" && (hasOutput || step.images.length > 0);
     const hasScrollableOutputCard = step.preview.kind === "none" || showScriptOutputCard;
+
+    useEffect(() => {
+        if (step.nestedCalls !== null) {
+            void ensureFontRole("mono");
+        }
+    }, [step.nestedCalls]);
 
     const { viewportRef, fadeTop, fadeBottom } = useAutoScroll({
         enabled: open && hasScrollableOutputCard,

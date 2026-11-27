@@ -23,10 +23,10 @@
          */
         --shimmer-keyframes: shimmer;
 
-        font-size: var(--type-body-medium-size);
-        font-weight: var(--type-body-medium-emphasized-weight);
-        letter-spacing: var(--type-body-medium-tracking);
-        line-height: var(--type-body-medium-line-height);
+        font-size: var(--type-label-size);
+        font-weight: var(--type-label-weight);
+        letter-spacing: var(--type-label-tracking);
+        line-height: var(--type-label-line-height);
         background-image: var(--shimmer-gradient);
         background-size: var(--shimmer-size);
         -webkit-background-clip: text;

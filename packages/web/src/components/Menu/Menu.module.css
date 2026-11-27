@@ -96,10 +96,10 @@
     border-radius: var(--shape-corner-extra-small);
     color: var(--color-on-surface);
     cursor: default;
-    font-size: var(--type-label-large-size);
-    font-weight: var(--type-label-large-weight);
-    line-height: var(--type-label-large-line-height);
-    letter-spacing: var(--type-label-large-tracking);
+    font-size: var(--type-label-size);
+    font-weight: var(--type-label-weight);
+    line-height: var(--type-label-line-height);
+    letter-spacing: var(--type-label-tracking);
     outline: none;
     user-select: none;
     transition: background-color var(--motion-duration-effects-fast) var(--motion-easing-standard);
@@ -127,11 +127,12 @@
     .shortcut {
         color: var(--color-on-surface-variant);
         font-family: var(--font-sans);
-        font-size: var(--type-label-medium-size);
-        font-weight: var(--type-label-medium-weight);
-        line-height: var(--type-label-medium-line-height);
-        letter-spacing: var(--type-label-medium-tracking);
+        font-size: var(--type-caption-size);
+        font-weight: var(--type-caption-weight);
+        line-height: var(--type-caption-line-height);
+        letter-spacing: var(--type-caption-tracking);
         font-variant-numeric: tabular-nums;
+        font-feature-settings: "tnum" 1;
     }
 
     &[data-disabled] {

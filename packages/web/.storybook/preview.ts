@@ -1,11 +1,13 @@
 import type { Preview } from "@storybook/react-vite";
 
 // Load the stylesheets in the same order as src/main.tsx so stories render
-// with the real fonts, tokens and reset rules.
-import "../src/styles/fonts.css";
+// with the real tokens, reset rules, and lazy-loaded fonts.
 import "../src/styles/token.css";
 import "../src/styles/reset.css";
 import "../src/styles/global.css";
+import { ensureFontRole } from "../src/lib/fonts";
+
+void Promise.all([ensureFontRole("sans"), ensureFontRole("mono"), ensureFontRole("serif")]);
 
 const preview: Preview = {
     parameters: {

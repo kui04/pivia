@@ -274,19 +274,19 @@
                 .title {
                     color: var(--color-on-surface);
                     font-family: var(--font-sans);
-                    font-size: var(--type-title-small-size);
-                    font-weight: var(--type-title-small-emphasized-weight);
-                    line-height: var(--type-title-small-line-height);
-                    letter-spacing: var(--type-title-small-tracking);
+                    font-size: var(--type-subtitle-size);
+                    font-weight: var(--type-subtitle-weight);
+                    line-height: var(--type-subtitle-line-height);
+                    letter-spacing: var(--type-subtitle-tracking);
                 }
 
                 .description {
                     color: var(--color-on-surface-variant);
                     font-family: var(--font-sans);
-                    font-size: var(--type-body-medium-size);
-                    font-weight: var(--type-body-medium-weight);
-                    line-height: var(--type-body-medium-line-height);
-                    letter-spacing: var(--type-body-medium-tracking);
+                    font-size: var(--type-body-size);
+                    font-weight: var(--type-body-weight);
+                    line-height: var(--type-body-line-height);
+                    letter-spacing: var(--type-body-tracking);
                 }
 
                 .action {
@@ -300,10 +300,10 @@
                     color: var(--color-on-secondary-container);
                     cursor: pointer;
                     font-family: var(--font-sans);
-                    font-size: var(--type-label-large-size);
-                    font-weight: var(--type-label-large-weight);
-                    line-height: var(--type-label-large-line-height);
-                    letter-spacing: var(--type-label-large-tracking);
+                    font-size: var(--type-label-size);
+                    font-weight: var(--type-label-weight);
+                    line-height: var(--type-label-line-height);
+                    letter-spacing: var(--type-label-tracking);
                     transition:
                         background-color var(--motion-duration-effects-fast) var(--motion-easing-standard),
                         color var(--motion-duration-effects-fast) var(--motion-easing-standard);

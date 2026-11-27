@@ -48,5 +48,6 @@ export {
 } from "./Popover";
 export { ScrollArea, type ScrollAreaProps } from "./ScrollArea";
 export { Select, type SelectOption, type SelectProps } from "./Select";
+export { Tabular, type TabularProps, type TabularTag } from "./Tabular";
 export { ToastProvider, createToastManager, useToast, type ToastPosition, type ToastProviderProps } from "./Toast";
 export { VisuallyHidden, type VisuallyHiddenProps, type VisuallyHiddenTag } from "./VisuallyHidden";

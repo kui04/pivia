@@ -106,10 +106,10 @@
                             flex: none;
                             color: var(--color-on-surface);
                             font-family: var(--font-mono);
-                            font-size: var(--type-body-medium-size);
+                            font-size: var(--type-code-size);
                             font-weight: var(--font-weight-medium);
-                            letter-spacing: var(--type-body-medium-tracking);
-                            line-height: var(--type-body-medium-line-height);
+                            letter-spacing: var(--type-code-tracking);
+                            line-height: var(--type-code-line-height);
                         }
 
                         .nestedCallArgs {
@@ -118,9 +118,9 @@
                             overflow: hidden;
                             color: var(--color-on-surface-variant);
                             font-family: var(--font-mono);
-                            font-size: var(--type-body-medium-size);
-                            letter-spacing: var(--type-body-medium-tracking);
-                            line-height: var(--type-body-medium-line-height);
+                            font-size: var(--type-code-size);
+                            letter-spacing: var(--type-code-tracking);
+                            line-height: var(--type-code-line-height);
                             text-overflow: ellipsis;
                             white-space: nowrap;
                         }
@@ -132,11 +132,12 @@
                         .nestedCallMeta {
                             flex: none;
                             color: var(--color-on-surface-variant);
-                            font-family: var(--font-mono);
-                            font-size: var(--type-label-medium-size);
+                            font-size: var(--type-caption-size);
+                            font-weight: var(--type-caption-weight);
                             font-variant-numeric: tabular-nums;
-                            letter-spacing: var(--type-label-medium-tracking);
-                            line-height: var(--type-label-medium-line-height);
+                            font-feature-settings: "tnum" 1;
+                            letter-spacing: var(--type-caption-tracking);
+                            line-height: var(--type-caption-line-height);
                         }
                     }
 
@@ -144,10 +145,9 @@
                         margin: 0;
                         padding-inline-start: var(--space-24);
                         color: var(--color-error);
-                        font-family: var(--font-mono);
-                        font-size: var(--type-body-medium-size);
-                        letter-spacing: var(--type-body-medium-tracking);
-                        line-height: var(--type-body-medium-line-height);
+                        font-size: var(--type-body-size);
+                        letter-spacing: var(--type-body-tracking);
+                        line-height: var(--type-body-line-height);
                         white-space: pre-wrap;
                         overflow-wrap: anywhere;
                     }
@@ -167,9 +167,11 @@
                 .nestedCallsNote {
                     margin: 0;
                     color: var(--color-on-surface-variant);
-                    font-size: var(--type-body-medium-size);
-                    letter-spacing: var(--type-body-medium-tracking);
-                    line-height: var(--type-body-medium-line-height);
+                    font-size: var(--type-body-size);
+                    font-variant-numeric: tabular-nums;
+                    font-feature-settings: "tnum" 1;
+                    letter-spacing: var(--type-body-tracking);
+                    line-height: var(--type-body-line-height);
                 }
             }
         }
@@ -223,10 +225,9 @@
     .errorNote {
         margin: 0;
         color: var(--color-error);
-        font-family: var(--font-mono);
-        font-size: var(--type-body-medium-size);
-        letter-spacing: var(--type-body-medium-tracking);
-        line-height: var(--type-body-medium-line-height);
+        font-size: var(--type-body-size);
+        letter-spacing: var(--type-body-tracking);
+        line-height: var(--type-body-line-height);
         white-space: pre-wrap;
         overflow-wrap: anywhere;
     }

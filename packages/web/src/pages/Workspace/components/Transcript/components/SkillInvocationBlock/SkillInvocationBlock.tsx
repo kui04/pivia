@@ -2,6 +2,7 @@ import { Sparkles } from "lucide-react";
 import type { ReactElement } from "react";
 
 import { Markdown } from "@components";
+import { useFontRole } from "@/hooks";
 import type { TranscriptSkillItem } from "@/stores/session";
 
 import { CollapsibleBlock } from "../CollapsibleBlock";
@@ -39,6 +40,7 @@ export function SkillInvocationBlock({
     onOpenChange,
     className,
 }: SkillInvocationBlockProps): ReactElement {
+    useFontRole("mono");
     return (
         <CollapsibleBlock
             label={`[skill] ${item.name}`}

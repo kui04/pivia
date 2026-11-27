@@ -34,20 +34,20 @@
         .title {
             color: var(--color-on-surface);
             font-family: var(--font-serif);
-            font-size: var(--type-headline-small-size);
-            font-weight: var(--type-headline-small-emphasized-weight);
-            letter-spacing: var(--type-headline-small-tracking);
-            line-height: var(--type-headline-small-line-height);
+            font-size: var(--type-heading-size);
+            font-weight: var(--type-heading-weight);
+            letter-spacing: var(--type-heading-tracking);
+            line-height: var(--type-heading-line-height);
             text-wrap: balance;
         }
 
         .lead {
             color: var(--color-on-surface-variant);
             font-family: var(--font-sans);
-            font-size: var(--type-body-medium-size);
-            font-weight: var(--type-body-medium-weight);
-            letter-spacing: var(--type-body-medium-tracking);
-            line-height: var(--type-body-medium-line-height);
+            font-size: var(--type-body-size);
+            font-weight: var(--type-body-weight);
+            letter-spacing: var(--type-body-tracking);
+            line-height: var(--type-body-line-height);
             text-wrap: pretty;
         }
     }

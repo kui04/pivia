@@ -22,10 +22,10 @@
     border-radius: var(--shape-corner-small);
     cursor: pointer;
     font-family: var(--font-sans);
-    font-size: var(--type-label-large-size);
-    font-weight: var(--type-label-large-weight);
-    letter-spacing: var(--type-label-large-tracking);
-    line-height: var(--type-label-large-line-height);
+    font-size: var(--type-label-size);
+    font-weight: var(--type-label-weight);
+    letter-spacing: var(--type-label-tracking);
+    line-height: var(--type-label-line-height);
     transition:
         background-color var(--motion-duration-effects-fast) var(--motion-easing-standard),
         color var(--motion-duration-effects-fast) var(--motion-easing-standard);

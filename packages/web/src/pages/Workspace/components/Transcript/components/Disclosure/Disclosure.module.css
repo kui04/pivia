@@ -100,11 +100,12 @@
     .label {
         min-inline-size: 0;
         overflow: hidden;
-        font-size: var(--type-body-medium-size);
-        font-weight: var(--type-body-medium-emphasized-weight);
+        font-size: var(--type-label-size);
+        font-weight: var(--type-label-weight);
         font-variant-numeric: tabular-nums;
-        letter-spacing: var(--type-body-medium-tracking);
-        line-height: var(--type-body-medium-line-height);
+        font-feature-settings: "tnum" 1;
+        letter-spacing: var(--type-label-tracking);
+        line-height: var(--type-label-line-height);
         text-overflow: ellipsis;
         white-space: nowrap;
 
@@ -141,9 +142,9 @@
         min-inline-size: 0;
         overflow: hidden;
         color: var(--disclosure-meta);
-        font-size: var(--type-body-medium-size);
-        letter-spacing: var(--type-body-medium-tracking);
-        line-height: var(--type-body-medium-line-height);
+        font-size: var(--type-body-size);
+        letter-spacing: var(--type-body-tracking);
+        line-height: var(--type-body-line-height);
         text-overflow: ellipsis;
         white-space: nowrap;
         transition: color var(--motion-duration-effects-fast) var(--motion-easing-standard);
@@ -152,11 +153,12 @@
     .meta {
         flex: none;
         color: var(--disclosure-meta);
-        font-family: var(--font-mono);
-        font-size: var(--type-label-medium-size);
+        font-size: var(--type-caption-size);
+        font-weight: var(--type-caption-weight);
         font-variant-numeric: tabular-nums;
-        letter-spacing: var(--type-label-medium-tracking);
-        line-height: var(--type-label-medium-line-height);
+        font-feature-settings: "tnum" 1;
+        letter-spacing: var(--type-caption-tracking);
+        line-height: var(--type-caption-line-height);
         transition: color var(--motion-duration-effects-fast) var(--motion-easing-standard);
     }
 

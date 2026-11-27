@@ -16,9 +16,11 @@
         margin: 0;
         padding-inline: var(--space-4);
         color: var(--color-on-surface-variant);
-        font-size: var(--type-label-medium-size);
+        font-size: var(--type-caption-size);
+        font-weight: var(--type-caption-weight);
         font-variant-numeric: tabular-nums;
-        letter-spacing: var(--type-label-medium-tracking);
-        line-height: var(--type-label-medium-line-height);
+        font-feature-settings: "tnum" 1;
+        letter-spacing: var(--type-caption-tracking);
+        line-height: var(--type-caption-line-height);
     }
 }

@@ -1,0 +1,10 @@
+/*
+ * Tabular numerals inside proportional UI text so live timers, counts, and timestamps keep
+ * fixed digit advance widths without switching to monospace.
+ *
+ *   .root
+ */
+.root {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+}

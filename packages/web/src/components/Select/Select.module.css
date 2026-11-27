@@ -46,10 +46,10 @@
     color: var(--color-on-surface);
     cursor: pointer;
     font-family: var(--font-sans);
-    font-size: var(--type-body-medium-size);
-    font-weight: var(--type-body-medium-weight);
-    letter-spacing: var(--type-body-medium-tracking);
-    line-height: var(--type-body-medium-line-height);
+    font-size: var(--type-body-size);
+    font-weight: var(--type-body-weight);
+    letter-spacing: var(--type-body-tracking);
+    line-height: var(--type-body-line-height);
     text-align: start;
     transition:
         border-color var(--motion-duration-effects-fast) var(--motion-easing-standard),
@@ -176,10 +176,10 @@
             border-radius: var(--shape-corner-extra-small);
             color: var(--color-on-surface);
             cursor: default;
-            font-size: var(--type-body-medium-size);
-            font-weight: var(--type-body-medium-weight);
-            letter-spacing: var(--type-body-medium-tracking);
-            line-height: var(--type-body-medium-line-height);
+            font-size: var(--type-body-size);
+            font-weight: var(--type-body-weight);
+            letter-spacing: var(--type-body-tracking);
+            line-height: var(--type-body-line-height);
             outline: none;
             user-select: none;
             transition: background-color var(--motion-duration-effects-fast) var(--motion-easing-standard);

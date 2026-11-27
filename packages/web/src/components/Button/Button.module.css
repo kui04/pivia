@@ -24,10 +24,10 @@
     padding: var(--space-4) var(--space-8);
     border: var(--border-width) solid transparent;
     font-family: var(--font-sans);
-    font-size: var(--type-label-large-size);
-    font-weight: var(--type-label-large-weight);
-    letter-spacing: var(--type-label-large-tracking);
-    line-height: var(--type-label-large-line-height);
+    font-size: var(--type-label-size);
+    font-weight: var(--type-label-weight);
+    letter-spacing: var(--type-label-tracking);
+    line-height: var(--type-label-line-height);
     white-space: nowrap;
     cursor: pointer;
     user-select: none;
@@ -39,7 +39,7 @@
     &[data-size="lg"] {
         padding: var(--space-8) var(--space-16);
         font-size: var(--type-body-large-size);
-        font-weight: var(--type-body-large-weight);
+        font-weight: var(--type-label-weight);
         letter-spacing: var(--type-body-large-tracking);
         line-height: var(--type-body-large-line-height);
     }

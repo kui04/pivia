@@ -99,8 +99,9 @@
             place-items: center;
             pointer-events: none;
             color: var(--color-on-primary);
-            font-size: var(--type-body-medium-size);
-            line-height: var(--type-body-medium-line-height);
+            font-size: var(--type-body-size);
+            letter-spacing: var(--type-body-tracking);
+            line-height: var(--type-body-line-height);
         }
 
         .footer {
@@ -120,8 +121,9 @@
                 max-width: 55%;
                 margin: 0;
                 color: var(--color-on-primary);
-                font-size: var(--type-body-medium-size);
-                line-height: var(--type-body-medium-line-height);
+                font-size: var(--type-body-size);
+                letter-spacing: var(--type-body-tracking);
+                line-height: var(--type-body-line-height);
                 overflow-wrap: anywhere;
                 pointer-events: auto;
             }
@@ -141,11 +143,12 @@
                 .zoom {
                     min-width: var(--space-40);
                     color: var(--color-on-surface-variant);
-                    font-size: var(--type-label-medium-size);
+                    font-size: var(--type-caption-size);
                     font-variant-numeric: tabular-nums;
-                    font-weight: var(--type-label-medium-weight);
-                    letter-spacing: var(--type-label-medium-tracking);
-                    line-height: var(--type-label-medium-line-height);
+                    font-feature-settings: "tnum" 1;
+                    font-weight: var(--type-caption-weight);
+                    letter-spacing: var(--type-caption-tracking);
+                    line-height: var(--type-caption-line-height);
                     text-align: center;
                 }
             }
@@ -160,8 +163,9 @@
             justify-content: center;
             gap: var(--space-8);
             color: var(--color-on-primary);
-            font-size: var(--type-body-medium-size);
-            line-height: var(--type-body-medium-line-height);
+            font-size: var(--type-body-size);
+            letter-spacing: var(--type-body-tracking);
+            line-height: var(--type-body-line-height);
             text-align: center;
         }
     }

@@ -108,10 +108,10 @@
         flex: 1;
         min-inline-size: 0;
         overflow: hidden;
-        font-size: var(--type-label-large-size);
-        font-weight: var(--type-label-large-weight);
-        letter-spacing: var(--type-label-large-tracking);
-        line-height: var(--type-label-large-line-height);
+        font-size: var(--type-label-size);
+        font-weight: var(--type-label-weight);
+        letter-spacing: var(--type-label-tracking);
+        line-height: var(--type-label-line-height);
         text-overflow: ellipsis;
         white-space: nowrap;
 
@@ -129,11 +129,12 @@
         /* The menu glyph sits 4px inside its 24px box, so the age ends on the same line. */
         padding-inline-end: var(--space-4);
         color: var(--color-on-surface-variant);
-        font-family: var(--font-mono);
-        font-size: var(--type-label-medium-size);
+        font-size: var(--type-caption-size);
+        font-weight: var(--type-caption-weight);
         font-variant-numeric: tabular-nums;
-        letter-spacing: var(--type-label-medium-tracking);
-        line-height: var(--type-label-medium-line-height);
+        font-feature-settings: "tnum" 1;
+        letter-spacing: var(--type-caption-tracking);
+        line-height: var(--type-caption-line-height);
         /* Same duration as the actions, so one fades out while the other fades in. */
         transition: opacity var(--motion-duration-effects-fast) var(--motion-easing-standard);
 
