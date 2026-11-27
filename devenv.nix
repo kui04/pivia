@@ -1,5 +1,24 @@
-{ pkgs, ... }:
+{ pkgs, config, ... }:
 
+let
+    # pi keeps project MCP servers in .pi/mcp.json, untracked because it is personal
+    # agent configuration. The shell seeds a missing file and never replaces it.
+    mcpCommand = "chrome-devtools-mcp";
+
+    mcpConfig = pkgs.writeText "pi-mcp.json" ''
+        {
+            "mcpServers": {
+                "chrome-devtools": {
+                    "command": "${mcpCommand}",
+                    "description": "Drive and inspect the Chromium build of this dev shell through the Chrome DevTools protocol."
+                }
+            }
+        }
+    '';
+
+    # Follows the playwright revision that devenv.lock pins.
+    chrome = "${pkgs.playwright-driver.browsers}/chromium-*/chrome-linux64/chrome";
+in
 {
     languages.javascript = {
         enable = true;
@@ -19,6 +38,25 @@
         PLAYWRIGHT_BROWSERS_PATH = "${pkgs.playwright-driver.browsers}";
         PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1";
     };
+
+    # pi does not expand environment variables in MCP arguments, so this wrapper passes
+    # the Chrome path. The pnpx cache and the Chrome profile stay in the project state.
+    scripts.${mcpCommand}.exec = ''
+        : "''${DEVENV_STATE:?DEVENV_STATE is unset, run inside the devenv shell}"
+        chromePath="$(echo ${chrome})"
+        [ -x "$chromePath" ] || { echo "no Chromium matches ${chrome}" >&2; exit 1; }
+        export XDG_CACHE_HOME="$DEVENV_STATE/cache"
+        export XDG_CONFIG_HOME="$DEVENV_STATE/config"
+        export XDG_DATA_HOME="$DEVENV_STATE/share"
+        exec ${config.languages.javascript.pnpm.package}/bin/pnpx chrome-devtools-mcp@1.14.0 \
+            --executablePath="$chromePath" \
+            --userDataDir "$DEVENV_STATE/chrome-devtools-mcp/profile" \
+            "$@"
+    '';
+
+    enterShell = ''
+        [ -f "$DEVENV_ROOT/.pi/mcp.json" ] || install -Dm644 ${mcpConfig} "$DEVENV_ROOT/.pi/mcp.json"
+    '';
 
     git-hooks.hooks = {
         nixfmt = {

@@ -17,6 +17,9 @@ devenv.local.yaml
 .env.local
 *.local
 
+# pi project configuration, generated from devenv.nix on shell entry
+.pi/mcp.json
+
 # OS
 .DS_Store
 
