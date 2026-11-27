@@ -10,7 +10,7 @@
  *   ├─ &[aria-pressed="true"]
  *   ├─ &[data-disabled]
  *   └─ @media (prefers-reduced-motion: reduce)
- *   .radiusNone … .radiusFull   shared src/styles/radius.module.css, same element as .button
+ *   .radiusNone … .radiusFull   same element as .button
  *   .positioner                 the tooltip portal, beside the button
  *   └─ .tooltip
  */
@@ -61,6 +61,31 @@
             transition: none;
         }
     }
+}
+
+/* Radius comes from the shape scale; the component always applies one class. */
+.radiusNone {
+    border-radius: var(--shape-corner-none);
+}
+
+.radiusExtraSmall {
+    border-radius: var(--shape-corner-extra-small);
+}
+
+.radiusSmall {
+    border-radius: var(--shape-corner-small);
+}
+
+.radiusMedium {
+    border-radius: var(--shape-corner-medium);
+}
+
+.radiusLarge {
+    border-radius: var(--shape-corner-large);
+}
+
+.radiusFull {
+    border-radius: var(--shape-corner-full);
 }
 
 .positioner {

@@ -13,7 +13,7 @@
  *   ├─ &:disabled
  *   ├─ @media (forced-colors: active)
  *   └─ @media (prefers-reduced-motion: reduce)
- *   .radiusNone … .radiusFull   shared src/styles/radius.module.css, same element as .button
+ *   .radiusNone … .radiusFull    same element as .button
  */
 .button {
     display: inline-flex;
@@ -105,4 +105,28 @@
             transition: none;
         }
     }
+}
+
+.radiusNone {
+    border-radius: var(--shape-corner-none);
+}
+
+.radiusExtraSmall {
+    border-radius: var(--shape-corner-extra-small);
+}
+
+.radiusSmall {
+    border-radius: var(--shape-corner-small);
+}
+
+.radiusMedium {
+    border-radius: var(--shape-corner-medium);
+}
+
+.radiusLarge {
+    border-radius: var(--shape-corner-large);
+}
+
+.radiusFull {
+    border-radius: var(--shape-corner-full);
 }
