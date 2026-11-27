@@ -16,7 +16,6 @@
  *   ├─ &:has(.select:active)       a press answers, before the selected tint
  *   ├─ &[data-selected="true"]
  *   │   └─ .select                 the selected colours
- *   ├─ &, .select                  pointer: coarse, 48px tall
  *   ├─ .title                      inside the button, a sibling rule here
  *   │   └─ &[data-named="false"]   a preview name, in the muted colour
  *   ├─ .age                        inside the button, a sibling rule here
@@ -102,17 +101,6 @@
 
         .select {
             color: var(--color-on-primary-container);
-        }
-    }
-
-    /*
-     * A touch screen gets the 48px target that Button already uses, so a row is as easy to hit
-     * as the actions beside it. The folder headers and the skeleton follow the same metric.
-     */
-    @media (pointer: coarse) {
-        &,
-        .select {
-            min-block-size: var(--space-48);
         }
     }
 

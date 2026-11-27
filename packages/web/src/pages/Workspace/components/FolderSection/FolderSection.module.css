@@ -10,7 +10,6 @@
  * Classes passed to child components stay top-level so CSS Modules keep one class of specificity:
  *
  *   .toggle                            CollapsibleTrigger inside .heading
- *   ├─ @media (pointer: coarse)
  *   ├─ @media (hover: hover) -> &:hover
  *   ├─ .label                          session folder title inside .toggle
  *   └─ @media (prefers-reduced-motion: reduce)
@@ -55,13 +54,6 @@
     cursor: pointer;
     text-align: start;
     transition: background-color var(--motion-duration-effects-fast) var(--motion-easing-standard);
-
-    /* A touch screen gets the same 48px target as the session rows below. */
-    @media (pointer: coarse) {
-        & {
-            min-block-size: var(--space-48);
-        }
-    }
 
     @media (hover: hover) {
         &:hover {

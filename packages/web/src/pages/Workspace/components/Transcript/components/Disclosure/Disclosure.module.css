@@ -11,7 +11,6 @@
  *   ├─ @media (hover: hover) -> &:hover
  *   ├─ &:active
  *   ├─ &:focus-visible
- *   ├─ @media (pointer: coarse)
  *   ├─ .label[data-streaming]
  *   ├─ .summary
  *   ├─ .meta
@@ -96,10 +95,6 @@
         --disclosure-chevron: var(--disclosure-chevron-strong);
 
         color: var(--disclosure-label-strong);
-    }
-
-    @media (pointer: coarse) {
-        min-block-size: var(--space-48);
     }
 
     .label {

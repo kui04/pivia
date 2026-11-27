@@ -183,12 +183,6 @@
         background-color var(--motion-duration-effects-fast) var(--motion-easing-standard),
         border-color var(--motion-duration-effects-fast) var(--motion-easing-standard);
 
-    @media (pointer: coarse) {
-        & {
-            min-block-size: var(--space-48);
-        }
-    }
-
     @media (hover: hover) {
         &:hover:not(:disabled) {
             background-color: var(--state-hover);

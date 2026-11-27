@@ -64,17 +64,10 @@
     padding: var(--space-12);
 }
 
-/*
- * An overlaid toolbar covers the first line, so the content keeps clear of the buttons. A coarse
- * pointer enlarges each button to 48px and needs more room than the fine-pointer toolbar.
- */
+/* An overlaid toolbar covers the first line, so the content keeps clear of the buttons. */
 .contentOverlayToolbar {
     padding-block: var(--space-10);
     padding-inline-end: calc(var(--space-64) + var(--space-12));
-
-    @media (pointer: coarse) {
-        padding-inline-end: calc(var(--space-48) * 2 + var(--space-16));
-    }
 }
 
 /*

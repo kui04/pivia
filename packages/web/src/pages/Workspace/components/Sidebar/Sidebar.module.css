@@ -19,8 +19,7 @@
  *   ├─ .skeleton                   replaces the list until the first sync lands, and while refreshing
  *   ├─ .skeletonGroup              inside .skeleton
  *   ├─ .skeletonRow                inside .skeletonGroup
- *   │   ├─ &[data-kind="session"]  the row indent
- *   │   └─ &                       pointer: coarse, 48px tall
+ *   │   └─ &[data-kind="session"]  the row indent
  *   ├─ .skeletonIcon               inside .skeletonRow
  *   └─ .skeletonBar                inside .skeletonRow
  *
@@ -71,7 +70,7 @@
         align-items: center;
         gap: var(--space-8);
         min-inline-size: 0;
-        min-block-size: var(--space-32);
+        block-size: var(--space-32);
         padding-inline: calc(var(--row-inset) - var(--border-width));
         border: var(--border-width) solid var(--color-outline-variant);
         border-radius: var(--shape-corner-small);
@@ -89,14 +88,6 @@
             border-color: var(--color-primary);
             outline: var(--border-width-strong) solid var(--color-primary);
             outline-offset: calc(-1 * var(--border-width-strong));
-        }
-
-        @media (pointer: fine) {
-            block-size: var(--space-32);
-        }
-
-        @media (pointer: coarse) {
-            min-block-size: var(--space-48);
         }
 
         @media (forced-colors: active) {
@@ -221,13 +212,6 @@
         &[data-kind="session"] {
             padding-inline-start: calc(var(--row-inset) + var(--space-20) + var(--space-8));
         }
-
-        /* The loaded rows grow on a touch screen, so the skeleton keeps their metrics. */
-        @media (pointer: coarse) {
-            & {
-                min-block-size: var(--space-48);
-            }
-        }
     }
 
     .skeletonIcon {
@@ -262,10 +246,15 @@
 /*
  * Classes this file hands to another component stay one class deep. Nested, they would gain a class
  * of specificity and then override that component's own hover, focus and disabled rules.
+ *
+ * Every action is the same 32px height as a list row, whatever its 24px icon box and 2px of
+ * border would add up to.
  */
 .action {
     inline-size: 100%;
+    block-size: var(--space-32);
     justify-content: flex-start;
+    padding-block: 0;
     /* The 1px border takes part of the inset, so the icon box still starts on the 20px line. */
     padding-inline-start: calc(var(--space-8) - var(--border-width));
     color: var(--color-on-surface);
@@ -277,18 +266,6 @@
  */
 .newSession[data-variant="secondary"] {
     border-color: var(--color-outline-variant);
-}
-
-/*
- * Every action is the same 32px height as a list row, whatever its 24px icon box and 2px of
- * border would add up to. Only a fine pointer gets this: a coarse one keeps the Button's 48px touch
- * target.
- */
-@media (pointer: fine) {
-    .action {
-        block-size: var(--space-32);
-        padding-block: 0;
-    }
 }
 
 /* Starts the glyph on the line of the section titles; the box is 20px wide. */

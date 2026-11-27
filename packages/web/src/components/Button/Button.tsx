@@ -36,7 +36,7 @@ export type ButtonProps = BaseButtonProps & {
 /**
  * A native button built on Base UI Button. It keeps the button semantics, the
  * `render` composition and the disabled behaviour; this wrapper owns the
- * emphasis, the type and padding preset, the radius and the touch target.
+ * emphasis, the type and padding preset, and the radius.
  */
 export function Button({ variant = "primary", size = "md", radius = "small", className, ...props }: ButtonProps) {
     return (

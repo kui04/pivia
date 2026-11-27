@@ -9,7 +9,6 @@
  *   ├─ &:active
  *   ├─ &[aria-pressed="true"]
  *   ├─ &[data-disabled]
- *   ├─ @media (pointer: coarse)  a 48px target
  *   └─ @media (prefers-reduced-motion: reduce)
  *   .radiusNone … .radiusFull   same element as .button
  *   .positioner                 the tooltip portal, beside the button
@@ -55,14 +54,6 @@
     &[data-disabled] {
         color: var(--color-outline);
         cursor: default;
-    }
-
-    /* A coarse primary pointer needs a 48px target; the glyph keeps its preset size. */
-    @media (pointer: coarse) {
-        & {
-            min-inline-size: var(--space-48);
-            min-block-size: var(--space-48);
-        }
     }
 
     @media (prefers-reduced-motion: reduce) {

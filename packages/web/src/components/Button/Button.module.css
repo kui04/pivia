@@ -11,7 +11,6 @@
  *   ├─ &:active:not(:disabled)   pressed tint; secondary and ghost reset it
  *   ├─ @media (hover: hover)     a hover tint per variant while not pressed
  *   ├─ &:disabled
- *   ├─ @media (pointer: coarse)  a 48px target for every preset
  *   ├─ @media (forced-colors: active)
  *   └─ @media (prefers-reduced-motion: reduce)
  *   .radiusNone … .radiusFull    same element as .button
@@ -94,13 +93,6 @@
         border-color: transparent;
         color: var(--color-on-surface-variant);
         cursor: not-allowed;
-    }
-
-    /* A coarse primary pointer needs the larger target on every preset. */
-    @media (pointer: coarse) {
-        & {
-            min-block-size: var(--space-48);
-        }
     }
 
     @media (forced-colors: active) {
