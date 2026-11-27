@@ -108,6 +108,7 @@ function createFixture(options: FixtureOptions = {}): Fixture {
         shutdownUiTimeoutMs: options.shutdownUiTimeoutMs,
         pendingUiTimeoutMs: options.pendingUiTimeoutMs,
         nowMs: options.nowMs,
+        diskSync: { enabled: false },
     });
     registries.push(registry);
     return { root, agentDir, projectDir, sessionDir, catalog, registry, harness };
@@ -1341,6 +1342,7 @@ describe("SessionRegistry", () => {
             logger,
             agentDir,
             idleTimeoutMs: 10_000,
+            diskSync: { enabled: false },
             runtimeFactory: async (input) => {
                 captured = input.sessionManager;
                 return baseFactory(input);

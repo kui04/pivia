@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Stats } from "node:fs";
+import { realpathSync, statSync, type Stats } from "node:fs";
 import { mkdir, realpath, stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 
@@ -43,7 +43,6 @@ import type {
     SessionSnapshot,
     SessionStateSnapshot,
     SessionSummary,
-    SessionSummaryPatch,
     SessionWsClientMessage,
     SessionWsCommandName,
     SessionWsServerMessage,
@@ -52,6 +51,13 @@ import type {
 } from "@pivia/protocol";
 
 import { SessionUiBridge } from "./extension-ui.ts";
+import {
+    type AwaitWriteFinishOptions,
+    DiskWatcher,
+    type ReconcileSyncControls,
+    type WatchBackendFactory,
+    type WatchTriggerReason,
+} from "../fs/watcher.ts";
 import { createLogger } from "../logger.ts";
 import {
     MAX_WS_INLINE_ENTRIES_BYTES,
@@ -61,9 +67,25 @@ import {
     type SyncSnapshotResult,
     type SyncTransportClient,
 } from "../sync/index.ts";
+import {
+    detectActiveDiskChange,
+    diffCatalogSnapshots,
+    diffSessionSummaryForCatalog,
+    diffSessionSummaryPatch,
+    mergeCatalogEntries,
+    mergeSessionSummaries,
+    type PendingExternalSync,
+    type TrackedDiskFile,
+} from "./disk-sync.ts";
 import { createPiRuntimeFactory } from "./pi-runtime.ts";
 import { toWireSessionEvent } from "./events.ts";
-import { defaultProjectSessionDir, sliceEntriesForAnchor, type SessionCatalog } from "./catalog.ts";
+import {
+    defaultProjectSessionDir,
+    isMissingFsError,
+    sliceEntriesForAnchor,
+    targetsFromCatalogSnapshot,
+    type SessionCatalog,
+} from "./catalog.ts";
 
 /** Maximum retries for `list()` when a concurrent session close changes `closeVersion` mid-scan. */
 const MAX_LIST_RETRIES = 2;
@@ -172,6 +194,24 @@ export interface SessionClient {
     close?(code: SessionCloseCode, reason: string): void;
 }
 
+/** Configuration for automatic disk change watching and reconciliation in {@link SessionRegistry}. */
+export interface DiskSyncOptions {
+    /** Enable automatic disk watching and polling; defaults to `true`. */
+    readonly enabled?: boolean | undefined;
+    /** Debounce window in milliseconds for coalescing filesystem event bursts; defaults to 100 ms. */
+    readonly debounceMs?: number | undefined;
+    /** Fallback polling interval in milliseconds (`0` disables polling); defaults to 5000 ms. */
+    readonly pollIntervalMs?: number | undefined;
+    /** Maximum simultaneous watched paths; defaults to 256. */
+    readonly maxWatchers?: number | undefined;
+    /** Force stat-based polling in the underlying watcher; defaults to `false`. */
+    readonly usePolling?: boolean | undefined;
+    /** Wait for chunked writes to stabilize before triggering reconcile; defaults to `false`. */
+    readonly awaitWriteFinish?: boolean | AwaitWriteFinishOptions | undefined;
+    /** Injectable {@link WatchBackendFactory} for deterministic testing; defaults to `chokidar`. */
+    readonly backendFactory?: WatchBackendFactory | undefined;
+}
+
 /** Options for {@link SessionRegistryOptions}. */
 export interface SessionRegistryOptions {
     /** Catalog used to discover and open sessions from disk. */
@@ -195,6 +235,8 @@ export interface SessionRegistryOptions {
     readonly pendingUiTimeoutMs?: number | null | undefined;
     /** Clock used for summary and pending-dialog timestamps; defaults to `Date.now`. */
     readonly nowMs?: (() => number) | undefined;
+    /** Configuration for watching external disk updates; defaults to enabled. */
+    readonly diskSync?: DiskSyncOptions | undefined;
 }
 
 /** Open runtime handle returned by {@link SessionRegistry.open} and `createSession`. */
@@ -255,6 +297,9 @@ interface ActiveSession {
     flushScheduled: boolean;
     liveMessage: AssistantMessage | null;
     diskSizeBytes: number | undefined;
+    diskFile: TrackedDiskFile;
+    localWriteSeq: number;
+    pendingExternalSync: PendingExternalSync;
     readonly createdAtMs: number;
     readonly hasParent: boolean;
     firstMessage: string | null;
@@ -296,45 +341,6 @@ function firstUserMessageText(entries: readonly FileEntry[]): string | null {
         }
     }
     return null;
-}
-
-function diffSessionSummary(previous: SessionSummary, next: SessionSummary): SessionSummaryPatch | null {
-    const patch: {
-        name?: string | null;
-        firstMessage?: string;
-        messageCount?: number;
-        modifiedAtMs?: number;
-        runtimeState?: SessionRuntimeState;
-        attachedClients?: number;
-    } = {};
-    let changed = false;
-
-    if (previous.name !== next.name) {
-        patch.name = next.name;
-        changed = true;
-    }
-    if (previous.firstMessage !== next.firstMessage) {
-        patch.firstMessage = next.firstMessage;
-        changed = true;
-    }
-    if (previous.messageCount !== next.messageCount) {
-        patch.messageCount = next.messageCount;
-        changed = true;
-    }
-    if (previous.modifiedAtMs !== next.modifiedAtMs) {
-        patch.modifiedAtMs = next.modifiedAtMs;
-        changed = true;
-    }
-    if (previous.runtimeState !== next.runtimeState) {
-        patch.runtimeState = next.runtimeState;
-        changed = true;
-    }
-    if (previous.attachedClients !== next.attachedClients) {
-        patch.attachedClients = next.attachedClients;
-        changed = true;
-    }
-
-    return changed ? patch : null;
 }
 
 function errorMessage(error: unknown): string {
@@ -409,6 +415,10 @@ export class SessionRegistry {
     private readonly pendingRegistrations = new Set<Promise<unknown>>();
     private readonly catalogBuffer: ReplayRingBuffer<"catalog", CatalogDelta>;
     private readonly catalogHost: SyncStreamHost<"catalog", CatalogSnapshot, CatalogDelta>;
+    private readonly publishedCatalog = new Map<SessionId, SessionSummary>();
+    private readonly diskWatcher: DiskWatcher | undefined;
+    private catalogSeeded = false;
+    private reconcileChain: Promise<void> = Promise.resolve();
     private closeVersion = 0;
     private disposed = false;
 
@@ -452,6 +462,21 @@ export class SessionRegistry {
                 agentDir: this.agentDir,
                 logger: this.logger,
             });
+
+        if (options.diskSync?.enabled !== false) {
+            this.diskWatcher = new DiskWatcher({
+                resolveTargets: () => this.catalog.resolveWatchTargets(),
+                onReconcile: (reasons, syncControls) => this.enqueueReconcile(reasons, syncControls),
+                debounceMs: options.diskSync?.debounceMs,
+                pollIntervalMs: options.diskSync?.pollIntervalMs,
+                maxWatchers: options.diskSync?.maxWatchers,
+                usePolling: options.diskSync?.usePolling,
+                awaitWriteFinish: options.diskSync?.awaitWriteFinish,
+                backendFactory: options.diskSync?.backendFactory,
+                logger: this.logger,
+            });
+            this.diskWatcher.start();
+        }
     }
 
     /** Number of active runtimes, including sessions that are still starting or closing. */
@@ -554,7 +579,10 @@ export class SessionRegistry {
             });
             throw new Error(`Invalid SDK session id: ${rawSessionId}`);
         }
-        return this.registerRuntime(sessionId, runtime);
+        const sessionFile = sessionManager.getSessionFile();
+        const initialDiskFile: TrackedDiskFile =
+            sessionFile === undefined ? { kind: "ephemeral" } : { kind: "unflushed", expectedPath: sessionFile };
+        return this.registerRuntime(sessionId, runtime, undefined, initialDiskFile);
     }
 
     /**
@@ -654,6 +682,8 @@ export class SessionRegistry {
             return;
         }
         this.disposed = true;
+        await this.diskWatcher?.dispose();
+        await this.reconcileChain.catch(() => {});
         this.catalogHost.dispose(WS_CLOSE_CODE.goingAway, "Server going away");
 
         // Force-close current entries first so an open() waiting on closePromise cannot keep
@@ -693,11 +723,13 @@ export class SessionRegistry {
                 );
             }
             const active = [...this.active.values()].map((entry) => this.summarizeEntry(entry));
-            const activeById = new Map(active.map((summary) => [summary.id, summary]));
-            const merged = disk.sessions.map((summary) => activeById.get(summary.id) ?? summary);
-            const mergedIds = new Set(merged.map((summary) => summary.id));
-            const missing = active.filter((summary) => !mergedIds.has(summary.id));
-            const sessions = [...merged, ...missing].sort((left, right) => right.modifiedAtMs - left.modifiedAtMs);
+            const sessions = mergeSessionSummaries(disk.sessions, active);
+            if (!this.catalogSeeded) {
+                for (const summary of sessions) {
+                    this.publishedCatalog.set(summary.id, summary);
+                }
+                this.catalogSeeded = true;
+            }
             return {
                 cursor: this.catalogBuffer.currentCursor,
                 snapshot: {
@@ -721,6 +753,14 @@ export class SessionRegistry {
     /** Attach a WebSocket client transport to the workspace catalog stream. */
     attachCatalog(client: SyncTransportClient, handshake: SyncHandshake<"catalog"> = {}): () => void {
         return this.catalogHost.attach(client, handshake);
+    }
+
+    /** Enqueue and await one serialized disk reconciliation pass against the catalog and open runtimes. */
+    async reconcileDisk(): Promise<void> {
+        if (this.disposed) {
+            return;
+        }
+        await this.enqueueReconcile(new Set<WatchTriggerReason>(["manual"]));
     }
 
     /** Prefer live runtime entries over the disk copy so an unflushed new session is readable. */
@@ -830,7 +870,17 @@ export class SessionRegistry {
                     sessionManager,
                     sessionDir,
                 });
-                return this.registerRuntime(id, runtime, resolved.sizeBytes);
+                const initialDiskFile: TrackedDiskFile = {
+                    kind: "persisted",
+                    realPath: resolved.realPath,
+                    stamp: {
+                        mtimeMs: resolved.mtimeMs,
+                        ctimeMs: resolved.ctimeMs,
+                        sizeBytes: resolved.sizeBytes,
+                        ino: resolved.ino,
+                    },
+                };
+                return this.registerRuntime(id, runtime, resolved.sizeBytes, initialDiskFile);
             }
             case "oversized":
                 this.logger.warn(
@@ -848,7 +898,8 @@ export class SessionRegistry {
     private async registerRuntime(
         sessionId: SessionId,
         runtime: ManagedRuntime,
-        diskSizeBytes?: number,
+        diskSizeBytes: number | undefined,
+        initialDiskFile: TrackedDiskFile,
     ): Promise<ActiveSessionHandle> {
         if (this.disposed) {
             await runtime.dispose().catch((error: unknown) => {
@@ -917,6 +968,9 @@ export class SessionRegistry {
             flushScheduled: false,
             liveMessage: null,
             diskSizeBytes,
+            diskFile: initialDiskFile,
+            localWriteSeq: 0,
+            pendingExternalSync: "none",
             createdAtMs: Number.isFinite(parsedCreatedAtMs) ? parsedCreatedAtMs : now,
             hasParent: header?.parentSession !== undefined && header.parentSession.length > 0,
             firstMessage: firstUserMessageText(initialEntries),
@@ -934,6 +988,7 @@ export class SessionRegistry {
         });
         entry.unsubscribeEntries =
             session.onEntryAppended?.(() => {
+                this.recordLocalDiskWrite(entry);
                 this.scheduleFlushAppendedEntries(entry);
             }) ?? (() => {});
         void ready.promise.catch(() => {
@@ -1003,6 +1058,7 @@ export class SessionRegistry {
             ready.resolve();
             this.touch(entry);
             this.emitSessionUpdated(entry);
+            this.flushPendingExternalSync(entry);
             closeAfterStartupShutdown(shutdownRequested);
             return;
         }
@@ -1064,12 +1120,12 @@ export class SessionRegistry {
         entry.clients.clear();
         // Keep the closing entry in `this.active` while checking disk persistence so concurrent
         // open() calls continue waiting on `closePromise`, then delete and publish atomically.
-        const persisted = await this.resolvePersistedOnClose(entry.sessionId, hadDiskFile);
+        const closedDisk = await this.resolvePersistedOnClose(entry.sessionId, hadDiskFile);
         if (this.active.get(entry.sessionId) === entry) {
             this.active.delete(entry.sessionId);
             this.closeVersion += 1;
             this.runSafeTeardownStep(entry.sessionId, "failed to publish session close catalog delta", () => {
-                this.publishSessionClosed(entry.sessionId, persisted);
+                this.publishSessionClosed(entry.sessionId, closedDisk.persisted, closedDisk.summary);
             });
         }
     }
@@ -1550,15 +1606,20 @@ export class SessionRegistry {
 
         if (event.type === "agent_settled" || event.type === "compaction_end") {
             this.touch(entry);
+            this.flushPendingExternalSync(entry);
         }
     }
 
     /** Restart the idle countdown when the last dialog resolves and no client is attached. */
     private handlePendingChange(sessionId: SessionId): void {
         const entry = this.active.get(sessionId);
-        if (entry !== undefined && entry.lifecycle.phase === "open" && entry.clients.size === 0) {
+        if (entry === undefined || entry.lifecycle.phase !== "open") {
+            return;
+        }
+        if (entry.clients.size === 0) {
             this.touch(entry);
         }
+        this.flushPendingExternalSync(entry);
     }
 
     private pendingUiRemainingMs(entry: ActiveSession): number | undefined {
@@ -1642,6 +1703,7 @@ export class SessionRegistry {
         if (this.active.get(entry.sessionId) !== entry) {
             return;
         }
+        this.publishedCatalog.set(entry.sessionId, session);
         this.catalogHost.publish({
             op: "upsert",
             item: session,
@@ -1655,10 +1717,11 @@ export class SessionRegistry {
         const previous = entry.lastSummary;
         const next = this.summarizeEntry(entry);
         entry.lastSummary = next;
+        this.publishedCatalog.set(entry.sessionId, next);
         if (previous === null) {
             return;
         }
-        const patch = diffSessionSummary(previous, next);
+        const patch = diffSessionSummaryPatch(previous, next);
         if (patch === null) {
             return;
         }
@@ -1669,32 +1732,70 @@ export class SessionRegistry {
         });
     }
 
-    private async resolvePersistedOnClose(sessionId: SessionId, hadDiskFile: boolean): Promise<boolean> {
+    private async resolvePersistedOnClose(
+        sessionId: SessionId,
+        hadDiskFile: boolean,
+    ): Promise<{ readonly persisted: boolean; readonly summary?: SessionSummary | undefined }> {
         if (this.disposed) {
-            return hadDiskFile;
+            return { persisted: hadDiskFile };
         }
         try {
             const resolution = await this.catalog.resolveById(sessionId);
             switch (resolution.kind) {
                 case "found":
+                    return { persisted: true, summary: resolution.session.summary };
                 case "oversized":
-                    return true;
+                    return { persisted: true };
                 case "missing":
-                    return false;
+                    return { persisted: false };
                 default:
                     return assertNever(resolution);
             }
         } catch (error) {
             this.logger.warn({ err: error, sessionId }, "failed to check disk session after runtime close");
-            return hadDiskFile;
+            return { persisted: hadDiskFile };
         }
     }
 
-    private publishSessionClosed(sessionId: SessionId, persisted: boolean): void {
+    private publishSessionClosed(sessionId: SessionId, persisted: boolean, diskSummary?: SessionSummary): void {
         if (this.disposed) {
             return;
         }
         if (persisted) {
+            if (diskSummary !== undefined) {
+                const previous = this.publishedCatalog.get(sessionId);
+                this.publishedCatalog.set(sessionId, diskSummary);
+                if (previous !== undefined) {
+                    const delta = diffSessionSummaryForCatalog(previous, diskSummary);
+                    if (delta === null) {
+                        return;
+                    }
+                    if (delta.op === "patch") {
+                        // Always include runtimeState and attachedClients in the close patch so
+                        // clients observing a close transition always receive the idle reset.
+                        this.catalogHost.publish({
+                            op: "patch",
+                            id: sessionId,
+                            patch: {
+                                ...delta.patch,
+                                runtimeState: "idle",
+                                attachedClients: 0,
+                            },
+                        });
+                        return;
+                    }
+                    this.catalogHost.publish(delta);
+                    return;
+                }
+            }
+            const existing = this.publishedCatalog.get(sessionId);
+            if (existing !== undefined) {
+                this.publishedCatalog.set(sessionId, {
+                    ...existing,
+                    runtimeState: "idle",
+                    attachedClients: 0,
+                });
+            }
             this.catalogHost.publish({
                 op: "patch",
                 id: sessionId,
@@ -1705,9 +1806,235 @@ export class SessionRegistry {
             });
             return;
         }
+        this.publishedCatalog.delete(sessionId);
         this.catalogHost.publish({
             op: "remove",
             id: sessionId,
         });
+    }
+
+    private recordLocalDiskWrite(entry: ActiveSession): void {
+        entry.localWriteSeq += 1;
+        if (entry.diskFile.kind === "ephemeral") {
+            return;
+        }
+        try {
+            // Capture the post-write stamp synchronously inside the append hook so `SessionManager`'s
+            // synchronous `appendFileSync` does not trigger a false external-change reload.
+            // Persisted entries already track their canonical `realPath`, skipping repeat `realpathSync`.
+            const realPath =
+                entry.diskFile.kind === "persisted"
+                    ? entry.diskFile.realPath
+                    : realpathSync(entry.diskFile.expectedPath);
+            const stats = statSync(realPath);
+            if (!stats.isFile()) {
+                return;
+            }
+            entry.diskFile = {
+                kind: "persisted",
+                realPath,
+                stamp: {
+                    mtimeMs: stats.mtimeMs,
+                    ctimeMs: stats.ctimeMs,
+                    sizeBytes: stats.size,
+                    ino: stats.ino,
+                },
+            };
+            entry.diskSizeBytes = stats.size;
+        } catch {
+            // Setup entries before the first conversation message leave the file unflushed on disk.
+        }
+    }
+
+    private isEntryBusy(entry: ActiveSession): boolean {
+        if (entry.lifecycle.phase !== "open") {
+            return true;
+        }
+        const state = entry.runtime.session.getState();
+        return state.isStreaming || state.isCompacting || entry.uiBridge.hasPending();
+    }
+
+    private flushPendingExternalSync(entry: ActiveSession): void {
+        if (
+            this.disposed ||
+            entry.pendingExternalSync !== "reload_when_idle" ||
+            this.active.get(entry.sessionId) !== entry ||
+            this.isEntryBusy(entry)
+        ) {
+            return;
+        }
+        entry.pendingExternalSync = "none";
+        void this.closeSession(entry.sessionId, {
+            force: entry.clients.size === 0,
+            closeCode: WS_CLOSE_CODE.goingAway,
+            closeReason: "Session updated on disk",
+        }).catch((error: unknown) => {
+            this.logger.warn(
+                { err: error, sessionId: entry.sessionId },
+                "failed to reload session after deferred external disk update",
+            );
+        });
+    }
+
+    private enqueueReconcile(
+        reasons: ReadonlySet<WatchTriggerReason>,
+        syncControls?: ReconcileSyncControls,
+    ): Promise<void> {
+        const next = this.reconcileChain.then(
+            () => this.runReconcilePass(reasons, syncControls),
+            () => this.runReconcilePass(reasons, syncControls),
+        );
+        this.reconcileChain = next;
+        return next;
+    }
+
+    private isRegistryDisposed(): boolean {
+        return this.disposed;
+    }
+
+    private isEntryClosing(entry: ActiveSession): boolean {
+        return entry.lifecycle.phase === "closing";
+    }
+
+    private async verifyDeletedOnDisk(realPath: string): Promise<boolean> {
+        try {
+            const stats = await stat(realPath);
+            return !stats.isFile();
+        } catch (error) {
+            return isMissingFsError(error);
+        }
+    }
+
+    private async runReconcilePass(
+        reasons: ReadonlySet<WatchTriggerReason>,
+        syncControls?: ReconcileSyncControls,
+    ): Promise<void> {
+        if (this.isRegistryDisposed()) {
+            return;
+        }
+        // Snapshot active entries and their local write sequence before scanning disk so a local
+        // Pivia write occurring while `catalog.scan()` is awaiting I/O cannot be misclassified
+        // against the pre-write scan result.
+        const beforeScan = new Map<SessionId, { readonly entry: ActiveSession; readonly localWriteSeq: number }>();
+        for (const [id, entry] of this.active) {
+            beforeScan.set(id, { entry, localWriteSeq: entry.localWriteSeq });
+        }
+
+        const diskScan = await this.catalog.scan();
+        if (this.isRegistryDisposed()) {
+            return;
+        }
+
+        if (diskScan.incomplete) {
+            syncControls?.preserveTargets();
+        } else {
+            const nextTargets = targetsFromCatalogSnapshot(diskScan);
+            if (syncControls !== undefined) {
+                syncControls.setTargets(nextTargets);
+            } else {
+                this.diskWatcher?.applyTargets(nextTargets);
+            }
+        }
+
+        const diskById = new Map(diskScan.entries.map((entry) => [entry.summary.id, entry]));
+
+        for (const [id, snapshot] of beforeScan) {
+            if (this.isRegistryDisposed()) {
+                return;
+            }
+            const entry = snapshot.entry;
+            if (this.active.get(id) !== entry || entry.lifecycle.phase === "closing") {
+                continue;
+            }
+            if (entry.localWriteSeq !== snapshot.localWriteSeq) {
+                continue;
+            }
+            const change = detectActiveDiskChange(entry.diskFile, diskById.get(id));
+            switch (change.kind) {
+                case "unchanged":
+                    break;
+                case "deleted": {
+                    if (entry.diskFile.kind !== "persisted") {
+                        break;
+                    }
+                    const deletedOnDisk = await this.verifyDeletedOnDisk(entry.diskFile.realPath);
+                    if (
+                        this.isRegistryDisposed() ||
+                        this.active.get(id) !== entry ||
+                        this.isEntryClosing(entry) ||
+                        entry.localWriteSeq !== snapshot.localWriteSeq ||
+                        !deletedOnDisk
+                    ) {
+                        continue;
+                    }
+                    await this.closeSession(id, {
+                        force: true,
+                        closeCode: SESSION_CLOSE_CODE.sessionNotFound,
+                        closeReason: "Session deleted on disk",
+                    });
+                    break;
+                }
+                case "modified":
+                    if (this.isEntryBusy(entry)) {
+                        if (entry.pendingExternalSync !== "reload_when_idle") {
+                            entry.pendingExternalSync = "reload_when_idle";
+                            this.logger.warn({ sessionId: id }, "deferred external session reload until idle");
+                        }
+                    } else {
+                        await this.closeSession(id, {
+                            force: entry.clients.size === 0,
+                            closeCode: WS_CLOSE_CODE.goingAway,
+                            closeReason: "Session updated on disk",
+                        });
+                    }
+                    break;
+                default:
+                    assertNever(change);
+            }
+        }
+
+        if (this.isRegistryDisposed()) {
+            return;
+        }
+
+        const activeSummaries = [...this.active.values()].map((entry) => this.summarizeEntry(entry));
+        const merged = mergeCatalogEntries(diskScan.entries, activeSummaries);
+        const nextMap = new Map(merged.map((summary) => [summary.id, summary]));
+
+        if (!this.catalogSeeded) {
+            // Seed pre-existing disk entries on initial startup without advancing `catalogBuffer.seq`
+            // so initial cold workspace snapshots keep `seq = 0` even when a client attached during
+            // the startup scan.
+            if (reasons.has("startup")) {
+                this.publishedCatalog.clear();
+                for (const [id, summary] of nextMap) {
+                    this.publishedCatalog.set(id, summary);
+                }
+                this.catalogSeeded = true;
+                return;
+            }
+            this.catalogSeeded = true;
+        }
+
+        if (diskScan.incomplete) {
+            // Preserve previously known entries omitted by a partial scan so a clean scan later
+            // can still detect genuine deletions instead of emitting spurious removals now.
+            for (const [id, previousSummary] of this.publishedCatalog) {
+                if (!nextMap.has(id)) {
+                    nextMap.set(id, previousSummary);
+                }
+            }
+        }
+
+        const deltas = diffCatalogSnapshots(this.publishedCatalog, nextMap, {
+            suppressRemovals: diskScan.incomplete,
+        });
+        this.publishedCatalog.clear();
+        for (const [id, summary] of nextMap) {
+            this.publishedCatalog.set(id, summary);
+        }
+        for (const delta of deltas) {
+            this.catalogHost.publish(delta);
+        }
     }
 }

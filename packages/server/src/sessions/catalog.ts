@@ -29,6 +29,7 @@ import {
 } from "@pivia/protocol";
 
 import { createLogger } from "../logger.ts";
+import type { WatchTarget } from "../fs/watcher.ts";
 
 /** Largest session file the detail endpoint reads into memory. */
 const MAX_SESSION_FILE_BYTES = 64 * 1024 * 1024;
@@ -78,6 +79,7 @@ export interface SessionCatalogOptions extends SessionRootOptions {
 interface DiscoveredSession {
     readonly summary: SessionSummary;
     readonly path: string;
+    readonly stamp: DiskFileStamp;
 }
 
 interface ResolvedDiscoveryRoot extends SessionRoot {
@@ -88,6 +90,8 @@ interface ResolvedDiscoveryRoot extends SessionRoot {
 interface DiscoveryResult {
     readonly root: ResolvedDiscoveryRoot;
     readonly sessions: readonly DiscoveredSession[];
+    readonly watchDirs: readonly string[];
+    readonly incomplete: boolean;
 }
 
 type ContainedFileResult =
@@ -99,8 +103,35 @@ type ContainedFileResult =
 
 interface CachedFileSummary {
     readonly mtimeMs: number;
+    readonly ctimeMs: number;
     readonly size: number;
+    readonly ino: number;
     readonly summary: SessionSummary;
+}
+
+/** Immutable filesystem stamp used to detect external writes without re-reading file bodies. */
+export interface DiskFileStamp {
+    readonly mtimeMs: number;
+    readonly ctimeMs: number;
+    readonly sizeBytes: number;
+    readonly ino: number;
+}
+
+/** One discovered session paired with its canonical path and disk stamp. */
+export interface CatalogDiskEntry {
+    readonly summary: SessionSummary;
+    readonly realPath: string;
+    readonly stamp: DiskFileStamp;
+}
+
+/** Full disk discovery result including watchable directory targets. */
+export interface CatalogDiskSnapshot {
+    readonly root: ResolvedDiscoveryRoot;
+    readonly entries: readonly CatalogDiskEntry[];
+    readonly watchDirs: readonly string[];
+    /** True when directory or file reads failed with non-missing errors and results may be partial. */
+    readonly incomplete: boolean;
+    readonly updatedAtMs: number;
 }
 
 /** Result of resolving one session file for opening. */
@@ -110,6 +141,12 @@ export interface ResolvedSession {
     readonly realPath: string;
     /** File size in bytes from the verification `stat`, used to short-circuit WS inline checks. */
     readonly sizeBytes: number;
+    /** File modification time in milliseconds from the verification `stat`. */
+    readonly mtimeMs: number;
+    /** File status-change time in milliseconds from the verification `stat`. */
+    readonly ctimeMs: number;
+    /** Filesystem inode identifier from the verification `stat`. */
+    readonly ino: number;
     /** Configured session root; `realDir` is the canonical containment boundary. */
     readonly root: SessionRoot & { readonly realDir: string };
 }
@@ -237,11 +274,84 @@ function messageActivityTimestampMs(
     return undefined;
 }
 
+/** Return true when `error` indicates a missing file or directory rather than a read/permission failure. */
+export function isMissingFsError(error: unknown): boolean {
+    if (typeof error !== "object" || error === null || !("code" in error) || typeof error.code !== "string") {
+        return false;
+    }
+    return error.code === "ENOENT" || error.code === "ENOTDIR";
+}
+
+function matchesCachedStats(cached: CachedFileSummary, stats: Stats): boolean {
+    return (
+        cached.mtimeMs === stats.mtimeMs &&
+        cached.ctimeMs === stats.ctimeMs &&
+        cached.size === stats.size &&
+        cached.ino === stats.ino
+    );
+}
+
+function toCachedFileSummary(stats: Stats, summary: SessionSummary): CachedFileSummary {
+    return {
+        mtimeMs: stats.mtimeMs,
+        ctimeMs: stats.ctimeMs,
+        size: stats.size,
+        ino: stats.ino,
+        summary,
+    };
+}
+
+function toDiskFileStamp(stats: Stats): DiskFileStamp {
+    return {
+        mtimeMs: stats.mtimeMs,
+        ctimeMs: stats.ctimeMs,
+        sizeBytes: stats.size,
+        ino: stats.ino,
+    };
+}
+
+function toResolvedSession(
+    summary: SessionSummary,
+    realPath: string,
+    stats: Stats,
+    root: ResolvedDiscoveryRoot,
+): ResolvedSession {
+    return {
+        summary,
+        realPath,
+        sizeBytes: stats.size,
+        mtimeMs: stats.mtimeMs,
+        ctimeMs: stats.ctimeMs,
+        ino: stats.ino,
+        root,
+    };
+}
+
+function isJsonlFilename(filename: string): boolean {
+    return filename.endsWith(".jsonl");
+}
+
+/** Build `DiskWatcher` targets from scanned watch directories without re-walking the filesystem. */
+export function targetsFromCatalogSnapshot(
+    snapshot: Pick<CatalogDiskSnapshot, "root" | "watchDirs">,
+): readonly WatchTarget[] {
+    const rootDir = snapshot.watchDirs[0] ?? snapshot.root.realDir;
+    if (snapshot.root.isCustom) {
+        return [{ kind: "directory", path: rootDir, filenameFilter: isJsonlFilename }];
+    }
+    const targets: WatchTarget[] = [{ kind: "directory", path: rootDir }];
+    for (const dir of snapshot.watchDirs.slice(1)) {
+        targets.push({ kind: "directory", path: dir, filenameFilter: isJsonlFilename });
+    }
+    return targets;
+}
+
 /** Outcome of summarizing a single session `.jsonl` file from its header and messages. */
 export type SessionFileSummaryResult =
     | { readonly kind: "ok"; readonly summary: SessionSummary }
     | { readonly kind: "invalid-id" }
-    | { readonly kind: "unreadable" };
+    | { readonly kind: "unreadable" }
+    | { readonly kind: "io-error" };
 
 /**
  * Streamingly parse a `.jsonl` session file into a {@link SessionSummary} without retaining the
@@ -301,8 +411,8 @@ export async function summarizeSessionFile(
                 }
             }
         }
-    } catch {
-        return { kind: "unreadable" };
+    } catch (error) {
+        return isMissingFsError(error) ? { kind: "unreadable" } : { kind: "io-error" };
     } finally {
         rl.close();
         stream.destroy();
@@ -474,6 +584,32 @@ export class SessionCatalog {
         };
     }
 
+    /** Scan the session root and return summaries with canonical paths, disk stamps, and watch directories. */
+    async scan(): Promise<CatalogDiskSnapshot> {
+        const discovered = await this.discover();
+        return {
+            root: discovered.root,
+            entries: discovered.sessions.map((session) => ({
+                summary: session.summary,
+                realPath: session.path,
+                stamp: session.stamp,
+            })),
+            watchDirs: discovered.watchDirs,
+            incomplete: discovered.incomplete,
+            updatedAtMs: this.nowMs(),
+        };
+    }
+
+    /** Resolve the filesystem watch targets for the configured session root. */
+    async resolveWatchTargets(): Promise<readonly WatchTarget[]> {
+        const root = await this.resolveDiscoveryRoot();
+        if (root.isCustom) {
+            return targetsFromCatalogSnapshot({ root, watchDirs: [root.realDir] });
+        }
+        const { projectDirs } = await this.collectProjectDirs(root);
+        return targetsFromCatalogSnapshot({ root, watchDirs: [root.realDir, ...projectDirs] });
+    }
+
     /**
      * Resolve the session root used for reads and new sessions. The result is not checked on disk;
      * callers that create directories must handle a missing root.
@@ -544,12 +680,7 @@ export class SessionCatalog {
         }
         if (verified.kind === "oversized") {
             const cached = this.pathCache.get(verified.realPath);
-            if (
-                cached !== undefined &&
-                cached.mtimeMs === verified.stats.mtimeMs &&
-                cached.size === verified.stats.size &&
-                cached.summary.id === id
-            ) {
+            if (cached !== undefined && matchesCachedStats(cached, verified.stats) && cached.summary.id === id) {
                 return { kind: "oversized", realPath: verified.realPath, sizeBytes: verified.stats.size };
             }
             // Fall back to discover() so an oversized replacement file cannot spoof `id`.
@@ -561,12 +692,9 @@ export class SessionCatalog {
         const { realPath, stats } = verified;
         try {
             const cached = this.pathCache.get(realPath);
-            if (cached !== undefined && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) {
+            if (cached !== undefined && matchesCachedStats(cached, stats)) {
                 if (cached.summary.id === id) {
-                    return {
-                        kind: "found",
-                        session: { summary: cached.summary, realPath, sizeBytes: stats.size, root },
-                    };
+                    return { kind: "found", session: toResolvedSession(cached.summary, realPath, stats, root) };
                 }
                 return undefined;
             }
@@ -574,11 +702,8 @@ export class SessionCatalog {
             if (refreshed.kind !== "ok" || refreshed.summary.id !== id) {
                 return undefined;
             }
-            this.pathCache.set(realPath, { mtimeMs: stats.mtimeMs, size: stats.size, summary: refreshed.summary });
-            return {
-                kind: "found",
-                session: { summary: refreshed.summary, realPath, sizeBytes: stats.size, root },
-            };
+            this.pathCache.set(realPath, toCachedFileSummary(stats, refreshed.summary));
+            return { kind: "found", session: toResolvedSession(refreshed.summary, realPath, stats, root) };
         } catch {
             return undefined;
         }
@@ -594,12 +719,7 @@ export class SessionCatalog {
             case "ok":
                 return {
                     kind: "found",
-                    session: {
-                        summary: match.summary,
-                        realPath: verified.realPath,
-                        sizeBytes: verified.stats.size,
-                        root,
-                    },
+                    session: toResolvedSession(match.summary, verified.realPath, verified.stats, root),
                 };
             case "oversized":
                 return { kind: "oversized", realPath: verified.realPath, sizeBytes: verified.stats.size };
@@ -653,28 +773,47 @@ export class SessionCatalog {
 
     private async discover(): Promise<DiscoveryResult> {
         const root = await this.resolveDiscoveryRoot();
-        const filePaths = await this.collectSessionFilePaths(root);
+        const collected = await this.collectSessionFilePaths(root);
+        let incomplete = collected.incomplete;
         const candidates: DiscoveredSession[] = [];
         const seenRealPaths = new Set<string>();
 
-        for (const filePath of filePaths) {
-            const realPath = await realpath(filePath).catch(() => null);
-            if (realPath === null || !isPathWithin(root.realDir, realPath)) {
+        for (const filePath of collected.filePaths) {
+            let realPath: string;
+            try {
+                realPath = await realpath(filePath);
+            } catch (error) {
+                if (!isMissingFsError(error)) {
+                    incomplete = true;
+                } else {
+                    this.logger.warn({ path: filePath }, "skipped session outside the session root");
+                }
+                continue;
+            }
+            if (!isPathWithin(root.realDir, realPath)) {
                 this.logger.warn({ path: filePath }, "skipped session outside the session root");
                 continue;
             }
             if (seenRealPaths.has(realPath)) {
                 continue;
             }
-            const stats = await stat(realPath).catch(() => null);
-            if (stats === null || !stats.isFile()) {
+            let stats: Stats;
+            try {
+                stats = await stat(realPath);
+            } catch (error) {
+                if (!isMissingFsError(error)) {
+                    incomplete = true;
+                }
+                continue;
+            }
+            if (!stats.isFile()) {
                 continue;
             }
             seenRealPaths.add(realPath);
 
             let summary: SessionSummary;
             const cached = this.pathCache.get(realPath);
-            if (cached !== undefined && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) {
+            if (cached !== undefined && matchesCachedStats(cached, stats)) {
                 summary = cached.summary;
             } else {
                 const summarized = await summarizeSessionFile(realPath, stats);
@@ -683,15 +822,24 @@ export class SessionCatalog {
                     this.logger.warn({ path: filePath }, "skipped session with an unusable id");
                     continue;
                 }
+                if (summarized.kind === "io-error") {
+                    incomplete = true;
+                    this.pathCache.delete(realPath);
+                    continue;
+                }
                 if (summarized.kind === "unreadable") {
                     this.pathCache.delete(realPath);
                     continue;
                 }
                 summary = summarized.summary;
-                this.pathCache.set(realPath, { mtimeMs: stats.mtimeMs, size: stats.size, summary });
+                this.pathCache.set(realPath, toCachedFileSummary(stats, summary));
             }
 
-            candidates.push({ summary, path: realPath });
+            candidates.push({
+                summary,
+                path: realPath,
+                stamp: toDiskFileStamp(stats),
+            });
         }
 
         for (const cachedPath of this.pathCache.keys()) {
@@ -726,13 +874,17 @@ export class SessionCatalog {
             this.idToPath.set(id, session.path);
         }
 
-        return { root, sessions: [...byId.values()] };
+        return { root, sessions: [...byId.values()], watchDirs: collected.watchDirs, incomplete };
     }
 
-    private async collectJsonlInDir(dir: string): Promise<string[]> {
-        const entries = await readdir(dir, { withFileTypes: true }).catch(() => null);
-        if (entries === null) {
-            return [];
+    private async collectJsonlInDir(
+        dir: string,
+    ): Promise<{ readonly filePaths: readonly string[]; readonly incomplete: boolean }> {
+        let entries;
+        try {
+            entries = await readdir(dir, { withFileTypes: true });
+        } catch (error) {
+            return { filePaths: [], incomplete: !isMissingFsError(error) };
         }
         const paths: string[] = [];
         for (const entry of entries) {
@@ -744,33 +896,62 @@ export class SessionCatalog {
             }
             paths.push(join(dir, entry.name));
         }
-        return paths;
+        return { filePaths: paths, incomplete: false };
     }
 
-    private async collectSessionFilePaths(root: ResolvedDiscoveryRoot): Promise<readonly string[]> {
-        if (root.isCustom) {
-            return this.collectJsonlInDir(root.dir);
+    private async collectProjectDirs(
+        root: ResolvedDiscoveryRoot,
+    ): Promise<{ readonly projectDirs: readonly string[]; readonly incomplete: boolean }> {
+        let entries;
+        try {
+            entries = await readdir(root.dir, { withFileTypes: true });
+        } catch (error) {
+            return { projectDirs: [], incomplete: !isMissingFsError(error) };
         }
 
-        const entries = await readdir(root.dir, { withFileTypes: true }).catch(() => null);
-        if (entries === null) {
-            return [];
-        }
-
+        let incomplete = false;
         const projectDirs: string[] = [];
         for (const entry of entries) {
             if (!entry.isDirectory() && !entry.isSymbolicLink()) {
                 continue;
             }
             const dir = join(root.dir, entry.name);
-            const realDir = await realpath(dir).catch(() => null);
-            if (realDir === null || !isPathWithin(root.realDir, realDir)) {
+            let realDir: string;
+            try {
+                realDir = await realpath(dir);
+            } catch (error) {
+                if (!isMissingFsError(error)) {
+                    incomplete = true;
+                } else {
+                    this.logger.warn({ path: dir }, "skipped project directory outside the session root");
+                }
+                continue;
+            }
+            if (!isPathWithin(root.realDir, realDir)) {
                 this.logger.warn({ path: dir }, "skipped project directory outside the session root");
                 continue;
             }
-            projectDirs.push(dir);
+            projectDirs.push(realDir);
+        }
+        return { projectDirs, incomplete };
+    }
+
+    private async collectSessionFilePaths(root: ResolvedDiscoveryRoot): Promise<{
+        readonly filePaths: readonly string[];
+        readonly watchDirs: readonly string[];
+        readonly incomplete: boolean;
+    }> {
+        if (root.isCustom) {
+            const listed = await this.collectJsonlInDir(root.dir);
+            return {
+                filePaths: listed.filePaths,
+                watchDirs: [root.realDir],
+                incomplete: listed.incomplete,
+            };
         }
 
+        const { projectDirs, incomplete: dirsIncomplete } = await this.collectProjectDirs(root);
+        let incomplete = dirsIncomplete;
         const results: string[] = [];
         let nextIndex = 0;
         const workerCount = Math.min(PROJECT_DISCOVERY_CONCURRENCY, projectDirs.length);
@@ -782,17 +963,24 @@ export class SessionCatalog {
                     continue;
                 }
                 const listed = await this.collectJsonlInDir(dir);
-                results.push(...listed);
+                if (listed.incomplete) {
+                    incomplete = true;
+                }
+                results.push(...listed.filePaths);
             }
         });
         await Promise.all(workers);
-        return results;
+        return {
+            filePaths: results,
+            watchDirs: [root.realDir, ...projectDirs],
+            incomplete,
+        };
     }
 
     private async readSession(
         root: ResolvedDiscoveryRoot,
         sessionId: SessionId,
-        session: DiscoveredSession,
+        session: Pick<DiscoveredSession, "summary" | "path">,
         sliceAnchor?: SessionPrefixAnchor,
     ): Promise<SessionDetailResponse | null> {
         const verified = await this.verifyContainedFile(root, sessionId, session.path, "read");

@@ -157,6 +157,7 @@ describe("workspace websocket route", () => {
             agentDir: root,
             runtimeFactory: harness.factory,
             idleTimeoutMs: 0,
+            diskSync: { enabled: false },
         });
         const app = buildApp({
             logger,

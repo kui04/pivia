@@ -88,6 +88,7 @@ describe("session routes", () => {
             agentDir: root,
             runtimeFactory: harness.factory,
             idleTimeoutMs: 0,
+            diskSync: { enabled: false },
         });
         const app = buildApp({ logger, auth: { password: "secret" }, sessions: catalog, registry });
         apps.push(app);

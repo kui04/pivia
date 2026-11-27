@@ -197,6 +197,7 @@ describe("session websocket route", () => {
             runtimeFactory: harness.factory,
             idleTimeoutMs: 0,
             shutdownUiTimeoutMs: options.shutdownUiTimeoutMs,
+            diskSync: { enabled: false },
         });
         const app = buildApp({
             logger,
