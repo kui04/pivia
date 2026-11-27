@@ -48,6 +48,22 @@ export {
 } from "./Popover";
 export { ScrollArea, type ScrollAreaProps } from "./ScrollArea";
 export { Select, type SelectOption, type SelectProps } from "./Select";
+export {
+    SplitPane,
+    type DropDockZone,
+    type PaneId,
+    type PaneSizePx,
+    type SplitAxis,
+    type SplitId,
+    type SplitPaneDropConfig,
+    type SplitPaneLeafMeta,
+    type SplitPaneProps,
+    type SplitPlacement,
+    type SplitRatio,
+    type SplitTreeBranch,
+    type SplitTreeLeaf,
+    type SplitTreeNode,
+} from "./SplitPane";
 export { Tabular, type TabularProps, type TabularTag } from "./Tabular";
 export { ToastProvider, createToastManager, useToast, type ToastPosition, type ToastProviderProps } from "./Toast";
 export { VisuallyHidden, type VisuallyHiddenProps, type VisuallyHiddenTag } from "./VisuallyHidden";

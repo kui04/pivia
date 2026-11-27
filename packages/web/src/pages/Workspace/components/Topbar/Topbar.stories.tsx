@@ -26,17 +26,19 @@ const meta = {
         runtimeReady: true,
         onToggleSidebar: fn(),
         onCopySessionId: fn(),
-        onCloseSession: fn(),
+        onDetachSession: fn(),
         onRenameSession: fn(),
         onCompactSession: fn(),
+        onClosePane: fn(),
     },
     argTypes: {
         session: { control: false },
         onToggleSidebar: { control: false },
         onCopySessionId: { control: false },
-        onCloseSession: { control: false },
+        onDetachSession: { control: false },
         onRenameSession: { control: false },
         onCompactSession: { control: false },
+        onClosePane: { control: false },
     },
     decorators: [
         (Story) => (
@@ -75,13 +77,19 @@ export const SelectedSessionStory: Story = {
     play: async ({ canvasElement, userEvent, args }) => {
         args.onToggleSidebar.mockClear();
         args.onCopySessionId.mockClear();
-        args.onCloseSession.mockClear();
+        args.onDetachSession.mockClear();
+        args.onRenameSession?.mockClear();
+        args.onCompactSession?.mockClear();
         const canvas = within(canvasElement);
 
         await expect(canvas.getByRole("button", { name: "Hide sessions" })).toHaveAttribute("aria-expanded", "true");
         await expect(canvas.getByRole("heading", { level: 1, name: "Fix the session list" })).toBeVisible();
+        await expect(canvas.queryByRole("button", { name: /Close pane/ })).not.toBeInTheDocument();
 
         await userEvent.click(canvas.getByRole("button", { name: "Session actions" }));
+        await expect(within(document.body).queryByRole("menuitem", { name: "Split right" })).not.toBeInTheDocument();
+        await expect(within(document.body).queryByRole("menuitem", { name: "Close session" })).not.toBeInTheDocument();
+        await expect(within(document.body).queryByRole("menuitem", { name: "Close pane" })).not.toBeInTheDocument();
         await userEvent.click(await within(document.body).findByRole("menuitem", { name: "Copy session ID" }));
         await expect(args.onCopySessionId).toHaveBeenCalledWith(session.id);
 
@@ -94,7 +102,21 @@ export const SelectedSessionStory: Story = {
         await expect(args.onCompactSession).toHaveBeenCalledWith(session.id);
 
         await userEvent.click(canvas.getByRole("button", { name: "Session actions" }));
-        await userEvent.click(await within(document.body).findByRole("menuitem", { name: "Close session" }));
-        await expect(args.onCloseSession).toHaveBeenCalledWith(session.id);
+        await userEvent.click(await within(document.body).findByRole("menuitem", { name: "Detach session" }));
+        await expect(args.onDetachSession).toHaveBeenCalledWith(session.id);
+    },
+};
+
+export const MultiPane: Story = {
+    args: {
+        paneCount: 2,
+    },
+    play: async ({ canvasElement, userEvent, args }) => {
+        args.onClosePane?.mockClear();
+        const canvas = within(canvasElement);
+
+        await userEvent.click(canvas.getByRole("button", { name: "Session actions (Fix the session list)" }));
+        await userEvent.click(await within(document.body).findByRole("menuitem", { name: "Close pane" }));
+        await expect(args.onClosePane).toHaveBeenCalledTimes(1);
     },
 };

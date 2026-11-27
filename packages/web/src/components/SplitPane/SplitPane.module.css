@@ -1,0 +1,188 @@
+/*
+ * Generic recursive resizable split-pane layout with directional dock-drop preview.
+ *
+ * The nesting this file styles:
+ *
+ *   .root                          full-height flex container
+ *   ├─ .split                      binary split container (`data-axis="row" | "column"`)
+ *   │   ├─ .branch                 one child slot sized via inline `flex` ratio
+ *   │   └─ .divider                accessible slider separator between siblings
+ *   │       └─ .dividerLine        1px hairline (highlights on hover, focus, or active drag)
+ *   └─ .leaf                       terminal pane wrapper
+ *       └─ .dropOverlay            translucent dock preview region (`data-zone`)
+ *           └─ .dropHint           centered pill explaining the pending drop action
+ */
+.root {
+    display: flex;
+    flex: 1;
+    min-inline-size: 0;
+    min-block-size: 0;
+}
+
+.split {
+    display: flex;
+    flex: 1;
+    min-inline-size: 0;
+    min-block-size: 0;
+
+    &[data-axis="row"] {
+        flex-direction: row;
+    }
+
+    &[data-axis="column"] {
+        flex-direction: column;
+    }
+
+    .branch {
+        display: flex;
+        min-inline-size: 0;
+        min-block-size: 0;
+    }
+
+    .divider {
+        position: relative;
+        z-index: 3;
+        flex: none;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        touch-action: none;
+        user-select: none;
+
+        &::after {
+            content: "";
+            position: absolute;
+        }
+
+        .dividerLine {
+            background-color: var(--color-outline-variant);
+            transition: background-color var(--motion-duration-effects-fast) var(--motion-easing-standard);
+        }
+
+        &:hover .dividerLine,
+        &:focus-visible .dividerLine,
+        &[data-dragging="true"] .dividerLine {
+            background-color: var(--color-primary);
+        }
+
+        &:focus-visible {
+            outline: none;
+        }
+    }
+
+    &[data-axis="row"] > .divider {
+        inline-size: var(--border-width);
+        cursor: col-resize;
+
+        &::after {
+            inset-block: 0;
+            inset-inline: calc(-1 * var(--space-4));
+        }
+
+        .dividerLine {
+            inline-size: var(--border-width);
+            block-size: 100%;
+        }
+
+        &:hover .dividerLine,
+        &:focus-visible .dividerLine,
+        &[data-dragging="true"] .dividerLine {
+            inline-size: var(--border-width-strong);
+        }
+    }
+
+    &[data-axis="column"] > .divider {
+        block-size: var(--border-width);
+        cursor: row-resize;
+
+        &::after {
+            inset-inline: 0;
+            inset-block: calc(-1 * var(--space-4));
+        }
+
+        .dividerLine {
+            inline-size: 100%;
+            block-size: var(--border-width);
+        }
+
+        &:hover .dividerLine,
+        &:focus-visible .dividerLine,
+        &[data-dragging="true"] .dividerLine {
+            block-size: var(--border-width-strong);
+        }
+    }
+}
+
+.leaf {
+    position: relative;
+    display: flex;
+    flex: 1;
+    min-inline-size: 0;
+    min-block-size: 0;
+
+    .dropOverlay {
+        position: absolute;
+        z-index: 4;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: var(--space-8);
+        border: var(--border-width-strong) solid var(--color-primary);
+        border-radius: var(--shape-corner-medium);
+        background-color: var(--color-primary-container);
+        pointer-events: none;
+        transition:
+            inset var(--motion-duration-effects-fast) var(--motion-easing-standard),
+            inline-size var(--motion-duration-effects-fast) var(--motion-easing-standard),
+            block-size var(--motion-duration-effects-fast) var(--motion-easing-standard);
+
+        &[data-zone="center"] {
+            inset: var(--space-8);
+        }
+
+        &[data-zone="left"] {
+            inset-block: var(--space-8);
+            inset-inline-start: var(--space-8);
+            inline-size: calc(50% - var(--space-12));
+        }
+
+        &[data-zone="right"] {
+            inset-block: var(--space-8);
+            inset-inline-end: var(--space-8);
+            inline-size: calc(50% - var(--space-12));
+        }
+
+        &[data-zone="top"] {
+            inset-inline: var(--space-8);
+            inset-block-start: var(--space-8);
+            block-size: calc(50% - var(--space-12));
+        }
+
+        &[data-zone="bottom"] {
+            inset-inline: var(--space-8);
+            inset-block-end: var(--space-8);
+            block-size: calc(50% - var(--space-12));
+        }
+
+        .dropHint {
+            padding: var(--space-4) var(--space-12);
+            border: var(--border-width) solid var(--color-primary);
+            border-radius: var(--shape-corner-full);
+            background-color: var(--color-surface-container-highest);
+            color: var(--color-on-surface);
+            font-size: var(--type-caption-size);
+            font-weight: var(--type-subtitle-weight);
+            letter-spacing: var(--type-caption-tracking);
+            line-height: var(--type-caption-line-height);
+            box-shadow: var(--elevation-2);
+            white-space: nowrap;
+        }
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .split .divider .dividerLine,
+    .leaf .dropOverlay {
+        transition: none;
+    }
+}

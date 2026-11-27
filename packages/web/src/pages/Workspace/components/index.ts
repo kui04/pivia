@@ -7,6 +7,8 @@ export {
     type CreateSessionSubmitOptions,
 } from "./CreateSessionDialog";
 export { RenameSessionDialog, type RenameSessionDialogProps } from "./RenameSessionDialog";
+export { SessionPane, type SessionPaneHeaderProps, type SessionPaneProps } from "./SessionPane";
 export { SettingsDialog, type SettingsAuthAction, type SettingsDialogProps } from "./SettingsDialog";
 export { Sidebar, type SidebarProps } from "./Sidebar";
+export { SplitWorkspace, type SplitWorkspaceProps, type WorkspaceDragSource } from "./SplitWorkspace";
 export { Topbar, type TopbarProps } from "./Topbar";

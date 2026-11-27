@@ -4,6 +4,7 @@
  * The nesting this file styles:
  *
  *   .window
+ *   ├─ &[data-dragging="true"]     keeps grabbing cursor across the workspace during active drags
  *   ├─ .sidebar                    the column beside the session view; a Drawer carries the list on a narrow screen
  *   │   ├─ &[data-open="false"]    slides the column out of the layout
  *   │   └─ &                       reduced motion: no transition
@@ -13,6 +14,10 @@
     display: flex;
     flex: 1;
     min-block-size: 0;
+
+    &[data-dragging="true"] {
+        cursor: grabbing;
+    }
 
     .sidebar {
         --sidebar-inline-size: 18rem;

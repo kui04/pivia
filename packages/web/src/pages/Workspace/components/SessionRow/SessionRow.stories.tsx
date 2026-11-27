@@ -19,6 +19,7 @@ const meta = {
         nowMs: STORY_NOW,
         closing: false,
         onSelect: fn(),
+        onSplitSession: fn(),
         onTogglePinned: fn(),
         onCopySessionId: fn(),
         onCloseSession: fn(),
@@ -26,6 +27,7 @@ const meta = {
     argTypes: {
         session: { control: false },
         onSelect: { control: false },
+        onSplitSession: { control: false },
         onTogglePinned: { control: false },
         onCopySessionId: { control: false },
         onCloseSession: { control: false },
@@ -115,6 +117,7 @@ export const RuntimeStates: Story = {
 
 export const MenuActions: Story = {
     play: async ({ canvasElement, userEvent, args }) => {
+        args.onSplitSession?.mockClear();
         args.onCopySessionId.mockClear();
         args.onCloseSession.mockClear();
         const canvas = within(canvasElement);
@@ -123,6 +126,18 @@ export const MenuActions: Story = {
         const rowButton = canvas.getByRole("button", { name: /Fix the session list/ });
         rowButton.focus();
 
+        await userEvent.click(canvas.getByRole("button", { name: "Session actions" }));
+        await userEvent.click(await within(document.body).findByRole("menuitem", { name: "Split right" }));
+        await expect(args.onSplitSession).toHaveBeenCalledTimes(1);
+        await expect(args.onSplitSession).toHaveBeenCalledWith(session.id, "row");
+
+        rowButton.focus();
+        await userEvent.click(canvas.getByRole("button", { name: "Session actions" }));
+        await userEvent.click(await within(document.body).findByRole("menuitem", { name: "Split down" }));
+        await expect(args.onSplitSession).toHaveBeenCalledTimes(2);
+        await expect(args.onSplitSession).toHaveBeenCalledWith(session.id, "column");
+
+        rowButton.focus();
         await userEvent.click(canvas.getByRole("button", { name: "Session actions" }));
         await userEvent.click(await within(document.body).findByRole("menuitem", { name: "Copy session ID" }));
         await expect(args.onCopySessionId).toHaveBeenCalledTimes(1);

@@ -1,8 +1,9 @@
 import type { SessionId } from "@pivia/protocol";
 import { Pin, Plus, RefreshCw, Search, Settings, X } from "lucide-react";
-import { useEffect, useId, useRef, useState, type ReactElement } from "react";
+import { useEffect, useId, useRef, useState, type DragEvent, type ReactElement } from "react";
 
 import { Button, Icon, IconButton, Input, ScrollArea, VisuallyHidden } from "@components";
+import type { SplitAxis } from "@components/SplitPane/tree";
 import { cn } from "@/lib";
 import type { CatalogSyncPhase, WorkspaceModel } from "@/stores/workspace";
 
@@ -16,11 +17,16 @@ export interface SidebarProps {
     readonly query: string;
     readonly nowMs: number;
     readonly closingIds: ReadonlySet<SessionId>;
+    readonly canSplitRow?: boolean | undefined;
+    readonly canSplitColumn?: boolean | undefined;
     readonly onQueryChange: (query: string) => void;
     readonly onRefresh: () => void;
     readonly onNewSession: () => void;
     readonly onOpenSettings: () => void;
     readonly onSelect: (id: SessionId) => void;
+    readonly onSplitSession?: ((id: SessionId, axis: SplitAxis) => void) | undefined;
+    readonly onSessionDragStart?: ((id: SessionId, title: string, event: DragEvent<HTMLElement>) => void) | undefined;
+    readonly onSessionDragEnd?: (() => void) | undefined;
     readonly onTogglePinned: (id: SessionId) => void;
     readonly onToggleFolder: (cwd: string) => void;
     readonly onCopySessionId: (id: SessionId) => void;
@@ -37,11 +43,16 @@ export function Sidebar({
     query,
     nowMs,
     closingIds,
+    canSplitRow,
+    canSplitColumn,
     onQueryChange,
     onRefresh,
     onNewSession,
     onOpenSettings,
     onSelect,
+    onSplitSession,
+    onSessionDragStart,
+    onSessionDragEnd,
     onTogglePinned,
     onToggleFolder,
     onCopySessionId,
@@ -220,7 +231,12 @@ export function Sidebar({
                                                 session={session}
                                                 nowMs={nowMs}
                                                 closing={closingIds.has(session.id)}
+                                                canSplitRow={canSplitRow}
+                                                canSplitColumn={canSplitColumn}
                                                 onSelect={onSelect}
+                                                onSplitSession={onSplitSession}
+                                                onDragStart={onSessionDragStart}
+                                                onDragEnd={onSessionDragEnd}
                                                 onTogglePinned={onTogglePinned}
                                                 onCopySessionId={onCopySessionId}
                                                 onCloseSession={onCloseSession}
@@ -235,10 +251,15 @@ export function Sidebar({
                                     folder={folder}
                                     nowMs={nowMs}
                                     closingIds={closingIds}
+                                    canSplitRow={canSplitRow}
+                                    canSplitColumn={canSplitColumn}
                                     onToggle={() => {
                                         onToggleFolder(folder.cwd);
                                     }}
                                     onSelect={onSelect}
+                                    onSplitSession={onSplitSession}
+                                    onSessionDragStart={onSessionDragStart}
+                                    onSessionDragEnd={onSessionDragEnd}
                                     onTogglePinned={onTogglePinned}
                                     onCopySessionId={onCopySessionId}
                                     onCloseSession={onCloseSession}

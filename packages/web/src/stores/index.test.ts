@@ -30,7 +30,7 @@ describe("createAppStores", () => {
         mockLocation("http://localhost:3141/workspace");
     });
 
-    it("clears session memory and persisted cache and marks auth unauthenticated on 401", async () => {
+    it("clears all pooled sessions and persisted cache and marks auth unauthenticated on 401", async () => {
         let returnUnauthorized = false;
         const fetchMock = vi.fn<FetchLike>((input) => {
             const url = requestUrl(input);
@@ -48,26 +48,27 @@ describe("createAppStores", () => {
         const cache = createTestCache();
         const clearAllSpy = vi.spyOn(cache, "clearAll");
         const apiClient = createApiClient({ fetch: fetchMock });
-        const { useAuthStore, useSessionStore } = createAppStores({
+        const { useAuthStore, sessionPool } = createAppStores({
             apiClient,
             cache,
             WebSocket: FakeWebSocket,
         });
-        const clearCacheSpy = vi.spyOn(useSessionStore.getState(), "clearCache");
+        const clearPoolSpy = vi.spyOn(sessionPool, "clearAll");
 
         await useAuthStore.getState().checkStatus();
         expect(useAuthStore.getState().phase).toBe("authenticated");
 
-        useSessionStore.getState().connect(SESSION_1);
+        const store1 = sessionPool.attach(SESSION_1);
+        const store2 = sessionPool.attach(SESSION_2);
         await vi.waitFor(() => {
-            expect(FakeWebSocket.instances).toHaveLength(1);
+            expect(FakeWebSocket.instances).toHaveLength(2);
         });
-        const sock = FakeWebSocket.instances[0];
-        if (sock === undefined) {
-            throw new Error("expected FakeWebSocket instance");
+        const [sock1, sock2] = FakeWebSocket.instances;
+        if (sock1 === undefined || sock2 === undefined) {
+            throw new Error("expected FakeWebSocket instances");
         }
-        sock.open();
-        sock.receive({
+        sock1.open();
+        sock1.receive({
             type: "sync:snapshot",
             cursor: { epoch: sessionEpoch("rt-1"), seq: sessionSeq(1) },
             snapshot: {
@@ -79,18 +80,21 @@ describe("createAppStores", () => {
                 pendingUiRequests: [],
             },
         });
-        expect(useSessionStore.getState().sessionId).toBe(SESSION_1);
+        sock2.open();
+        expect(store1.getState().sessionId).toBe(SESSION_1);
+        expect(store2.getState().sessionId).toBe(SESSION_2);
 
         returnUnauthorized = true;
         await expect(apiClient.listSessions()).rejects.toThrow("Authentication required.");
 
         expect(useAuthStore.getState().phase).toBe("unauthenticated");
-        expect(clearCacheSpy).toHaveBeenCalledTimes(1);
+        expect(clearPoolSpy).toHaveBeenCalledTimes(1);
         expect(clearAllSpy).toHaveBeenCalledTimes(1);
-        expect(useSessionStore.getState().sessionId).toBeNull();
+        expect(sessionPool.getStore(SESSION_1)).toBeNull();
+        expect(sessionPool.getStore(SESSION_2)).toBeNull();
     });
 
-    it("clears session memory and persisted cache on logout", async () => {
+    it("clears session pool and persisted cache on logout", async () => {
         const fetchMock = vi.fn<FetchLike>((input) => {
             const url = requestUrl(input);
             if (url.endsWith("/api/auth/status")) {
@@ -105,15 +109,15 @@ describe("createAppStores", () => {
         const cache = createTestCache();
         const clearAllSpy = vi.spyOn(cache, "clearAll");
         const apiClient = createApiClient({ fetch: fetchMock });
-        const { useAuthStore, useSessionStore } = createAppStores({
+        const { useAuthStore, sessionPool } = createAppStores({
             apiClient,
             cache,
             WebSocket: FakeWebSocket,
         });
-        const clearCacheSpy = vi.spyOn(useSessionStore.getState(), "clearCache");
+        const clearPoolSpy = vi.spyOn(sessionPool, "clearAll");
 
         await useAuthStore.getState().checkStatus();
-        useSessionStore.getState().connect(SESSION_1);
+        sessionPool.attach(SESSION_1);
         await vi.waitFor(() => {
             expect(FakeWebSocket.instances).toHaveLength(1);
         });
@@ -121,9 +125,9 @@ describe("createAppStores", () => {
         await useAuthStore.getState().logout();
 
         expect(useAuthStore.getState().phase).toBe("unauthenticated");
-        expect(clearCacheSpy).toHaveBeenCalledTimes(1);
+        expect(clearPoolSpy).toHaveBeenCalledTimes(1);
         expect(clearAllSpy).toHaveBeenCalledTimes(1);
-        expect(useSessionStore.getState().sessionId).toBeNull();
+        expect(sessionPool.getStore(SESSION_1)).toBeNull();
     });
 
     it("removes a missing session from the workspace store when HTTP sync returns 404", async () => {
@@ -132,7 +136,7 @@ describe("createAppStores", () => {
         );
         const cache = createTestCache();
         const apiClient = createApiClient({ fetch: fetchMock });
-        const { useWorkspaceStore, useSessionStore } = createAppStores({
+        const { useWorkspaceStore, sessionPool } = createAppStores({
             apiClient,
             cache,
             WebSocket: FakeWebSocket,
@@ -146,7 +150,7 @@ describe("createAppStores", () => {
         useWorkspaceStore.getState().togglePinned(SESSION_1);
         useWorkspaceStore.getState().select(SESSION_1);
 
-        useSessionStore.getState().connect(SESSION_1);
+        sessionPool.attach(SESSION_1);
         await vi.waitFor(() => {
             expect(FakeWebSocket.instances).toHaveLength(1);
         });
@@ -173,6 +177,7 @@ describe("createAppStores", () => {
         });
         expect(useWorkspaceStore.getState().pins).toEqual([]);
         expect(useWorkspaceStore.getState().selectedId).toBeNull();
+        expect(sessionPool.getStore(SESSION_1)).toBeNull();
     });
 
     it("detaches only its own unauthorized handler when disposed", async () => {

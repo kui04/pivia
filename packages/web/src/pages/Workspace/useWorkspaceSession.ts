@@ -2,12 +2,10 @@ import { parseSessionId, type SessionId } from "@pivia/protocol";
 import { useEffect, useMemo } from "react";
 import { useParams } from "react-router";
 
-import { useSessionStore as defaultSessionStore } from "@/stores";
-
-/** Optional dependencies of {@link useWorkspaceSession}. */
+/** Dependencies of {@link useWorkspaceSession}. */
 export interface UseWorkspaceSessionOptions {
-    /** Session store to drive. Tests and stories inject an isolated store. */
-    readonly sessionStore?: typeof defaultSessionStore | undefined;
+    /** Single-session store binding to drive. */
+    readonly sessionStore: WorkspaceSessionBinding;
 }
 
 /** The route segment `:sessionId` resolved into a store request. */
@@ -59,19 +57,19 @@ export function attachWorkspaceSession(store: WorkspaceSessionBinding, route: Wo
 }
 
 /**
- * Keep the session store attached to the routed session.
+ * Keep a single-session store attached to the routed `:sessionId`.
  *
- * The store hydrates the cached transcript itself, so the page passes only the route id and reads
- * the result from the store.
+ * Used by standalone single-session views; multi-pane workspaces coordinate connections through
+ * {@link SessionPool} in `WorkspaceLayout`.
  *
  * @returns The resolved route segment, so the page can tell a missing session from an invalid one.
  */
-export function useWorkspaceSession(options: UseWorkspaceSessionOptions = {}): WorkspaceSessionRoute {
-    const sessionStore = options.sessionStore ?? defaultSessionStore;
+export function useWorkspaceSession(options: UseWorkspaceSessionOptions): WorkspaceSessionRoute {
+    const { sessionStore } = options;
     const { sessionId: rawSessionId } = useParams<{ sessionId?: string }>();
     const route = useMemo(() => parseWorkspaceSessionRoute(rawSessionId), [rawSessionId]);
 
-    useEffect(() => attachWorkspaceSession(sessionStore.getState(), route), [route, sessionStore]);
+    useEffect(() => attachWorkspaceSession(sessionStore, route), [route, sessionStore]);
 
     return route;
 }

@@ -1,8 +1,9 @@
 import type { SessionId } from "@pivia/protocol";
-import { EllipsisVertical, Pin, PinOff } from "lucide-react";
-import { memo, useEffect, useRef, useState, type PointerEvent, type ReactElement } from "react";
+import { EllipsisVertical, Pin, PinOff, SquareSplitHorizontal, SquareSplitVertical } from "lucide-react";
+import { memo, useEffect, useRef, useState, type DragEvent, type PointerEvent, type ReactElement } from "react";
 
-import { IconButton, Menu, MenuItem } from "@components";
+import { IconButton, Menu, MenuItem, MenuSeparator } from "@components";
+import type { SplitAxis } from "@components/SplitPane/tree";
 import { useMediaQuery } from "@/hooks";
 import { Formatter } from "@/lib";
 import { sessionRowStatus, type SessionRow as SessionRowModel } from "@/stores/workspace";
@@ -21,7 +22,12 @@ export interface SessionRowProps {
     readonly session: SessionRowModel;
     readonly nowMs: number;
     readonly closing: boolean;
+    readonly canSplitRow?: boolean | undefined;
+    readonly canSplitColumn?: boolean | undefined;
     readonly onSelect: (id: SessionId) => void;
+    readonly onSplitSession?: ((id: SessionId, axis: SplitAxis) => void) | undefined;
+    readonly onDragStart?: ((id: SessionId, title: string, event: DragEvent<HTMLElement>) => void) | undefined;
+    readonly onDragEnd?: (() => void) | undefined;
     readonly onTogglePinned: (id: SessionId) => void;
     readonly onCopySessionId: (id: SessionId) => void;
     readonly onCloseSession: (id: SessionId) => void;
@@ -31,7 +37,12 @@ function areSessionRowPropsEqual(prev: SessionRowProps, next: SessionRowProps): 
     if (
         prev.nowMs !== next.nowMs ||
         prev.closing !== next.closing ||
+        prev.canSplitRow !== next.canSplitRow ||
+        prev.canSplitColumn !== next.canSplitColumn ||
         prev.onSelect !== next.onSelect ||
+        prev.onSplitSession !== next.onSplitSession ||
+        prev.onDragStart !== next.onDragStart ||
+        prev.onDragEnd !== next.onDragEnd ||
         prev.onTogglePinned !== next.onTogglePinned ||
         prev.onCopySessionId !== next.onCopySessionId ||
         prev.onCloseSession !== next.onCloseSession
@@ -65,7 +76,12 @@ function SessionRowInner({
     session,
     nowMs,
     closing,
+    canSplitRow = true,
+    canSplitColumn = true,
     onSelect,
+    onSplitSession,
+    onDragStart,
+    onDragEnd,
     onTogglePinned,
     onCopySessionId,
     onCloseSession,
@@ -134,6 +150,15 @@ function SessionRowInner({
                 type="button"
                 className={styles.select}
                 aria-current={session.selected ? "true" : undefined}
+                draggable={onDragStart !== undefined || undefined}
+                onDragStart={
+                    onDragStart === undefined
+                        ? undefined
+                        : (event) => {
+                              onDragStart(session.id, session.title, event);
+                          }
+                }
+                onDragEnd={onDragEnd}
                 onClick={handleSelect}
                 onPointerDown={startPress}
                 onPointerUp={cancelPress}
@@ -177,6 +202,29 @@ function SessionRowInner({
                         </IconButton>
                     }
                 >
+                    {onSplitSession === undefined ? null : (
+                        <>
+                            <MenuItem
+                                icon={<SquareSplitHorizontal />}
+                                disabled={!canSplitRow}
+                                onClick={() => {
+                                    onSplitSession(session.id, "row");
+                                }}
+                            >
+                                Split right
+                            </MenuItem>
+                            <MenuItem
+                                icon={<SquareSplitVertical />}
+                                disabled={!canSplitColumn}
+                                onClick={() => {
+                                    onSplitSession(session.id, "column");
+                                }}
+                            >
+                                Split down
+                            </MenuItem>
+                            <MenuSeparator />
+                        </>
+                    )}
                     {hoverless ? (
                         <MenuItem
                             icon={session.pinned ? <PinOff /> : <Pin />}

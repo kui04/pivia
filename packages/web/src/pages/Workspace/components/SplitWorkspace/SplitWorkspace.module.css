@@ -1,0 +1,11 @@
+/*
+ * Workspace split-pane adapter layout hosting `@components/SplitPane`.
+ *
+ *   .root    full-height flex wrapper inside the workspace column
+ */
+.root {
+    display: flex;
+    flex: 1;
+    min-inline-size: 0;
+    min-block-size: 0;
+}

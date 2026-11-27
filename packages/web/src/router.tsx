@@ -2,7 +2,7 @@ import { createBrowserRouter, Navigate } from "react-router";
 
 import { AppLayout } from "@/pages/AppLayout";
 import { RouteError } from "@/pages/RouteError";
-import { WorkspaceLayout, WorkspacePage } from "@/pages/Workspace";
+import { WorkspaceLayout } from "@/pages/Workspace";
 
 /**
  * The route table.
@@ -22,18 +22,19 @@ export const router = createBrowserRouter([
                 element: <Navigate to="/workspace" replace />,
             },
             {
-                // The workspace shell is a layout route: the topbar and the future sidebar stay
-                // mounted while the session column changes.
+                // WorkspaceLayout renders the split-pane tree internally without an <Outlet />; the
+                // empty child routes keep /workspace and /workspace/:sessionId matched to it so
+                // useParams() receives `sessionId`.
                 path: "workspace",
                 Component: WorkspaceLayout,
                 children: [
                     {
                         index: true,
-                        Component: WorkspacePage,
+                        element: null,
                     },
                     {
                         path: ":sessionId",
-                        Component: WorkspacePage,
+                        element: null,
                     },
                 ],
             },

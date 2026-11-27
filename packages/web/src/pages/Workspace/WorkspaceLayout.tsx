@@ -1,8 +1,10 @@
 import { parseSessionId, type SessionId } from "@pivia/protocol";
-import { useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
-import { Outlet, useNavigate, useParams } from "react-router";
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactElement } from "react";
+import { useNavigate, useParams } from "react-router";
 
-import { Drawer } from "@components";
+import { Drawer, type DropDockZone, type PaneSizePx } from "@components";
+import { startDragPayload } from "@components/SplitPane/dnd";
+import { canSplitWithinMinSize } from "@components/SplitPane/tree";
 import { useMediaQuery, useNow } from "@/hooks";
 import { Clipboard, Log } from "@/lib";
 import { showError, showWarning } from "@/lib/toast";
@@ -13,10 +15,11 @@ import {
     type WebSocketConstructor,
 } from "@/lib/transport";
 import {
+    sessionPool as defaultSessionPool,
     useAuthStore as defaultAuthStore,
-    useSessionStore as defaultSessionStore,
     useWorkspaceStore as defaultWorkspaceStore,
 } from "@/stores";
+import { createSessionPool, type SessionPool } from "@/stores/session";
 import { buildWorkspaceModel, collectKnownCwds, selectedSession } from "@/stores/workspace";
 
 import {
@@ -24,15 +27,43 @@ import {
     RenameSessionDialog,
     SettingsDialog,
     Sidebar,
-    Topbar,
+    SplitWorkspace,
     type CreateSessionResult,
     type CreateSessionSubmitOptions,
     type SettingsAuthAction,
+    type WorkspaceDragSource,
 } from "./components";
+import {
+    closePane,
+    createInitialSplitLayout,
+    detachSessionFromLayout,
+    dockPaneAtPane,
+    dockSessionAtPane,
+    findLeafPane,
+    findPaneBySessionId,
+    focusPane,
+    listLeafPanes,
+    loadWorkspaceSplitLayout,
+    MAX_WORKSPACE_PANES,
+    MIN_PANE_HEIGHT_PX,
+    MIN_PANE_WIDTH_PX,
+    openSessionInFocusedPane,
+    openSessionInSplit,
+    pruneMissingSessions,
+    resizeSplit,
+    saveWorkspaceSplitLayout,
+    syncLayoutWithRoute,
+    WORKSPACE_DRAG_MIME,
+    type PaneId,
+    type SplitAxis,
+    type SplitId,
+    type WorkspaceSplitLayout,
+} from "./splitLayout";
+import { parseWorkspaceSessionRoute } from "./useWorkspaceSession";
 import { useWorkspaceSync } from "./useWorkspaceSync";
 import styles from "./WorkspaceLayout.module.css";
 
-/** Below this width the sidebar becomes a drawer instead of a persistent column. */
+/** Below this width the sidebar becomes a drawer and secondary split panes collapse behind the focused pane. */
 const NARROW_QUERY = "(max-width: 720px)";
 
 /** Subset of {@link ApiClient} used by {@link WorkspaceLayout}. */
@@ -44,30 +75,84 @@ export type WorkspaceApiClient = Pick<
 /** Optional dependency injection props used by layout tests and Storybook harnesses. */
 export interface WorkspaceLayoutProps {
     readonly apiClient?: WorkspaceApiClient | undefined;
+    readonly sessionApiClient?: Pick<ApiClient, "getSession"> | undefined;
     readonly workspaceStore?: typeof defaultWorkspaceStore | undefined;
-    readonly sessionStore?: typeof defaultSessionStore | undefined;
+    readonly sessionPool?: SessionPool | undefined;
     readonly authStore?: typeof defaultAuthStore | undefined;
     readonly WebSocket?: WebSocketConstructor | undefined;
     readonly minRefreshDurationMs?: number | undefined;
+    /** Whether to persist and restore split layouts via `localStorage` (defaults to `true`). */
+    readonly persistLayout?: boolean | undefined;
+    /** Optional starting split layout used by tests and Storybook stories. */
+    readonly initialLayout?: WorkspaceSplitLayout | undefined;
+    /** Minimum horizontal pane width (px) required when splitting or resizing. Defaults to {@link MIN_PANE_WIDTH_PX}. */
+    readonly minPaneWidthPx?: number | undefined;
+    /** Minimum vertical pane height (px) required when splitting or resizing. Defaults to {@link MIN_PANE_HEIGHT_PX}. */
+    readonly minPaneHeightPx?: number | undefined;
+    /** Forwarded to Markdown links rendered inside transcripts. */
+    readonly onOpenLink?: ((href: string) => void) | undefined;
+}
+
+function openExternalLink(href: string): void {
+    window.open(href, "_blank", "noopener,noreferrer");
+}
+
+function focusedRouteSessionId(layout: WorkspaceSplitLayout): string | undefined {
+    const focused = findLeafPane(layout.root, layout.focusedPaneId);
+    return focused?.data.kind === "session" ? focused.data.sessionId : undefined;
+}
+
+function hasGetSession(client: WorkspaceApiClient): client is WorkspaceApiClient & Pick<ApiClient, "getSession"> {
+    return "getSession" in client && typeof (client as { getSession?: unknown }).getSession === "function";
 }
 
 /**
  * The workspace shell.
  *
- * Owns the sidebar column or drawer, topbar, settings and create-session dialogs, and live
- * catalog sync, while rendering the active session column through `<Outlet />` so the shell
- * never remounts when switching sessions.
+ * Owns the sidebar column or drawer, settings/create/rename dialogs, live catalog sync, split-pane
+ * layout state, and multi-session background keep-alive pool.
  */
 export function WorkspaceLayout(props: WorkspaceLayoutProps = {}): ReactElement {
     const client = props.apiClient ?? defaultApiClient;
     const workspaceStore = props.workspaceStore ?? defaultWorkspaceStore;
-    const sessionStore = props.sessionStore ?? defaultSessionStore;
     const authStore = props.authStore ?? defaultAuthStore;
+    const persistLayout = props.persistLayout ?? true;
+    const minPaneWidthPx = props.minPaneWidthPx ?? MIN_PANE_WIDTH_PX;
+    const minPaneHeightPx = props.minPaneHeightPx ?? MIN_PANE_HEIGHT_PX;
+    const onOpenLink = props.onOpenLink ?? openExternalLink;
 
     const { sessionId: rawSessionId } = useParams<{ sessionId?: string }>();
     const navigate = useNavigate();
     const narrow = useMediaQuery(NARROW_QUERY);
     const nowMs = useNow();
+
+    const [fallbackPool] = useState<SessionPool | null>(() => {
+        if (props.sessionPool !== undefined) {
+            return null;
+        }
+        if (props.WebSocket === undefined && props.sessionApiClient === undefined) {
+            return null;
+        }
+        const sessionApi = props.sessionApiClient ?? (hasGetSession(client) ? client : defaultApiClient);
+        return createSessionPool({
+            apiClient: sessionApi,
+            ...(props.WebSocket === undefined ? {} : { WebSocket: props.WebSocket }),
+            onSessionMissing: (missingId) => {
+                workspaceStore.getState().applyCatalogDelta({ op: "remove", id: missingId });
+            },
+        });
+    });
+
+    const activePool = props.sessionPool ?? fallbackPool ?? defaultSessionPool;
+
+    useEffect(() => {
+        if (fallbackPool === null) {
+            return undefined;
+        }
+        return () => {
+            fallbackPool.clearAll();
+        };
+    }, [fallbackPool]);
 
     const [sidebarOpen, setSidebarOpen] = useState(true);
     const [drawerOpen, setDrawerOpen] = useState(false);
@@ -79,10 +164,14 @@ export function WorkspaceLayout(props: WorkspaceLayoutProps = {}): ReactElement 
     const [compactingIds, setCompactingIds] = useState<ReadonlySet<SessionId>>(() => new Set());
     const [signingOut, setSigningOut] = useState(false);
     const [closingIds, setClosingIds] = useState<ReadonlySet<SessionId>>(() => new Set());
+    const [activeDrag, setActiveDrag] = useState<WorkspaceDragSource>(null);
+    const [leafSizes, setLeafSizes] = useState<ReadonlyMap<PaneId, PaneSizePx>>(() => new Map());
+    const leafSizesRef = useRef(leafSizes);
 
-    const activeSessionId = sessionStore((state) => state.sessionId);
-    const activeSessionStatus = sessionStore((state) => state.status);
-    const activeSessionState = sessionStore((state) => state.state);
+    const handleLeafSizesChange = useCallback((nextSizes: ReadonlyMap<PaneId, PaneSizePx>) => {
+        leafSizesRef.current = nextSizes;
+        setLeafSizes(nextSizes);
+    }, []);
 
     const authRequired = authStore((state) => state.authRequired);
     const clearAuthError = authStore((state) => state.clearError);
@@ -101,25 +190,85 @@ export function WorkspaceLayout(props: WorkspaceLayoutProps = {}): ReactElement 
     const toggleFolder = workspaceStore((state) => state.toggleFolder);
     const applyCatalogDelta = workspaceStore((state) => state.applyCatalogDelta);
 
-    const routeSessionId = useMemo(
-        () => (rawSessionId === undefined ? null : parseSessionId(rawSessionId)),
-        [rawSessionId],
+    const [layout, setLayout] = useState<WorkspaceSplitLayout>(() => {
+        const initialRoute = parseWorkspaceSessionRoute(rawSessionId);
+        const restored =
+            props.initialLayout ?? (persistLayout ? loadWorkspaceSplitLayout() : null) ?? createInitialSplitLayout();
+        return initialRoute.kind === "none" ? restored : syncLayoutWithRoute(restored, initialRoute);
+    });
+    const layoutRef = useRef(layout);
+
+    const expectedRouteRef = useRef<string | undefined>(rawSessionId);
+
+    const commitLayout = useCallback(
+        (
+            next: WorkspaceSplitLayout,
+            options: { readonly syncRoute?: boolean; readonly replaceRoute?: boolean } = {},
+        ) => {
+            if (next === layoutRef.current) {
+                return;
+            }
+            layoutRef.current = next;
+            setLayout(next);
+            if (persistLayout) {
+                saveWorkspaceSplitLayout(next);
+            }
+            const nextFocusedSession = focusedRouteSessionId(next);
+            const parsedSelected = nextFocusedSession === undefined ? null : parseSessionId(nextFocusedSession);
+            select(parsedSelected);
+
+            if (options.syncRoute === false) {
+                return;
+            }
+            const focusedPane = findLeafPane(next.root, next.focusedPaneId);
+            if (focusedPane?.data.kind === "invalid") {
+                return;
+            }
+            if (nextFocusedSession !== expectedRouteRef.current) {
+                expectedRouteRef.current = nextFocusedSession;
+                const path =
+                    nextFocusedSession === undefined
+                        ? "/workspace"
+                        : `/workspace/${encodeURIComponent(nextFocusedSession)}`;
+                void navigate(path, options.replaceRoute ? { replace: true } : undefined);
+            }
+        },
+        [navigate, persistLayout, select],
     );
 
+    // Keep sidebar selection & URL aligned with initial restored layout on first mount.
     useEffect(() => {
-        select(routeSessionId);
-    }, [routeSessionId, select]);
-
-    useEffect(() => {
-        if (
-            routeSessionId !== null &&
-            sync.kind === "live" &&
-            !sessions.some((session) => session.id === routeSessionId)
-        ) {
-            select(null);
-            void navigate("/workspace", { replace: true });
+        const initialFocused = focusedRouteSessionId(layoutRef.current);
+        select(initialFocused === undefined ? null : parseSessionId(initialFocused));
+        if (rawSessionId === undefined && initialFocused !== undefined) {
+            expectedRouteRef.current = initialFocused;
+            void navigate(`/workspace/${encodeURIComponent(initialFocused)}`, { replace: true });
         }
-    }, [navigate, routeSessionId, select, sessions, sync.kind]);
+        // Run once on mount for restored layouts; subsequent route changes are handled below.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // React to external URL changes (browser Back/Forward or link navigation).
+    useEffect(() => {
+        if (rawSessionId === expectedRouteRef.current) {
+            return;
+        }
+        expectedRouteRef.current = rawSessionId;
+        const nextRoute = parseWorkspaceSessionRoute(rawSessionId);
+        const nextLayout = syncLayoutWithRoute(layoutRef.current, nextRoute);
+        commitLayout(nextLayout, { syncRoute: false });
+    }, [commitLayout, rawSessionId]);
+
+    // Clear panes whose sessions disappeared from the live catalog.
+    useEffect(() => {
+        if (sync.kind !== "live") {
+            return;
+        }
+        const validIds = new Set(sessions.map((session) => session.id));
+        const current = layoutRef.current;
+        const pruned = pruneMissingSessions(current, validIds);
+        commitLayout(pruned, { replaceRoute: true });
+    }, [commitLayout, sessions, sync.kind]);
 
     const handleUnauthorized = useCallback(() => {
         authStore.getState().markUnauthorized();
@@ -137,7 +286,7 @@ export function WorkspaceLayout(props: WorkspaceLayoutProps = {}): ReactElement 
         () => buildWorkspaceModel({ sessions, pins, query, selectedId, collapsed }),
         [collapsed, pins, query, selectedId, sessions],
     );
-    const current = useMemo(() => selectedSession(sessions, selectedId), [selectedId, sessions]);
+    const renameTarget = useMemo(() => selectedSession(sessions, renameSessionId), [renameSessionId, sessions]);
     const knownCwds = useMemo(() => collectKnownCwds(sessions), [sessions]);
 
     const handleCopySessionId = useCallback((id: SessionId) => {
@@ -154,22 +303,99 @@ export function WorkspaceLayout(props: WorkspaceLayoutProps = {}): ReactElement 
 
     const handleSelect = useCallback(
         (id: SessionId) => {
-            select(id);
-            void navigate(`/workspace/${encodeURIComponent(id)}`);
+            commitLayout(openSessionInFocusedPane(layoutRef.current, id));
             if (narrow) {
                 setDrawerOpen(false);
             }
         },
-        [narrow, navigate, select],
+        [commitLayout, narrow],
     );
+
+    const handleSplitSession = useCallback(
+        (id: SessionId, axis: SplitAxis) => {
+            const current = layoutRef.current;
+            const existing = findPaneBySessionId(current.root, id);
+            if (existing === null) {
+                const focused = findLeafPane(current.root, current.focusedPaneId);
+                if (focused !== null && focused.data.kind !== "empty") {
+                    const focusedSize = leafSizesRef.current.get(current.focusedPaneId);
+                    if (!canSplitWithinMinSize(focusedSize, axis, minPaneWidthPx, minPaneHeightPx)) {
+                        return;
+                    }
+                }
+            }
+            commitLayout(openSessionInSplit(current, id, axis));
+            if (narrow) {
+                setDrawerOpen(false);
+            }
+        },
+        [commitLayout, minPaneHeightPx, minPaneWidthPx, narrow],
+    );
+
+    const handleFocusPane = useCallback(
+        (paneId: PaneId) => {
+            commitLayout(focusPane(layoutRef.current, paneId));
+        },
+        [commitLayout],
+    );
+
+    const handleClosePane = useCallback(
+        (paneId: PaneId) => {
+            commitLayout(closePane(layoutRef.current, paneId));
+        },
+        [commitLayout],
+    );
+
+    const handleResizeSplit = useCallback(
+        (splitId: SplitId, ratio: number) => {
+            commitLayout(resizeSplit(layoutRef.current, splitId, ratio), { syncRoute: false });
+        },
+        [commitLayout],
+    );
+
+    const handleDockSession = useCallback(
+        (sessionId: SessionId, targetPaneId: PaneId, zone: DropDockZone) => {
+            if (zone !== "center") {
+                const axis: SplitAxis = zone === "left" || zone === "right" ? "row" : "column";
+                const targetSize = leafSizesRef.current.get(targetPaneId);
+                if (!canSplitWithinMinSize(targetSize, axis, minPaneWidthPx, minPaneHeightPx)) {
+                    return;
+                }
+            }
+            commitLayout(dockSessionAtPane(layoutRef.current, sessionId, targetPaneId, zone));
+        },
+        [commitLayout, minPaneHeightPx, minPaneWidthPx],
+    );
+
+    const handleDockPane = useCallback(
+        (sourcePaneId: PaneId, targetPaneId: PaneId, zone: DropDockZone) => {
+            if (zone !== "center") {
+                const axis: SplitAxis = zone === "left" || zone === "right" ? "row" : "column";
+                const targetSize = leafSizesRef.current.get(targetPaneId);
+                if (!canSplitWithinMinSize(targetSize, axis, minPaneWidthPx, minPaneHeightPx)) {
+                    return;
+                }
+            }
+            commitLayout(dockPaneAtPane(layoutRef.current, sourcePaneId, targetPaneId, zone));
+        },
+        [commitLayout, minPaneHeightPx, minPaneWidthPx],
+    );
+
+    const handleSessionDragStart = useCallback((id: SessionId, title: string, event: DragEvent<HTMLElement>) => {
+        startDragPayload(event.dataTransfer, WORKSPACE_DRAG_MIME.session, id, title);
+        setActiveDrag({ kind: "session", sessionId: id });
+    }, []);
+
+    const handleSessionDragEnd = useCallback(() => {
+        setActiveDrag(null);
+    }, []);
 
     const handleCreateSession = useCallback(
         async (cwd: string, options?: CreateSessionSubmitOptions): Promise<CreateSessionResult> => {
             try {
                 const response = await client.createSession(cwd, options);
                 applyCatalogDelta({ op: "upsert", item: response.session });
-                select(response.session.id);
-                void navigate(`/workspace/${encodeURIComponent(response.session.id)}`);
+                commitLayout(openSessionInFocusedPane(layoutRef.current, response.session.id));
                 if (narrow) {
                     setDrawerOpen(false);
                 }
@@ -182,7 +408,7 @@ export function WorkspaceLayout(props: WorkspaceLayoutProps = {}): ReactElement 
                 return { ok: false, code: "error", message };
             }
         },
-        [applyCatalogDelta, client, narrow, navigate, select],
+        [applyCatalogDelta, client, commitLayout, narrow],
     );
 
     const handleListDirectories = useCallback((path?: string) => client.listDirectories(path), [client]);
@@ -203,9 +429,10 @@ export function WorkspaceLayout(props: WorkspaceLayoutProps = {}): ReactElement 
                     });
                     return;
                 }
-                if (id === routeSessionId) {
-                    select(null);
-                    void navigate("/workspace", { replace: true });
+                activePool.detach(id);
+                const pane = findPaneBySessionId(layoutRef.current.root, id);
+                if (pane !== null) {
+                    commitLayout(closePane(layoutRef.current, pane.id), { replaceRoute: true });
                 }
             } catch (error) {
                 const message = error instanceof Error ? error.message : String(error);
@@ -223,7 +450,7 @@ export function WorkspaceLayout(props: WorkspaceLayoutProps = {}): ReactElement 
                 });
             }
         },
-        [client, closingIds, navigate, routeSessionId, select],
+        [activePool, client, closingIds, commitLayout],
     );
 
     const handleCloseSessionClick = useCallback(
@@ -233,15 +460,35 @@ export function WorkspaceLayout(props: WorkspaceLayoutProps = {}): ReactElement 
         [handleCloseSession],
     );
 
-    const activeRuntimeReady = current !== null && activeSessionId === current.id && activeSessionStatus === "open";
+    const handleDetachSession = useCallback(
+        (id: SessionId) => {
+            activePool.detach(id);
+            commitLayout(detachSessionFromLayout(layoutRef.current, id), { replaceRoute: true });
+        },
+        [activePool, commitLayout],
+    );
+
+    const handleToggleSidebar = useCallback(() => {
+        if (narrow) {
+            setDrawerOpen((open) => !open);
+        } else {
+            setSidebarOpen((open) => !open);
+        }
+    }, [narrow]);
+
+    const handleRenameSession = useCallback((target: { readonly id: SessionId }) => {
+        setRenameError(null);
+        setRenameSessionId(target.id);
+    }, []);
 
     const handleCompactSession = useCallback(
         (id: SessionId) => {
-            if (!activeRuntimeReady || activeSessionId !== id || compactingIds.has(id)) {
+            const store = activePool.getStore(id);
+            if (store === null || store.getState().status !== "open" || compactingIds.has(id)) {
                 return;
             }
             setCompactingIds((prev) => new Set(prev).add(id));
-            void sessionStore
+            void store
                 .getState()
                 .sendCommand({ type: "compact" })
                 .then((response) => {
@@ -269,22 +516,23 @@ export function WorkspaceLayout(props: WorkspaceLayoutProps = {}): ReactElement 
                     });
                 });
         },
-        [activeRuntimeReady, activeSessionId, compactingIds, sessionStore],
+        [activePool, compactingIds],
     );
 
     const handleRenameSubmit = useCallback(
         async (nextName: string) => {
-            if (current === null || current.id !== renameSessionId || renamePending) {
+            if (renameSessionId === null || renamePending) {
                 return;
             }
-            if (!activeRuntimeReady) {
+            const store = activePool.getStore(renameSessionId);
+            if (store === null || store.getState().status !== "open") {
                 setRenameError("Session is not connected.");
                 return;
             }
             setRenamePending(true);
             setRenameError(null);
             try {
-                const response = await sessionStore.getState().sendCommand({
+                const response = await store.getState().sendCommand({
                     type: "set_session_name",
                     name: nextName,
                 });
@@ -299,7 +547,7 @@ export function WorkspaceLayout(props: WorkspaceLayoutProps = {}): ReactElement 
                 setRenamePending(false);
             }
         },
-        [activeRuntimeReady, current, renamePending, renameSessionId, sessionStore],
+        [activePool, renamePending, renameSessionId],
     );
 
     const handleSignOut = useCallback(async () => {
@@ -341,6 +589,17 @@ export function WorkspaceLayout(props: WorkspaceLayoutProps = {}): ReactElement 
     const pageLocation = globalThis.location as Location | undefined;
     const origin = pageLocation?.origin ?? "Single host";
 
+    const focusedSize = leafSizes.get(layout.focusedPaneId);
+    const leafCount = useMemo(() => listLeafPanes(layout.root).length, [layout.root]);
+    const canSplitRow =
+        !narrow &&
+        leafCount < MAX_WORKSPACE_PANES &&
+        canSplitWithinMinSize(focusedSize, "row", minPaneWidthPx, minPaneHeightPx);
+    const canSplitColumn =
+        !narrow &&
+        leafCount < MAX_WORKSPACE_PANES &&
+        canSplitWithinMinSize(focusedSize, "column", minPaneWidthPx, minPaneHeightPx);
+
     const sidebar = (
         <Sidebar
             model={model}
@@ -348,6 +607,8 @@ export function WorkspaceLayout(props: WorkspaceLayoutProps = {}): ReactElement 
             query={query}
             nowMs={nowMs}
             closingIds={closingIds}
+            canSplitRow={canSplitRow}
+            canSplitColumn={canSplitColumn}
             onQueryChange={setQuery}
             onRefresh={refresh}
             onNewSession={() => {
@@ -360,6 +621,9 @@ export function WorkspaceLayout(props: WorkspaceLayoutProps = {}): ReactElement 
                 setSettingsOpen(true);
             }}
             onSelect={handleSelect}
+            onSplitSession={narrow ? undefined : handleSplitSession}
+            onSessionDragStart={narrow ? undefined : handleSessionDragStart}
+            onSessionDragEnd={narrow ? undefined : handleSessionDragEnd}
             onTogglePinned={togglePinned}
             onToggleFolder={toggleFolder}
             onCopySessionId={handleCopySessionId}
@@ -368,7 +632,7 @@ export function WorkspaceLayout(props: WorkspaceLayoutProps = {}): ReactElement 
     );
 
     return (
-        <div className={styles.window}>
+        <div className={styles.window} data-dragging={activeDrag !== null || undefined}>
             {narrow ? (
                 <Drawer open={drawerOpen} onOpenChange={setDrawerOpen} side="left" label="Sessions">
                     {sidebar}
@@ -385,30 +649,31 @@ export function WorkspaceLayout(props: WorkspaceLayoutProps = {}): ReactElement 
                 </aside>
             )}
             <div className={styles.column}>
-                <Topbar
-                    session={current}
+                <SplitWorkspace
+                    layout={layout}
+                    sessionPool={activePool}
+                    sessions={sessions}
+                    narrow={narrow}
                     sidebarOpen={narrow ? drawerOpen : sidebarOpen}
-                    closing={current !== null && closingIds.has(current.id)}
-                    compacting={
-                        (current !== null && compactingIds.has(current.id)) || activeSessionState?.isCompacting === true
-                    }
-                    runtimeReady={activeRuntimeReady}
-                    onToggleSidebar={() => {
-                        if (narrow) {
-                            setDrawerOpen((open) => !open);
-                        } else {
-                            setSidebarOpen((open) => !open);
-                        }
-                    }}
+                    closingIds={closingIds}
+                    compactingIds={compactingIds}
+                    minPaneWidthPx={minPaneWidthPx}
+                    minPaneHeightPx={minPaneHeightPx}
+                    activeDrag={activeDrag}
+                    onDragSourceChange={setActiveDrag}
+                    onToggleSidebar={handleToggleSidebar}
+                    onFocusPane={handleFocusPane}
+                    onClosePane={handleClosePane}
+                    onResizeSplit={handleResizeSplit}
+                    onDockSession={handleDockSession}
+                    onDockPane={handleDockPane}
+                    onLeafSizesChange={handleLeafSizesChange}
                     onCopySessionId={handleCopySessionId}
-                    onCloseSession={handleCloseSessionClick}
-                    onRenameSession={(target) => {
-                        setRenameError(null);
-                        setRenameSessionId(target.id);
-                    }}
+                    onDetachSession={handleDetachSession}
+                    onRenameSession={handleRenameSession}
                     onCompactSession={handleCompactSession}
+                    onOpenLink={onOpenLink}
                 />
-                <Outlet />
             </div>
             <SettingsDialog
                 open={settingsOpen}
@@ -429,13 +694,13 @@ export function WorkspaceLayout(props: WorkspaceLayoutProps = {}): ReactElement 
                 onCreate={handleCreateSession}
             />
             <RenameSessionDialog
-                open={renameSessionId !== null && current !== null && current.id === renameSessionId}
+                open={renameSessionId !== null && renameTarget !== null && renameTarget.id === renameSessionId}
                 onOpenChange={(open) => {
                     if (!open) {
                         setRenameSessionId(null);
                     }
                 }}
-                initialName={current?.named ? current.title : ""}
+                initialName={renameTarget?.named ? renameTarget.title : ""}
                 pending={renamePending}
                 error={renameError}
                 onSubmit={handleRenameSubmit}

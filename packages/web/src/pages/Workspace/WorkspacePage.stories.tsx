@@ -277,7 +277,7 @@ const meta = {
 
 export default meta;
 
-type Story = StoryObj<typeof meta>;
+type Story = StoryObj<typeof WorkspacePage>;
 
 export const NoSessionSelected: Story = {
     render: () => <PageHarness route="/workspace" setup={noScenario} />,

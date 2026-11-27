@@ -1,6 +1,6 @@
 import { assertNever } from "@pivia/protocol";
 import { ArrowDown } from "lucide-react";
-import { useCallback, useEffect, useRef, type FocusEvent, type ReactElement } from "react";
+import { memo, useCallback, useEffect, useRef, type FocusEvent, type ReactElement } from "react";
 
 import { Button, Icon, ScrollArea } from "@components";
 import { cn } from "@/lib";
@@ -56,7 +56,7 @@ export type TranscriptProps = {
  *
  * @param props - Transcript items and scroll-region naming.
  */
-export function Transcript({
+function TranscriptInner({
     items,
     onOpenLink,
     liveActivity,
@@ -218,3 +218,6 @@ export function Transcript({
         </div>
     );
 }
+
+/** Memoized conversation view to avoid re-rendering unchanged transcripts across pane splits and resizes. */
+export const Transcript = memo(TranscriptInner);

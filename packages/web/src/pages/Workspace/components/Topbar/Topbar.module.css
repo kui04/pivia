@@ -1,11 +1,13 @@
 /*
- * The top bar of the session column.
+ * The top bar of a workspace session pane.
  *
  * The nesting this file styles:
  *
- *   .bar       header bar with a unified surface-to-transparent gradient overhanging the stage
- *   ├─ .title  the session name, and the workspace's only h1
- *   └─ .actions trailing session actions menu
+ *   .bar                     header bar with a unified surface-to-transparent gradient overhanging the stage
+ *   ├─ .title                the session name (`h1` on focused pane, `h2` on unfocused panes)
+ *   │   └─ &[draggable="true"] shows grab cursor when dragging the title to re-dock the pane
+ *   ├─ &[data-focused="false"] dims unfocused pane title when multiple panes are open
+ *   └─ .actions              trailing pane/session overflow menu button
  */
 .bar {
     position: relative;
@@ -26,7 +28,6 @@
         color-mix(in srgb, var(--color-surface) 40%, transparent) 84%,
         transparent 100%
     );
-    user-select: none;
 
     .title {
         flex: 1;
@@ -39,12 +40,26 @@
         line-height: var(--type-subtitle-line-height);
         text-overflow: ellipsis;
         white-space: nowrap;
+        -webkit-user-select: none;
+        user-select: none;
+
+        &[draggable="true"] {
+            cursor: grab;
+
+            &:active {
+                cursor: grabbing;
+            }
+        }
+    }
+
+    &[data-focused="false"] .title {
+        color: var(--color-on-surface-variant);
     }
 
     .actions {
         display: flex;
         flex: none;
         align-items: center;
-        gap: var(--space-8);
+        gap: var(--space-4);
     }
 }

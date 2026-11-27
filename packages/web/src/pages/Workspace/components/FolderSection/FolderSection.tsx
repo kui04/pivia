@@ -1,8 +1,9 @@
 import type { SessionId } from "@pivia/protocol";
 import { FolderClosed, FolderOpen } from "lucide-react";
-import type { ReactElement } from "react";
+import type { DragEvent, ReactElement } from "react";
 
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger, Icon, VisuallyHidden } from "@components";
+import type { SplitAxis } from "@components/SplitPane/tree";
 import type { FolderSection as FolderSectionModel } from "@/stores/workspace";
 
 import { SessionRow } from "../SessionRow";
@@ -12,8 +13,13 @@ export interface FolderSectionProps {
     readonly folder: FolderSectionModel;
     readonly nowMs: number;
     readonly closingIds: ReadonlySet<SessionId>;
+    readonly canSplitRow?: boolean | undefined;
+    readonly canSplitColumn?: boolean | undefined;
     readonly onToggle: () => void;
     readonly onSelect: (id: SessionId) => void;
+    readonly onSplitSession?: ((id: SessionId, axis: SplitAxis) => void) | undefined;
+    readonly onSessionDragStart?: ((id: SessionId, title: string, event: DragEvent<HTMLElement>) => void) | undefined;
+    readonly onSessionDragEnd?: (() => void) | undefined;
     readonly onTogglePinned: (id: SessionId) => void;
     readonly onCopySessionId: (id: SessionId) => void;
     readonly onCloseSession: (id: SessionId) => void;
@@ -29,8 +35,13 @@ export function FolderSection({
     folder,
     nowMs,
     closingIds,
+    canSplitRow,
+    canSplitColumn,
     onToggle,
     onSelect,
+    onSplitSession,
+    onSessionDragStart,
+    onSessionDragEnd,
     onTogglePinned,
     onCopySessionId,
     onCloseSession,
@@ -59,7 +70,12 @@ export function FolderSection({
                             session={session}
                             nowMs={nowMs}
                             closing={closingIds.has(session.id)}
+                            canSplitRow={canSplitRow}
+                            canSplitColumn={canSplitColumn}
                             onSelect={onSelect}
+                            onSplitSession={onSplitSession}
+                            onDragStart={onSessionDragStart}
+                            onDragEnd={onSessionDragEnd}
                             onTogglePinned={onTogglePinned}
                             onCopySessionId={onCopySessionId}
                             onCloseSession={onCloseSession}

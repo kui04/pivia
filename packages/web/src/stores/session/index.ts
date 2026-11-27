@@ -1,3 +1,12 @@
+export {
+    createSessionPool,
+    DEFAULT_MAX_BACKGROUND_SESSIONS,
+    isSessionKeepAliveBusy,
+    type SessionPool,
+    type SessionPoolOptions,
+    type SessionPoolSnapshot,
+    type SessionStoreInstance,
+} from "./pool";
 export { projectSessionTranscript, type ProjectedTranscriptItem, type ProjectTranscriptOptions } from "./projection";
 export {
     createSessionStore,

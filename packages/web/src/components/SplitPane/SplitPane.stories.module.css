@@ -1,0 +1,51 @@
+/*
+ * Story harness layout for SplitPane stories.
+ *
+ *   .frame     fixed-height workbench frame hosting SplitPane and drag chips
+ *   ├─ .bar    draggable palette strip above the split area
+ *   ├─ .chip   draggable item chip
+ *   └─ .card   sample leaf pane content
+ *       └─ .cardTitle
+ */
+.frame {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-8);
+    block-size: 420px;
+    padding: var(--space-12);
+    background-color: var(--color-surface);
+
+    .bar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--space-8);
+    }
+
+    .chip {
+        padding: var(--space-4) var(--space-12);
+        border: var(--border-width) solid var(--color-outline);
+        border-radius: var(--shape-corner-small);
+        background-color: var(--color-surface-container);
+        color: var(--color-on-surface);
+        font-size: var(--type-label-size);
+        cursor: grab;
+        user-select: none;
+    }
+
+    .card {
+        display: flex;
+        flex: 1;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        gap: var(--space-4);
+        padding: var(--space-16);
+        background-color: var(--color-surface-container);
+        color: var(--color-on-surface);
+
+        .cardTitle {
+            font-size: var(--type-subtitle-size);
+            font-weight: var(--type-subtitle-weight);
+        }
+    }
+}
