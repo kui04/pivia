@@ -15,12 +15,14 @@ export {
     ensureFontRole,
     FONT_PRESETS,
     getActiveFontPreset,
+    isFontRoleReady,
     scheduleDefaultFonts,
     type FontManager,
     type FontManagerOptions,
     type FontPreset,
     type FontPresetId,
     type FontRole,
+    type PresetLoadState,
 } from "./fonts";
 export { Fuzzy, type FuzzyMatch } from "./fuzzy";
 export { isImeComposition } from "./ime";

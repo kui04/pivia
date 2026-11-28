@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { RpcExtensionUIResponse, SessionManager } from "@earendil-works/pi-coding-agent";
+import type { AgentSessionEvent, RpcExtensionUIResponse, SessionManager } from "@earendil-works/pi-coding-agent";
 
 import {
     parseSessionId,
@@ -1935,5 +1935,105 @@ describe("SessionRegistry", () => {
         await expect(fixture.registry.closeSession(handle.sessionId)).resolves.toBe(true);
         const listAfterClose = await fixture.registry.list();
         expect(listAfterClose.sessions.some((s) => s.id === handle.sessionId)).toBe(false);
+    });
+
+    it("coalesces consecutive assistant text deltas inside streamCoalesceMs and flushes before settled boundaries", async () => {
+        const fixture = createFixture();
+        const handle = await fixture.registry.createSession(fixture.projectDir);
+        const { collector, attachment } = attach(fixture.registry, handle.sessionId);
+        const session = fakeSession(fixture, handle);
+
+        session.emit(createTextDeltaEvent("Hel", "Hel"));
+        session.emit(createTextDeltaEvent("lo ", "Hello "));
+        session.emit(createTextDeltaEvent("world", "Hello world"));
+
+        // Buffered until either the 16ms coalesce timer or a non-delta boundary fires.
+        expect(collector.messages.filter((m) => m.type === "sync:delta")).toHaveLength(0);
+
+        session.emit({ type: "agent_settled", aborted: false });
+
+        const coalesced = await waitForMessage(
+            collector.messages,
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:delta" }> =>
+                message.type === "sync:delta" && message.delta.kind === "agent_event",
+        );
+        if (coalesced.delta.kind !== "agent_event" || coalesced.delta.event.type !== "message_update") {
+            throw new Error("expected coalesced message_update");
+        }
+        expect(coalesced.cursor.seq).toBe(1);
+        expect(coalesced.delta.event.assistantMessageEvent).toEqual({
+            type: "text_delta",
+            contentIndex: 0,
+            delta: "Hello world",
+        });
+
+        const settled = await waitForMessage(
+            collector.messages,
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:delta" }> =>
+                message.type === "sync:delta" &&
+                message.delta.kind === "agent_event" &&
+                message.delta.event.type === "agent_settled",
+        );
+        expect(settled.cursor.seq).toBe(2);
+        attachment.detach();
+    });
+
+    it("flushes coalesced deltas automatically when the timer expires and on delta type switches", async () => {
+        const fixture = createFixture();
+        const handle = await fixture.registry.createSession(fixture.projectDir);
+        const { collector, attachment } = attach(fixture.registry, handle.sessionId);
+        const session = fakeSession(fixture, handle);
+
+        const thinkingEvent = (delta: string, accumulated: string): AgentSessionEvent => {
+            const base = createTextDeltaEvent("", "");
+            if (base.type !== "message_update" || base.message.role !== "assistant") {
+                throw new Error("expected assistant message_update template");
+            }
+            const message = {
+                ...base.message,
+                content: [{ type: "thinking" as const, thinking: accumulated }],
+            };
+            return {
+                type: "message_update",
+                message,
+                assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta, partial: message },
+            };
+        };
+
+        // Thinking deltas followed by text delta flushes thinking immediately, then timer flushes text.
+        session.emit(thinkingEvent("Step 1", "Step 1"));
+        session.emit(thinkingEvent(" Step 2", "Step 1 Step 2"));
+        session.emit(createTextDeltaEvent("Done!", "Done!"));
+
+        const thinkingMsg = await waitForMessage(
+            collector.messages,
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:delta" }> =>
+                message.type === "sync:delta" && message.cursor.seq === 1,
+        );
+        const textMsg = await waitForMessage(
+            collector.messages,
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:delta" }> =>
+                message.type === "sync:delta" && message.cursor.seq === 2,
+        );
+        if (
+            thinkingMsg.delta.kind !== "agent_event" ||
+            thinkingMsg.delta.event.type !== "message_update" ||
+            textMsg.delta.kind !== "agent_event" ||
+            textMsg.delta.event.type !== "message_update"
+        ) {
+            throw new Error("expected message_update deltas");
+        }
+
+        expect(thinkingMsg.delta.event.assistantMessageEvent).toEqual({
+            type: "thinking_delta",
+            contentIndex: 0,
+            delta: "Step 1 Step 2",
+        });
+        expect(textMsg.delta.event.assistantMessageEvent).toEqual({
+            type: "text_delta",
+            contentIndex: 0,
+            delta: "Done!",
+        });
+        attachment.detach();
     });
 });

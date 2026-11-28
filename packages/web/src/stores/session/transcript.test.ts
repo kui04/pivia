@@ -1842,4 +1842,30 @@ describe("createTranscriptRowBuilder", () => {
 
         expect(builder.build(projected)).toEqual(buildTranscript(projected));
     });
+
+    it("preserves settled trailing tool-call step identity while live tokens stream", () => {
+        const projected = project([
+            userEntry("m1", null, "Inspect workspace", 1_000),
+            assistantEntry(
+                "m2",
+                "m1",
+                [{ type: "toolCall", id: "call_done", name: "bash", arguments: { command: "ls" } }],
+                { stopReason: "toolUse", timestamp: 2_000 },
+            ),
+            toolResultEntry("m3", "m2", "call_done", "README.md\n"),
+        ]);
+        const builder = createTranscriptRowBuilder();
+
+        const firstToken = builder.build(projected, {
+            liveMessage: liveMessage("Drafting", 3_000),
+            runtimeActive: true,
+        });
+        const secondToken = builder.build(projected, {
+            liveMessage: liveMessage("Drafting answer", 3_000),
+            runtimeActive: true,
+        });
+
+        expect(toolStepOf(secondToken, 1, 0)).toBe(toolStepOf(firstToken, 1, 0));
+        expect(turnOf(secondToken, 1).finalReply).toBe("Drafting answer");
+    });
 });

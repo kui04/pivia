@@ -7,6 +7,7 @@ export {
     type UseDropTargetResult,
 } from "./useDropTarget";
 export { useFontRole } from "./useFontRole";
+export { useFrameCoalescedValue, type FrameCoalesceOptions } from "./useFrameCoalescedValue";
 export { useImageViewer, type ImageViewerState } from "./useImageViewer";
 export { useMediaQuery } from "./useMediaQuery";
 export { useNow } from "./useNow";

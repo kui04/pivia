@@ -650,6 +650,7 @@ function buildTurnItem(
     options: BuildTranscriptOptions,
     isTrailingTurn: boolean,
     previousDroppedThinking: number,
+    trailingStepCache?: TrailingToolStepCache,
 ): { readonly turn: TranscriptTurnItem | null; readonly nextDroppedThinking: number } {
     const assistants: AssistantTurnMessage[] = [];
     const toolResults = new Map<string, ViewToolResultMessage>();
@@ -740,42 +741,7 @@ function buildTurnItem(
                     persistedResult === undefined && canStillRun && isLastAssistant && block.id !== ""
                         ? options.liveToolExecutions?.[block.id]
                         : undefined;
-                const effectiveArgs =
-                    Object.keys(block.arguments).length === 0 &&
-                    liveExecution !== undefined &&
-                    Object.keys(liveExecution.args).length > 0
-                        ? liveExecution.args
-                        : block.arguments;
-                const meta = describeToolCall(block.name, effectiveArgs);
-
-                const activeResult =
-                    persistedResult ??
-                    (liveExecution?.kind === "running"
-                        ? liveExecution.partialResult
-                        : liveExecution?.kind === "settled"
-                          ? liveExecution.result
-                          : null);
-
-                const { output, images } = readToolResultContent(activeResult?.content ?? []);
-
-                let status: TranscriptToolStatus;
-                let timing: TranscriptTiming;
-                if (persistedResult !== undefined) {
-                    status = persistedResult.isError ? "error" : "done";
-                    timing = { kind: "static", durationMs: computeToolDurationMs(assistant, persistedResult) };
-                } else if (liveExecution?.kind === "settled") {
-                    status = liveExecution.isError ? "error" : "done";
-                    timing = { kind: "static", durationMs: liveExecution.durationMs };
-                } else if (assistant.stopReason === "error" || assistant.stopReason === "aborted") {
-                    status = "error";
-                    timing = { kind: "static", durationMs: null };
-                } else if (canStillRun && isLastAssistant) {
-                    status = "running";
-                    timing = { kind: "since", startedAtMs: assistant.timestamp };
-                } else {
-                    status = "error";
-                    timing = { kind: "static", durationMs: null };
-                }
+                const stepCanStillRun = persistedResult === undefined && canStillRun && isLastAssistant;
 
                 let stepId = block.id !== "" ? block.id : `${stepPrefix}-tool`;
                 if (seenToolIds.has(stepId)) {
@@ -783,32 +749,88 @@ function buildTurnItem(
                 }
                 seenToolIds.add(stepId);
 
-                const presentation = buildToolPresentation({
-                    toolKind: meta.toolKind,
-                    args: effectiveArgs,
-                    argumentsError: block.argumentsError,
-                    status,
-                    output,
-                    hasImages: images.length > 0,
-                    details: activeResult?.details,
-                    nestedCalls: persistedResult?.nestedCalls,
-                });
+                const buildStep = (): TranscriptToolCallStep => {
+                    const effectiveArgs =
+                        Object.keys(block.arguments).length === 0 &&
+                        liveExecution !== undefined &&
+                        Object.keys(liveExecution.args).length > 0
+                            ? liveExecution.args
+                            : block.arguments;
+                    const meta = describeToolCall(block.name, effectiveArgs);
 
-                steps.push({
-                    kind: "toolCall",
-                    id: stepId,
-                    toolName: block.name,
-                    ...meta,
-                    arguments: effectiveArgs,
-                    argumentsError: block.argumentsError,
-                    status,
-                    output: presentation.output,
-                    images,
-                    preview: presentation.preview,
-                    warnings: presentation.warnings,
-                    nestedCalls: presentation.nestedCalls,
-                    timing,
-                });
+                    const activeResult =
+                        persistedResult ??
+                        (liveExecution?.kind === "running"
+                            ? liveExecution.partialResult
+                            : liveExecution?.kind === "settled"
+                              ? liveExecution.result
+                              : null);
+
+                    const { output, images } = readToolResultContent(activeResult?.content ?? []);
+
+                    let status: TranscriptToolStatus;
+                    let timing: TranscriptTiming;
+                    if (persistedResult !== undefined) {
+                        status = persistedResult.isError ? "error" : "done";
+                        timing = { kind: "static", durationMs: computeToolDurationMs(assistant, persistedResult) };
+                    } else if (liveExecution?.kind === "settled") {
+                        status = liveExecution.isError ? "error" : "done";
+                        timing = { kind: "static", durationMs: liveExecution.durationMs };
+                    } else if (assistant.stopReason === "error" || assistant.stopReason === "aborted") {
+                        status = "error";
+                        timing = { kind: "static", durationMs: null };
+                    } else if (stepCanStillRun) {
+                        status = "running";
+                        timing = { kind: "since", startedAtMs: assistant.timestamp };
+                    } else {
+                        status = "error";
+                        timing = { kind: "static", durationMs: null };
+                    }
+
+                    const presentation = buildToolPresentation({
+                        toolKind: meta.toolKind,
+                        args: effectiveArgs,
+                        argumentsError: block.argumentsError,
+                        status,
+                        output,
+                        hasImages: images.length > 0,
+                        details: activeResult?.details,
+                        nestedCalls: persistedResult?.nestedCalls,
+                    });
+
+                    return {
+                        kind: "toolCall",
+                        id: stepId,
+                        toolName: block.name,
+                        ...meta,
+                        arguments: effectiveArgs,
+                        argumentsError: block.argumentsError,
+                        status,
+                        output: presentation.output,
+                        images,
+                        preview: presentation.preview,
+                        warnings: presentation.warnings,
+                        nestedCalls: presentation.nestedCalls,
+                        timing,
+                    };
+                };
+
+                const step =
+                    trailingStepCache === undefined
+                        ? buildStep()
+                        : resolveCachedTrailingToolStep(
+                              trailingStepCache,
+                              stepPrefix,
+                              {
+                                  assistantMessage: assistant,
+                                  blockIndex,
+                                  persistedResult,
+                                  liveExecution,
+                                  canStillRun: stepCanStillRun,
+                              },
+                              buildStep,
+                          );
+                steps.push(step);
             }
         }
 
@@ -1016,6 +1038,7 @@ export function createTranscriptRowBuilder(): TranscriptRowBuilder {
     let plan: TranscriptPlan | null = null;
     let lastBuild: LastBuild | null = null;
     let droppedLeadingEntries = false;
+    const trailingStepCache: TrailingToolStepCache = new Map();
 
     return {
         build: (items, options = {}) => {
@@ -1027,6 +1050,7 @@ export function createTranscriptRowBuilder(): TranscriptRowBuilder {
                 plannedFor = items;
                 plan = planTranscript(items);
                 lastBuild = null;
+                trailingStepCache.clear();
             }
             const liveMessage = options.liveMessage ?? null;
             const liveToolExecutions = options.liveToolExecutions ?? null;
@@ -1041,7 +1065,7 @@ export function createTranscriptRowBuilder(): TranscriptRowBuilder {
             ) {
                 return lastBuild.rows;
             }
-            const rows = materializeTranscript(plan, options);
+            const rows = materializeTranscript(plan, options, trailingStepCache);
             lastBuild = { liveMessage, liveToolExecutions, runtimeActive, rows };
             return rows;
         },
@@ -1060,12 +1084,64 @@ type LastBuild = {
 };
 
 /**
+ * Identity key for one completed or live tool-call step inside the trailing turn.
+ *
+ * When every input reference stays identical across streamed text tokens, the cached step keeps its
+ * exact object reference so memoized `ToolCallBlock` rows skip re-rendering.
+ */
+export type TrailingToolStepCacheEntry = {
+    readonly assistantMessage: ViewAssistantMessage;
+    readonly blockIndex: number;
+    readonly persistedResult: ViewToolResultMessage | undefined;
+    readonly liveExecution: LiveToolExecutionState | undefined;
+    readonly canStillRun: boolean;
+    readonly step: TranscriptToolCallStep;
+};
+
+/** Per-builder cache preserving settled `trailingTurn` tool-call steps across streamed tokens. */
+export type TrailingToolStepCache = Map<string, TrailingToolStepCacheEntry>;
+
+/** Resolves or builds one `TranscriptToolCallStep`, reusing cached step identity when inputs match. */
+export function resolveCachedTrailingToolStep(
+    cache: TrailingToolStepCache,
+    key: string,
+    candidate: Omit<TrailingToolStepCacheEntry, "step">,
+    build: () => TranscriptToolCallStep,
+): TranscriptToolCallStep {
+    const existing = cache.get(key);
+    if (
+        existing !== undefined &&
+        existing.assistantMessage === candidate.assistantMessage &&
+        existing.blockIndex === candidate.blockIndex &&
+        existing.persistedResult === candidate.persistedResult &&
+        existing.liveExecution === candidate.liveExecution &&
+        existing.canStillRun === candidate.canStillRun
+    ) {
+        return existing.step;
+    }
+    const step = build();
+    cache.set(key, {
+        assistantMessage: candidate.assistantMessage,
+        blockIndex: candidate.blockIndex,
+        persistedResult: candidate.persistedResult,
+        liveExecution: candidate.liveExecution,
+        canStillRun: candidate.canStillRun,
+        step,
+    });
+    return step;
+}
+
+/**
  * Apply the live options to a plan and return the rows in reading order.
  *
  * Fixed rows come back as the same objects the plan holds; only the open turn is built again, so a
  * memoized row component sees unchanged props and skips the token that caused this call.
  */
-function materializeTranscript(plan: TranscriptPlan, options: BuildTranscriptOptions): TranscriptItem[] {
+function materializeTranscript(
+    plan: TranscriptPlan,
+    options: BuildTranscriptOptions,
+    trailingStepCache?: TrailingToolStepCache,
+): TranscriptItem[] {
     const live = options.liveMessage ?? null;
     const liveIsDuplicated = live !== null && plan.assistantTimestamps.has(live.timestamp);
     const messages =
@@ -1081,6 +1157,7 @@ function materializeTranscript(plan: TranscriptPlan, options: BuildTranscriptOpt
             options,
             true,
             plan.trailingTurn.previousDroppedThinking,
+            trailingStepCache,
         );
         if (turn !== null) {
             const id = uniqueTurnId(turn.id, plan.usedTurnIds);

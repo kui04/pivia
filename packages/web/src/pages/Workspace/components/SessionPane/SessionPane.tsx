@@ -2,6 +2,7 @@ import { assertNever, type SessionId } from "@pivia/protocol";
 import { memo, useCallback, useEffect, useMemo, useState, type DragEvent, type ReactElement } from "react";
 
 import { Button, LoadingIndicator } from "@components";
+import { useFrameCoalescedValue, type FrameCoalesceOptions } from "@/hooks";
 import { ensureFontRole } from "@/lib";
 import { showError, showWarning, toastManager } from "@/lib/toast";
 import {
@@ -55,6 +56,152 @@ const IDLE_ACTIVITY: SessionLiveActivity = { kind: "idle" };
 const WORKING_ACTIVITY: SessionLiveActivity = { kind: "working" };
 const EMPTY_QUEUE: readonly string[] = [];
 const EMPTY_QUEUED_ENTRIES: readonly QueuedEntry[] = [];
+
+interface ConnectedTranscriptStageProps {
+    readonly sessionId: SessionId;
+    readonly sessionStore: SessionStoreInstance;
+    readonly routeMatchesStore: boolean;
+    readonly status: ReturnType<SessionStoreInstance["getState"]>["status"];
+    readonly entriesSync: ReturnType<SessionStoreInstance["getState"]>["entriesSync"];
+    readonly lastError: string | null;
+    readonly composerConnected: boolean;
+    readonly onClearQueue: (() => void) | undefined;
+    readonly clearingQueue: boolean;
+    readonly onOpenLink: (href: string) => void;
+    readonly onRetryEntriesSync: () => void;
+}
+
+interface CoalescedLiveStreamInput {
+    readonly liveMessage: ReturnType<SessionStoreInstance["getState"]>["liveMessage"];
+    readonly liveToolExecutions: ReturnType<SessionStoreInstance["getState"]>["liveToolExecutions"];
+    readonly runtimeActive: boolean;
+}
+
+function shouldFlushLiveStreamInput(prev: CoalescedLiveStreamInput, next: CoalescedLiveStreamInput): boolean {
+    if (prev.runtimeActive !== next.runtimeActive || prev.liveMessage.kind !== next.liveMessage.kind) {
+        return true;
+    }
+    if (
+        prev.liveMessage.kind === "streaming" &&
+        next.liveMessage.kind === "streaming" &&
+        prev.liveMessage.message.timestamp !== next.liveMessage.message.timestamp
+    ) {
+        return true;
+    }
+    const prevTools = prev.liveToolExecutions;
+    const nextTools = next.liveToolExecutions;
+    const prevKeys = Object.keys(prevTools);
+    const nextKeys = Object.keys(nextTools);
+    if (prevKeys.length !== nextKeys.length) {
+        return true;
+    }
+    for (const toolId of nextKeys) {
+        if (prevTools[toolId]?.kind !== nextTools[toolId]?.kind) {
+            return true;
+        }
+    }
+    return false;
+}
+
+const LIVE_STREAM_COALESCE_OPTIONS: FrameCoalesceOptions<CoalescedLiveStreamInput> = {
+    flushImmediately: shouldFlushLiveStreamInput,
+};
+
+/** Subscribes to transcript entries & live streaming deltas without re-rendering Composer/Topbar. */
+function ConnectedTranscriptStage({
+    sessionId,
+    sessionStore,
+    routeMatchesStore,
+    status,
+    entriesSync,
+    lastError,
+    composerConnected,
+    onClearQueue,
+    clearingQueue,
+    onOpenLink,
+    onRetryEntriesSync,
+}: ConnectedTranscriptStageProps): ReactElement {
+    const sessionState = sessionStore((state) => state.state);
+    const entries = sessionStore((state) => state.entries);
+    const liveMessage = sessionStore((state) => state.liveMessage);
+    const liveToolExecutions = sessionStore((state) => state.liveToolExecutions);
+    const liveActivity = sessionStore((state) => state.liveActivity);
+    const activityNotice = sessionStore((state) => state.activityNotice);
+
+    const terminalStatus = status === "error" || status === "closed";
+    const connectedRuntime = status === "open" || status === "reconnecting";
+    const runtimeStreaming = sessionState?.isStreaming ?? null;
+    const steeringMessages = sessionState?.steeringMessages ?? EMPTY_QUEUE;
+    const followUpMessages = sessionState?.followUpMessages ?? EMPTY_QUEUE;
+    // The runtime can still append a result while an open/reconnecting socket reports a stream or
+    // message. A terminal or cached connecting session never triggers a live spinner pre-snapshot.
+    const runtimeActive = connectedRuntime && (runtimeStreaming === true || liveMessage.kind === "streaming");
+    const effectiveActivity: SessionLiveActivity = terminalStatus
+        ? IDLE_ACTIVITY
+        : liveActivity.kind !== "idle"
+          ? liveActivity
+          : runtimeActive
+            ? WORKING_ACTIVITY
+            : IDLE_ACTIVITY;
+    const effectiveNotice = terminalStatus ? null : activityNotice;
+    const queuedEntries = useMemo(
+        () => (connectedRuntime ? collectQueuedEntries({ steeringMessages, followUpMessages }) : EMPTY_QUEUED_ENTRIES),
+        [connectedRuntime, followUpMessages, steeringMessages],
+    );
+
+    const rawLiveInput = useMemo<CoalescedLiveStreamInput>(
+        () => ({ liveMessage, liveToolExecutions, runtimeActive }),
+        [liveMessage, liveToolExecutions, runtimeActive],
+    );
+    const liveInput = useFrameCoalescedValue(rawLiveInput, LIVE_STREAM_COALESCE_OPTIONS);
+
+    // Projecting the branch walks every entry, so it must not run again for each streamed token.
+    const projectedItems = useMemo(
+        () => (routeMatchesStore ? projectSessionTranscript(entries) : []),
+        [entries, routeMatchesStore],
+    );
+    // The builder keeps the rows whose entries did not change, so a streamed token re-renders only
+    // the trailing turn instead of the whole list.
+    const rowBuilder = useMemo(() => createTranscriptRowBuilder(), []);
+    const { items, droppedLeadingEntries } = useMemo(
+        () => ({
+            items: rowBuilder.build(projectedItems, {
+                liveMessage: liveInput.liveMessage.kind === "none" ? null : liveInput.liveMessage.message,
+                runtimeActive: liveInput.runtimeActive,
+                liveToolExecutions: liveInput.liveToolExecutions,
+            }),
+            // Read in the same memo: the flag describes the rows just built, and the next build
+            // replaces it.
+            droppedLeadingEntries: rowBuilder.droppedLeadingEntries,
+        }),
+        [liveInput, projectedItems, rowBuilder],
+    );
+
+    const hasVisibleActivity =
+        entriesSync.kind !== "loading" &&
+        (effectiveActivity.kind !== "idle" || effectiveNotice !== null || queuedEntries.length > 0);
+    const view = selectWorkspaceView({
+        routeMatchesStore,
+        status,
+        entriesSync,
+        hasTranscript: items.length > 0 || hasVisibleActivity,
+    });
+
+    return renderStage({
+        view,
+        lastError,
+        transcriptKey: sessionId,
+        items,
+        droppedLeadingEntries,
+        liveActivity: effectiveActivity,
+        activityNotice: effectiveNotice,
+        queuedEntries,
+        clearingQueue,
+        onClearQueue: composerConnected ? onClearQueue : undefined,
+        onOpenLink,
+        onRetryEntriesSync,
+    });
+}
 
 interface StageProps {
     readonly view: WorkspaceView;
@@ -213,70 +360,13 @@ function ConnectedSessionBody({
     const status = sessionStore((state) => state.status);
     const activeSessionId = sessionStore((state) => state.sessionId);
     const sessionState = sessionStore((state) => state.state);
-    const entries = sessionStore((state) => state.entries);
     const entriesSync = sessionStore((state) => state.entriesSync);
-    const liveMessage = sessionStore((state) => state.liveMessage);
-    const liveToolExecutions = sessionStore((state) => state.liveToolExecutions);
-    const liveActivity = sessionStore((state) => state.liveActivity);
-    const activityNotice = sessionStore((state) => state.activityNotice);
-    const runtimeStreaming = sessionState?.isStreaming ?? null;
-    const steeringMessages = sessionState?.steeringMessages ?? EMPTY_QUEUE;
-    const followUpMessages = sessionState?.followUpMessages ?? EMPTY_QUEUE;
     const lastError = sessionStore((state) => state.lastError);
     const retryEntriesSync = sessionStore((state) => state.retryEntriesSync);
     const sendCommand = sessionStore((state) => state.sendCommand);
 
     const routeMatchesStore = activeSessionId === sessionId;
-    const terminalStatus = status === "error" || status === "closed";
-    const connectedRuntime = status === "open" || status === "reconnecting";
     const composerConnected = routeMatchesStore && status === "open";
-    // The runtime can still append a result while an open/reconnecting socket reports a stream or
-    // message. A terminal or cached connecting session never triggers a live spinner pre-snapshot.
-    const runtimeActive = connectedRuntime && (runtimeStreaming === true || liveMessage.kind === "streaming");
-    const effectiveActivity: SessionLiveActivity = terminalStatus
-        ? IDLE_ACTIVITY
-        : liveActivity.kind !== "idle"
-          ? liveActivity
-          : runtimeActive
-            ? WORKING_ACTIVITY
-            : IDLE_ACTIVITY;
-    const effectiveNotice = terminalStatus ? null : activityNotice;
-    const queuedEntries = useMemo(
-        () => (connectedRuntime ? collectQueuedEntries({ steeringMessages, followUpMessages }) : EMPTY_QUEUED_ENTRIES),
-        [connectedRuntime, followUpMessages, steeringMessages],
-    );
-
-    // Projecting the branch walks every entry, so it must not run again for each streamed token.
-    const projectedItems = useMemo(
-        () => (routeMatchesStore ? projectSessionTranscript(entries) : []),
-        [entries, routeMatchesStore],
-    );
-    // The builder keeps the rows whose entries did not change, so a streamed token re-renders only
-    // the trailing turn instead of the whole list.
-    const rowBuilder = useMemo(() => createTranscriptRowBuilder(), []);
-    const { items, droppedLeadingEntries } = useMemo(
-        () => ({
-            items: rowBuilder.build(projectedItems, {
-                liveMessage: liveMessage.kind === "none" ? null : liveMessage.message,
-                runtimeActive,
-                liveToolExecutions,
-            }),
-            // Read in the same memo: the flag describes the rows just built, and the next build
-            // replaces it.
-            droppedLeadingEntries: rowBuilder.droppedLeadingEntries,
-        }),
-        [liveMessage, liveToolExecutions, projectedItems, rowBuilder, runtimeActive],
-    );
-
-    const hasVisibleActivity =
-        entriesSync.kind !== "loading" &&
-        (effectiveActivity.kind !== "idle" || effectiveNotice !== null || queuedEntries.length > 0);
-    const view = selectWorkspaceView({
-        routeMatchesStore,
-        status,
-        entriesSync,
-        hasTranscript: items.length > 0 || hasVisibleActivity,
-    });
 
     const handleNotify = useCallback(
         (notice: { readonly tone: "info" | "warning" | "error"; readonly message: string }) => {
@@ -332,20 +422,19 @@ function ConnectedSessionBody({
                 compacting={routeMatchesStore && sessionState?.isCompacting === true}
             />
             <div className={styles.stage}>
-                {renderStage({
-                    view,
-                    lastError,
-                    transcriptKey: sessionId,
-                    items,
-                    droppedLeadingEntries,
-                    liveActivity: effectiveActivity,
-                    activityNotice: effectiveNotice,
-                    queuedEntries,
-                    clearingQueue,
-                    onClearQueue: composerConnected ? handleClearQueue : undefined,
-                    onOpenLink,
-                    onRetryEntriesSync: retryEntriesSync,
-                })}
+                <ConnectedTranscriptStage
+                    sessionId={sessionId}
+                    sessionStore={sessionStore}
+                    routeMatchesStore={routeMatchesStore}
+                    status={status}
+                    entriesSync={entriesSync}
+                    lastError={lastError}
+                    composerConnected={composerConnected}
+                    onClearQueue={composerConnected ? handleClearQueue : undefined}
+                    clearingQueue={clearingQueue}
+                    onOpenLink={onOpenLink}
+                    onRetryEntriesSync={retryEntriesSync}
+                />
             </div>
             <div className={styles.composerBand}>
                 <div className={styles.composerFade} aria-hidden="true" />

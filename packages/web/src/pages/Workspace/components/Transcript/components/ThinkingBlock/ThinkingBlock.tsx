@@ -1,5 +1,5 @@
 import { Brain } from "lucide-react";
-import type { ReactElement } from "react";
+import { memo, type ReactElement } from "react";
 
 import { Markdown } from "@components";
 import type { TranscriptThinkingStep } from "@/stores/session";
@@ -31,7 +31,7 @@ export type ThinkingBlockProps = {
  *
  * @param props - Thinking step and optional expansion control.
  */
-export function ThinkingBlock({
+function ThinkingBlockInner({
     step,
     defaultOpen = false,
     open,
@@ -67,3 +67,11 @@ export function ThinkingBlock({
         </CollapsibleBlock>
     );
 }
+
+/**
+ * Secondary collapsible container for one model reasoning block.
+ *
+ * It stays collapsed by default so completed steps keep the turn compact, and it streams inside a
+ * bounded viewport that follows the bottom edge while the reader stays there.
+ */
+export const ThinkingBlock = memo(ThinkingBlockInner);

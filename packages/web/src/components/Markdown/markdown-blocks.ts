@@ -232,3 +232,14 @@ export function createMarkdownBlockPlanner(): MarkdownBlockPlanner {
         },
     };
 }
+
+/**
+ * Projects a {@link MarkdownBlockPlan} into one index-keyed sequence of renderable segments so a
+ * completed tail stays mounted at its index instead of unmounting and remounting into `blocks`.
+ */
+export function markdownRenderSegments(plan: MarkdownBlockPlan): readonly string[] {
+    if (plan.tail === "") {
+        return plan.blocks;
+    }
+    return [...plan.blocks, plan.tail];
+}

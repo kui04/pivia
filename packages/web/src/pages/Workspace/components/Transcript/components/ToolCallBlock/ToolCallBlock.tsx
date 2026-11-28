@@ -1,6 +1,6 @@
 import { assertNever } from "@pivia/protocol";
 import { Ban, Check, CircleDashed, X, type LucideIcon } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactElement } from "react";
+import { memo, useEffect, useMemo, useState, type ReactElement } from "react";
 
 import { CodeBlock, Icon, Image, ScrollArea, VisuallyHidden } from "@components";
 import { useCopyFeedback } from "@/hooks";
@@ -155,7 +155,7 @@ function renderNestedCallsSection(stepLabel: string, summary: TranscriptNestedCa
  *
  * @param props - Tool call step and optional expansion and copy controls.
  */
-export function ToolCallBlock({
+function ToolCallBlockInner({
     step,
     defaultOpen = false,
     open: controlledOpen,
@@ -356,3 +356,13 @@ export function ToolCallBlock({
         </Disclosure>
     );
 }
+
+/**
+ * Secondary collapsible row and bounded output card for a single tool invocation.
+ *
+ * The header shows a tool icon, the accented label, a single-line argument summary and live
+ * progress or duration. Expanded content shows either a highlighted diff/code preview (`edit`,
+ * `write`, `read`) or a bounded monospace output card, plus any truncation warnings and image
+ * attachments.
+ */
+export const ToolCallBlock = memo(ToolCallBlockInner);

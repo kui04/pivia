@@ -62,11 +62,19 @@ export interface FontManagerOptions {
     readonly applyCssStack?: ((role: FontRole, stack: string) => void) | undefined;
 }
 
+/** Lifecycle of one lazy font preset CSS chunk. */
+export type PresetLoadState =
+    | { readonly kind: "idle" }
+    | { readonly kind: "loading"; readonly promise: Promise<void> }
+    | { readonly kind: "loaded" };
+
 export interface FontManager {
     ensureFontPreset: (presetId: FontPresetId) => Promise<void>;
     ensureFontRole: (role: FontRole) => Promise<void>;
     applyFontPreset: (role: FontRole, presetId: FontPresetId) => Promise<void>;
     getActivePreset: (role: FontRole) => FontPresetId;
+    /** Synchronous fast-path check so mounted text elements allocate no promises once ready. */
+    isFontRoleReady: (role: FontRole) => boolean;
 }
 
 function defaultApplyCssStack(role: FontRole, stack: string): void {
@@ -76,11 +84,14 @@ function defaultApplyCssStack(role: FontRole, stack: string): void {
     document.documentElement.style.setProperty(`--font-${role}`, stack);
 }
 
+const RESOLVED_VOID: Promise<void> = Promise.resolve();
+
 /**
  * Creates a deduplicated lazy font loader and role-to-preset registry.
  *
  * Each preset's CSS chunk is dynamically imported at most once while active or resolved;
- * failed loads clear the cached promise so a subsequent mount or retry can recover.
+ * failed loads reset state so a subsequent mount or retry can recover, and completed presets
+ * settle via a fast synchronous path with zero Promise allocations.
  */
 export function createFontManager(options: FontManagerOptions = {}): FontManager {
     const presets = options.presets ?? FONT_PRESETS;
@@ -88,34 +99,56 @@ export function createFontManager(options: FontManagerOptions = {}): FontManager
         ...(options.defaultRolePresets ?? DEFAULT_ROLE_PRESETS),
     };
     const applyCssStack = options.applyCssStack ?? defaultApplyCssStack;
-    const inflight = new Map<FontPresetId, Promise<void>>();
+    const states = new Map<FontPresetId, PresetLoadState>();
 
-    const ensureFontPreset = async (presetId: FontPresetId): Promise<void> => {
+    const ensureFontPreset = (presetId: FontPresetId): Promise<void> => {
         const preset = presets[presetId];
         if (preset.load === null) {
-            return;
+            return RESOLVED_VOID;
         }
-        const existing = inflight.get(presetId);
+        const existing = states.get(presetId);
         if (existing !== undefined) {
-            return existing;
+            switch (existing.kind) {
+                case "loaded":
+                    return RESOLVED_VOID;
+                case "loading":
+                    return existing.promise;
+                case "idle":
+                    break;
+                default: {
+                    const unreachable: never = existing;
+                    return unreachable;
+                }
+            }
         }
 
         const pending = Promise.resolve(preset.load())
-            .then(() => undefined)
+            .then(() => {
+                states.set(presetId, { kind: "loaded" });
+            })
             .catch((error: unknown) => {
                 // Allow a later attempt to retry if a transient network failure occurred.
-                inflight.delete(presetId);
+                states.delete(presetId);
                 throw error;
             });
-        inflight.set(presetId, pending);
+        states.set(presetId, { kind: "loading", promise: pending });
         return pending;
     };
 
-    const ensureFontRole = async (role: FontRole): Promise<void> => {
-        if (typeof window === "undefined") {
-            return;
+    const isFontRoleReady = (role: FontRole): boolean => {
+        const presetId = activeByRole[role];
+        const preset = presets[presetId];
+        if (preset.load === null) {
+            return true;
         }
-        await ensureFontPreset(activeByRole[role]).catch(() => undefined);
+        return states.get(presetId)?.kind === "loaded";
+    };
+
+    const ensureFontRole = (role: FontRole): Promise<void> => {
+        if (typeof window === "undefined" || isFontRoleReady(role)) {
+            return RESOLVED_VOID;
+        }
+        return ensureFontPreset(activeByRole[role]).catch(() => undefined);
     };
 
     const applyFontPreset = async (role: FontRole, presetId: FontPresetId): Promise<void> => {
@@ -136,10 +169,16 @@ export function createFontManager(options: FontManagerOptions = {}): FontManager
         ensureFontRole,
         applyFontPreset,
         getActivePreset,
+        isFontRoleReady,
     };
 }
 
 const defaultManager = createFontManager();
+
+/** True once the active font preset for `role` is already loaded or needs no network chunk. */
+export function isFontRoleReady(role: FontRole): boolean {
+    return defaultManager.isFontRoleReady(role);
+}
 
 /** Ensures the active web font for `role` is loaded in the browser without blocking render. */
 export function ensureFontRole(role: FontRole): Promise<void> {

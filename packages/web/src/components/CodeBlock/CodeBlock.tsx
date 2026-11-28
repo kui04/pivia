@@ -1,6 +1,5 @@
 import { Check, Copy, WrapText, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import type { ThemedToken } from "shiki";
+import { memo, useEffect, useMemo, useState } from "react";
 
 import { copyFeedbackText, useCopyFeedback, useFontRole } from "@/hooks";
 
@@ -10,7 +9,7 @@ import { IconButton } from "../IconButton";
 import { ScrollArea } from "../ScrollArea";
 import { VisuallyHidden } from "../VisuallyHidden";
 import { parseDiffLines } from "./diff";
-import { highlight, resolveLanguage } from "./highlight";
+import { highlight, type HighlightToken, resolveLanguage } from "./highlight";
 import styles from "./CodeBlock.module.css";
 
 export type CodeBlockProps = {
@@ -40,7 +39,7 @@ export type CodeBlockProps = {
     className?: string | undefined;
 };
 
-export function CodeBlock({
+function CodeBlockInner({
     code,
     language,
     streaming = false,
@@ -56,7 +55,11 @@ export function CodeBlock({
     useFontRole("mono");
     const [wrapped, setWrapped] = useState(defaultWrap);
     const { status: copyStatus, copy } = useCopyFeedback(onCopy);
-    const [rendered, setRendered] = useState<{ code: string; language: string; lines: ThemedToken[][] }>();
+    const [rendered, setRendered] = useState<{
+        code: string;
+        language: string;
+        lines: readonly (readonly HighlightToken[])[];
+    }>();
 
     const sourceLines = useMemo(() => code.split("\n"), [code]);
     const isDiff = language !== undefined && resolveLanguage(language)?.id === "diff";
@@ -83,13 +86,13 @@ export function CodeBlock({
             return;
         }
 
-        let cancelled = false;
+        const controller = new AbortController();
 
-        // Highlighting runs off the render path; the block keeps its plain text
-        // until the grammar is loaded, and forever when the grammar is missing.
-        highlight(code, language).then(
+        // Highlighting runs off the render path (in a dedicated worker when available);
+        // the block keeps its plain text until the grammar is loaded.
+        highlight(code, language, { signal: controller.signal }).then(
             (lines) => {
-                if (!cancelled && lines !== undefined) {
+                if (!controller.signal.aborted && lines !== undefined) {
                     setRendered({ code, language, lines });
                 }
             },
@@ -97,7 +100,7 @@ export function CodeBlock({
         );
 
         return () => {
-            cancelled = true;
+            controller.abort();
         };
     }, [code, isDiff, language, streaming]);
 
@@ -186,3 +189,6 @@ export function CodeBlock({
         </div>
     );
 }
+
+/** Displays syntax-highlighted code with optional line numbers, diff gutter, and copy button. */
+export const CodeBlock = memo(CodeBlockInner);

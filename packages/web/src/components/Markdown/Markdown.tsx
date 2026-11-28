@@ -26,7 +26,7 @@ import { CodeBlock } from "../CodeBlock";
 import { Image } from "../Image";
 import { ImageViewer } from "../ImageViewer";
 import { ScrollArea } from "../ScrollArea";
-import { createMarkdownBlockPlanner } from "./markdown-blocks";
+import { createMarkdownBlockPlanner, markdownRenderSegments } from "./markdown-blocks";
 import { remarkCurrency } from "./remark-currency";
 import styles from "./Markdown.module.css";
 
@@ -140,13 +140,14 @@ const MessageMarkdown = memo(function MessageMarkdown({ source }: { readonly sou
         return <MarkdownDocument source={source} />;
     }
 
+    const segments = markdownRenderSegments(plan);
+
     return (
         <>
-            {plan.blocks.map((block, index) => (
-                // The source only grows, so a block keeps the position it was given once it is complete.
-                <MarkdownDocument key={index} source={block} />
+            {segments.map((segment, index) => (
+                // The source only grows, so a promoted tail keeps its segment index without remounting.
+                <MarkdownDocument key={index} source={segment} />
             ))}
-            {plan.tail === "" ? null : <MarkdownDocument source={plan.tail} />}
         </>
     );
 });

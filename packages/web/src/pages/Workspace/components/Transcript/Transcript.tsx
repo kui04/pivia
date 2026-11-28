@@ -28,6 +28,7 @@ import {
     WorkingIndicator,
     type QueuedEntry,
 } from "./components";
+import { orphansExpandedRows, removeMissingRows, rowShape, type ExpandedRows, type RowShape } from "./expanded-rows";
 import { Notice } from "./components/Notice";
 import styles from "./Transcript.module.css";
 import { useActivityLabel } from "./useActivityLabel";
@@ -66,10 +67,8 @@ export type TranscriptProps = {
     className?: string | undefined;
 };
 
-/** Turn rows the reader expanded, keyed by row id. */
-type ExpandedRows = ReadonlySet<string>;
-
 const NO_EXPANDED_ROWS: ExpandedRows = new Set();
+const EMPTY_PINNED_INDEXES: readonly number[] = [];
 
 /**
  * Props of the transcript row list.
@@ -221,7 +220,11 @@ function TranscriptList({
         expandedRowIds,
         onRowOpenChange,
     };
-    const keepMounted = useMemo(() => pinnedRowIndexes(rows, expandedRowIds), [rows, expandedRowIds]);
+    const pinnedKey = pinnedRowIndexes(rows, expandedRowIds).join(",");
+    const keepMounted = useMemo(
+        () => (pinnedKey === "" ? EMPTY_PINNED_INDEXES : pinnedKey.split(",").map(Number)),
+        [pinnedKey],
+    );
     // A projection that drops a prefix (a moved compaction boundary or another branch) hands the
     // list a shorter array that no longer starts at the old first row. virtua maintains the scroll
     // position from the end for that render, which keeps the reader on the content they see; the
@@ -282,32 +285,15 @@ function TranscriptInner({
     const viewportNodeRef = useRef<HTMLDivElement | null>(null);
     const [expandedRowIds, setExpandedRowIds] = useState<ExpandedRows>(NO_EXPANDED_ROWS);
     const activityLabel = useActivityLabel(liveActivity ?? { kind: "idle" });
-    // Only a list that loses rows or starts at another row can orphan an expanded id. Tracking the
-    // mark keeps the check O(1) on the per-token renders that keep the same shape.
-    const rowShapeRef = useRef<{ readonly count: number; readonly firstId: string | undefined }>({
-        count: items.length,
-        firstId: items[0]?.id,
-    });
+    const rowShapeRef = useRef<RowShape>(rowShape(items));
     useEffect(() => {
-        const mark = rowShapeRef.current;
-        if (items.length >= mark.count && items[0]?.id === mark.firstId) {
+        const nextShape = rowShape(items);
+        if (!orphansExpandedRows(rowShapeRef.current, nextShape)) {
+            rowShapeRef.current = nextShape;
             return;
         }
-        rowShapeRef.current = { count: items.length, firstId: items[0]?.id };
-        setExpandedRowIds((current) => {
-            if (current.size === 0) {
-                return current;
-            }
-            const present = new Set(items.map((item) => item.id));
-            let next: Set<string> | null = null;
-            for (const rowId of current) {
-                if (!present.has(rowId)) {
-                    next ??= new Set(current);
-                    next.delete(rowId);
-                }
-            }
-            return next ?? current;
-        });
+        rowShapeRef.current = nextShape;
+        setExpandedRowIds((current) => removeMissingRows(current, items));
     }, [items]);
     let lastStreamingTurnId: string | null = null;
     for (const item of items) {
