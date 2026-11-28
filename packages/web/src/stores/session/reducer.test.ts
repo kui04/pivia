@@ -1,6 +1,13 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { FileEntry, RpcExtensionUIRequest } from "@earendil-works/pi-coding-agent";
-import type { SessionDelta, SessionId, SessionSnapshot, SessionStateSnapshot } from "@pivia/protocol";
+import {
+    EMPTY_SESSION_UI_STATE,
+    type ExtensionDialogRequest,
+    type SessionDelta,
+    type SessionId,
+    type SessionSnapshot,
+    type SessionStateSnapshot,
+} from "@pivia/protocol";
 
 type SessionEvent = Extract<SessionDelta, { readonly kind: "agent_event" }>["event"];
 import { describe, expect, it } from "vitest";
@@ -25,7 +32,7 @@ function summary(overrides: Partial<SessionStateSnapshot> = {}): SessionStateSna
     return makeSessionStateSnapshot({ messageCount: 2, ...overrides });
 }
 
-function dialog(id: string, method: "confirm" | "select" | "input" | "editor" = "confirm"): RpcExtensionUIRequest {
+function dialog(id: string, method: "confirm" | "select" | "input" | "editor" = "confirm"): ExtensionDialogRequest {
     switch (method) {
         case "confirm":
             return { type: "extension_ui_request", id, method, title: "Continue?", message: "Confirm the action." };
@@ -38,8 +45,16 @@ function dialog(id: string, method: "confirm" | "select" | "input" | "editor" = 
     }
 }
 
-function notifyRequest(id: string): RpcExtensionUIRequest {
-    return { type: "extension_ui_request", id, method: "notify", message: "Heads up" };
+type NotifyRequest = Extract<RpcExtensionUIRequest, { readonly method: "notify" }>;
+
+function notifyRequest(id: string, notifyType?: "info" | "warning" | "error"): NotifyRequest {
+    return {
+        type: "extension_ui_request",
+        id,
+        method: "notify",
+        message: "Heads up",
+        ...(notifyType === undefined ? {} : { notifyType }),
+    };
 }
 
 function makeSnapshot(overrides: Partial<SessionSnapshot> = {}): SessionSnapshot {
@@ -50,6 +65,7 @@ function makeSnapshot(overrides: Partial<SessionSnapshot> = {}): SessionSnapshot
         state: summary(),
         liveMessage: null,
         pendingUiRequests: [],
+        uiState: EMPTY_SESSION_UI_STATE,
         ...overrides,
     };
 }
@@ -103,6 +119,10 @@ describe("session sync reducer", () => {
             liveActivity: { kind: "idle" },
             activityNotice: null,
             pendingUiRequests: [],
+            uiState: EMPTY_SESSION_UI_STATE,
+            notices: [],
+            editorTextSequence: 0,
+            editorTextRequest: null,
             lastError: null,
         });
 
@@ -118,7 +138,7 @@ describe("session sync reducer", () => {
             makeSnapshot({
                 state: summary({ messageCount: 5 }),
                 entries: { mode: "inline", data: entries },
-                pendingUiRequests: [dialog("a"), notifyRequest("ignored")],
+                pendingUiRequests: [dialog("a")],
             }),
         );
 
@@ -153,7 +173,24 @@ describe("session sync reducer", () => {
         state = reducer.applyDelta(state, {
             kind: "state_patched",
             patch: {
-                model: { provider: "anthropic", id: "claude-sonnet-4", name: "Claude" },
+                model: {
+                    provider: "anthropic",
+                    id: "claude-sonnet-4",
+                    name: "Claude",
+                    contextWindow: 200_000,
+                    reasoning: true,
+                },
+                contextUsage: { tokens: 12_000, contextWindow: 200_000, percent: 6 },
+                routedModel: {
+                    model: {
+                        provider: "openai",
+                        id: "gpt-5",
+                        name: "GPT-5",
+                        contextWindow: 272_000,
+                        reasoning: true,
+                    },
+                    thinkingLevel: "high",
+                },
                 messageCount: 4,
                 steeringMode: "all",
             },
@@ -163,7 +200,17 @@ describe("session sync reducer", () => {
         expect(state.state?.messageCount).toBe(4);
         expect(state.state?.steeringMode).toBe("all");
         expect(state.state?.model?.id).toBe("claude-sonnet-4");
+        expect(state.state?.contextUsage).toEqual({ tokens: 12_000, contextWindow: 200_000, percent: 6 });
+        expect(state.state?.routedModel?.model.id).toBe("gpt-5");
+        expect(state.state?.routedModel?.thinkingLevel).toBe("high");
         expect(state.pendingUiRequests).toEqual([]);
+
+        state = reducer.applyDelta(state, {
+            kind: "state_patched",
+            patch: { contextUsage: null, routedModel: null },
+        });
+        expect(state.state?.contextUsage).toBeNull();
+        expect(state.state?.routedModel).toBeNull();
     });
 
     it("adds only interactive UI requests and removes resolved ones by id", () => {
@@ -182,6 +229,173 @@ describe("session sync reducer", () => {
 
         const unchanged = reducer.applyDelta(state, { kind: "ui_resolved", requestId: "missing" });
         expect(unchanged).toBe(state);
+    });
+
+    it("ignores malformed dialog requests in ui_request deltas", () => {
+        const reducer = createSessionSyncReducer();
+        // A `select` without options cannot render; the wire type cannot express that, so the test forges it.
+        const malformed = {
+            type: "extension_ui_request",
+            id: "broken",
+            method: "select",
+            title: "Pick",
+        } as unknown as RpcExtensionUIRequest;
+
+        let state = reducer.applySnapshot(connectingState(), makeSnapshot({ pendingUiRequests: [dialog("ok")] }));
+        expect(state.pendingUiRequests).toEqual([dialog("ok")]);
+
+        state = reducer.applyDelta(state, { kind: "ui_request", request: malformed });
+        expect(state.pendingUiRequests).toEqual([dialog("ok")]);
+    });
+
+    it("turns notify requests into deduplicated notices by tone", () => {
+        const reducer = createSessionSyncReducer();
+        let state = reducer.applySnapshot(connectingState(), makeSnapshot());
+
+        state = reducer.applyDelta(state, { kind: "ui_request", request: notifyRequest("info-1") });
+        state = reducer.applyDelta(state, { kind: "ui_request", request: notifyRequest("warn-1", "warning") });
+        state = reducer.applyDelta(state, { kind: "ui_request", request: notifyRequest("error-1", "error") });
+        state = reducer.applyDelta(state, { kind: "ui_request", request: notifyRequest("info-1") });
+
+        expect(state.notices).toEqual([
+            { id: "notify:info-1", tone: "info", title: "Heads up", description: null },
+            { id: "notify:warn-1", tone: "warning", title: "Heads up", description: null },
+            { id: "notify:error-1", tone: "error", title: "Heads up", description: null },
+        ]);
+    });
+
+    it("records one extension failure per path and event", () => {
+        const reducer = createSessionSyncReducer();
+        let state = reducer.applySnapshot(connectingState(), makeSnapshot());
+
+        state = reducer.applyDelta(state, {
+            kind: "extension_error",
+            extensionPath: "/home/u/.pi/extensions/lint.ts",
+            event: "tool_call",
+            error: "Cannot read the config",
+        });
+        state = reducer.applyDelta(state, {
+            kind: "extension_error",
+            extensionPath: "/home/u/.pi/extensions/lint.ts",
+            event: "tool_call",
+            error: "Cannot read the config",
+        });
+
+        expect(state.notices).toEqual([
+            {
+                id: "extension-error:/home/u/.pi/extensions/lint.ts:tool_call",
+                tone: "error",
+                title: "Extension failed",
+                description: "/home/u/.pi/extensions/lint.ts: Cannot read the config",
+            },
+        ]);
+    });
+
+    it("keeps only the newest twenty notices", () => {
+        const reducer = createSessionSyncReducer();
+        let state = reducer.applySnapshot(connectingState(), makeSnapshot());
+
+        for (let index = 0; index < 25; index += 1) {
+            state = reducer.applyDelta(state, { kind: "ui_request", request: notifyRequest(`n-${String(index)}`) });
+        }
+
+        expect(state.notices).toHaveLength(20);
+        expect(state.notices[0]?.id).toBe("notify:n-5");
+    });
+
+    it("sequences set_editor_text commands so the composer applies the newest once", () => {
+        const reducer = createSessionSyncReducer();
+        let state = reducer.applySnapshot(connectingState(), makeSnapshot());
+
+        state = reducer.applyDelta(state, {
+            kind: "ui_request",
+            request: { type: "extension_ui_request", id: "editor-1", method: "set_editor_text", text: "first" },
+        });
+        expect(state.editorTextRequest).toEqual({ sequence: 1, text: "first" });
+
+        state = reducer.applyDelta(state, {
+            kind: "ui_request",
+            request: { type: "extension_ui_request", id: "editor-2", method: "set_editor_text", text: "second" },
+        });
+        expect(state.editorTextRequest).toEqual({ sequence: 2, text: "second" });
+    });
+
+    it("applies extension chrome from deltas and clears it with the session", () => {
+        const reducer = createSessionSyncReducer();
+        let state = reducer.applySnapshot(connectingState(), makeSnapshot());
+
+        state = reducer.applyDelta(state, {
+            kind: "ui_request",
+            request: {
+                type: "extension_ui_request",
+                id: "c1",
+                method: "setStatus",
+                statusKey: "lint",
+                statusText: "clean",
+            },
+        });
+        state = reducer.applyDelta(state, {
+            kind: "ui_request",
+            request: {
+                type: "extension_ui_request",
+                id: "c2",
+                method: "setWidget",
+                widgetKey: "todo",
+                widgetLines: ["one"],
+                widgetPlacement: "belowEditor",
+            },
+        });
+        state = reducer.applyDelta(state, {
+            kind: "ui_request",
+            request: { type: "extension_ui_request", id: "c3", method: "setTitle", title: "Release" },
+        });
+
+        expect(state.uiState).toEqual({
+            statuses: [{ key: "lint", text: "clean" }],
+            widgets: [{ key: "todo", lines: ["one"], placement: "belowEditor" }],
+            title: "Release",
+        });
+
+        state = reducer.applyDelta(state, {
+            kind: "ui_request",
+            request: {
+                type: "extension_ui_request",
+                id: "c4",
+                method: "setStatus",
+                statusKey: "lint",
+                statusText: undefined,
+            },
+        });
+        state = reducer.applyDelta(state, {
+            kind: "ui_request",
+            request: {
+                type: "extension_ui_request",
+                id: "c5",
+                method: "setWidget",
+                widgetKey: "todo",
+                widgetLines: undefined,
+            },
+        });
+        state = reducer.applyDelta(state, {
+            kind: "ui_request",
+            request: { type: "extension_ui_request", id: "c6", method: "setTitle", title: "" },
+        });
+
+        expect(state.uiState).toEqual(EMPTY_SESSION_UI_STATE);
+        expect(applySessionClosed(state, "session").uiState).toEqual(EMPTY_SESSION_UI_STATE);
+    });
+
+    it("restores extension chrome from a snapshot", () => {
+        const reducer = createSessionSyncReducer();
+        const uiState = {
+            ...EMPTY_SESSION_UI_STATE,
+            statuses: [{ key: "lint", text: "clean" }],
+            title: "Release",
+        };
+
+        const state = reducer.applySnapshot(connectingState(), makeSnapshot({ uiState }));
+
+        expect(state.uiState).toEqual(uiState);
     });
 
     it("folds message_update deltas into liveMessage", () => {

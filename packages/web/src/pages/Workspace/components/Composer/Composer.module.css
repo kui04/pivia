@@ -22,6 +22,9 @@
  *   .attachButton           IconButton for picking image files
  *   .sendButton             primary IconButton for send / steer
  *   .stopButton             destructive IconButton for aborting streaming
+ *   .extensionSlot          wrapper that anchors the pending-prompt badge
+ *   .extensionButton        primary IconButton for opening the pending extension dialog
+ *   .extensionBadge         count badge in the slot's top corner
  */
 .card {
     position: relative;
@@ -144,7 +147,8 @@
 
 .attachButton,
 .sendButton,
-.stopButton {
+.stopButton,
+.extensionButton {
     min-inline-size: calc(var(--space-32) + var(--space-2));
     min-block-size: calc(var(--space-32) + var(--space-2));
 }
@@ -153,13 +157,19 @@
     color: var(--color-on-surface-variant);
 }
 
+.extensionSlot {
+    position: relative;
+    display: inline-flex;
+}
+
 /*
  * IconButton styles `.button:hover:not([data-disabled]):not([aria-pressed="true"])` at (0,4,0),
- * `.button[data-popup-open]` at (0,3,0), and `.button[data-disabled]` at (0,2,0). Doubling `.sendButton`
- * and `.stopButton` (`&&`) keeps each rule one class higher so hover, active press, and open tooltips
- * never strip the primary or error fill.
+ * `.button[data-popup-open]` at (0,3,0), and `.button[data-disabled]` at (0,2,0). Doubling
+ * `.sendButton`, `.extensionButton`, and `.stopButton` (`&&`) keeps each rule one class higher so
+ * hover, active press, and open tooltips never strip the primary or error fill.
  */
-.sendButton {
+.sendButton,
+.extensionButton {
     && {
         background-color: var(--color-primary);
         color: var(--color-on-primary);
@@ -183,13 +193,31 @@
             color: var(--color-on-primary);
         }
     }
+}
 
+.sendButton {
     &&:disabled,
     &&[data-disabled] {
         background-color: var(--color-secondary-container);
         background-image: none;
         color: var(--color-on-surface-variant);
     }
+}
+
+.extensionBadge {
+    position: absolute;
+    inset-block-start: calc(-1 * var(--space-4));
+    inset-inline-end: calc(-1 * var(--space-4));
+    min-inline-size: var(--space-16);
+    padding-inline: var(--space-4);
+    border: var(--border-width) solid var(--color-surface-container-high);
+    border-radius: var(--shape-corner-full);
+    background-color: var(--color-error);
+    color: var(--color-on-error);
+    font-size: var(--type-caption-size);
+    line-height: calc(var(--space-16) - 2 * var(--border-width));
+    text-align: center;
+    pointer-events: none;
 }
 
 .stopButton {

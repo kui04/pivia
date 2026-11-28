@@ -2,6 +2,7 @@ import type { QueueMode, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
 import type {
     AgentSession,
+    ContextUsage,
     ExtensionError,
     FileEntry,
     JsonAgentSessionEvent,
@@ -12,6 +13,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 
 import {
+    isFiniteNumber,
     isNonNegativeSafeInteger,
     isRecord,
     isStringArray,
@@ -93,6 +95,12 @@ export type SessionQueuedInputDisposition = Awaited<ReturnType<AgentSession["ste
  * and omits `pendingMessageCount` because `steeringMessages` and `followUpMessages` already carry
  * the exact queue contents. `name` is `null` when the session has no display name.
  */
+/** Physical model and thinking level of the latest response under a virtual model selection. */
+export interface SessionRoutedModel {
+    readonly model: SessionModelInfo;
+    readonly thinkingLevel?: ThinkingLevel | undefined;
+}
+
 export interface SessionStateSnapshot extends Readonly<
     StrictOmit<RpcSessionState, "model" | "sessionFile" | "sessionId" | "sessionName" | "pendingMessageCount">
 > {
@@ -100,6 +108,10 @@ export interface SessionStateSnapshot extends Readonly<
     readonly cwd: string;
     readonly name: string | null;
     readonly model: SessionModelInfo | null;
+    /** Estimated context tokens and percentage, or `null` when the SDK has no estimate yet. */
+    readonly contextUsage: ContextUsage | null;
+    /** Physical model behind the latest virtual-model response, or `null` for a direct selection. */
+    readonly routedModel: SessionRoutedModel | null;
     readonly steeringMessages: readonly string[];
     readonly followUpMessages: readonly string[];
 }
@@ -117,11 +129,42 @@ export interface SessionEntrySlice {
 }
 
 /** Full or prefix-anchored session snapshot replicated over the Sync lane. */
+/** One extension status line set through `ctx.ui.setStatus`. */
+export interface SessionUiStatus {
+    readonly key: string;
+    readonly text: string;
+}
+
+/** One extension widget set through `ctx.ui.setWidget`; lines render verbatim. */
+export interface SessionUiWidget {
+    readonly key: string;
+    readonly lines: readonly string[];
+    readonly placement: "aboveEditor" | "belowEditor";
+}
+
+/** Extension-owned chrome that stays with the session across reconnects. */
+export interface SessionUiState {
+    readonly statuses: readonly SessionUiStatus[];
+    readonly widgets: readonly SessionUiWidget[];
+    /** Window title set through `ctx.ui.setTitle`, or `null` when the extension set none. */
+    readonly title: string | null;
+}
+
+/** Empty chrome for a session whose extensions set nothing yet. */
+export const EMPTY_SESSION_UI_STATE: SessionUiState = {
+    statuses: [],
+    widgets: [],
+    title: null,
+};
+
+/** Full or prefix-anchored session snapshot replicated over the Sync lane. */
 export interface SessionSnapshot extends SessionEntrySlice {
     readonly state: SessionStateSnapshot;
     readonly liveMessage: AssistantMessage | null;
     /** Dialog requests that are still waiting for a response. */
-    readonly pendingUiRequests: readonly RpcExtensionUIRequest[];
+    readonly pendingUiRequests: readonly ExtensionDialogRequest[];
+    /** Extension chrome needed by late clients; the same changes also arrive as `ui_request` deltas. */
+    readonly uiState: SessionUiState;
 }
 
 /**
@@ -130,7 +173,13 @@ export interface SessionSnapshot extends SessionEntrySlice {
  */
 export type SessionStatePatch = PatchOf<
     SessionStateSnapshot,
-    "model" | "messageCount" | "autoCompactionEnabled" | "steeringMode" | "followUpMode"
+    | "model"
+    | "messageCount"
+    | "autoCompactionEnabled"
+    | "steeringMode"
+    | "followUpMode"
+    | "contextUsage"
+    | "routedModel"
 >;
 
 /** Causal session state mutations replicated on the unified session sync clock. */
@@ -424,27 +473,321 @@ function isJsonAgentSessionEvent(raw: unknown): raw is JsonAgentSessionEvent {
     return isRecord(raw) && typeof raw.type === "string";
 }
 
-function isRpcExtensionUiRequest(raw: unknown): raw is RpcExtensionUIRequest {
-    return (
-        isRecord(raw) &&
-        raw.type === "extension_ui_request" &&
-        typeof raw.id === "string" &&
-        typeof raw.method === "string"
-    );
+const NOTIFY_TYPES: Readonly<Record<"info" | "warning" | "error", true>> = {
+    info: true,
+    warning: true,
+    error: true,
+};
+
+function isNotifyType(value: unknown): value is "info" | "warning" | "error" {
+    return typeof value === "string" && Object.hasOwn(NOTIFY_TYPES, value);
 }
 
-function parsePendingUiRequests(raw: unknown): RpcExtensionUIRequest[] | null {
+function parseOptionalWidgetPlacement(raw: unknown): "aboveEditor" | "belowEditor" | undefined | null {
+    if (raw === undefined) {
+        return undefined;
+    }
+    if (raw === "aboveEditor" || raw === "belowEditor") {
+        return raw;
+    }
+    return null;
+}
+
+/** Parse one {@link RpcExtensionUIRequest} from untrusted JSON, or return `null` when malformed. */
+export function parseRpcExtensionUiRequest(raw: unknown): RpcExtensionUIRequest | null {
+    if (!isRecord(raw) || raw.type !== "extension_ui_request" || typeof raw.id !== "string") {
+        return null;
+    }
+    switch (raw.method) {
+        case "select":
+        case "confirm":
+        case "input":
+        case "editor":
+            return parseExtensionDialogRequest(raw);
+        case "notify": {
+            if (typeof raw.message !== "string" || (raw.notifyType !== undefined && !isNotifyType(raw.notifyType))) {
+                return null;
+            }
+            return {
+                type: "extension_ui_request",
+                id: raw.id,
+                method: "notify",
+                message: raw.message,
+                ...(raw.notifyType === undefined ? {} : { notifyType: raw.notifyType }),
+            };
+        }
+        case "setStatus": {
+            if (
+                typeof raw.statusKey !== "string" ||
+                (raw.statusText !== undefined && typeof raw.statusText !== "string")
+            ) {
+                return null;
+            }
+            return {
+                type: "extension_ui_request",
+                id: raw.id,
+                method: "setStatus",
+                statusKey: raw.statusKey,
+                statusText: raw.statusText,
+            };
+        }
+        case "setWidget": {
+            if (
+                typeof raw.widgetKey !== "string" ||
+                (raw.widgetLines !== undefined && !isStringArray(raw.widgetLines))
+            ) {
+                return null;
+            }
+            const placement = parseOptionalWidgetPlacement(raw.widgetPlacement);
+            if (placement === null) {
+                return null;
+            }
+            return {
+                type: "extension_ui_request",
+                id: raw.id,
+                method: "setWidget",
+                widgetKey: raw.widgetKey,
+                widgetLines: raw.widgetLines,
+                ...(placement === undefined ? {} : { widgetPlacement: placement }),
+            };
+        }
+        case "setTitle": {
+            if (typeof raw.title !== "string") {
+                return null;
+            }
+            return {
+                type: "extension_ui_request",
+                id: raw.id,
+                method: "setTitle",
+                title: raw.title,
+            };
+        }
+        case "set_editor_text": {
+            if (typeof raw.text !== "string") {
+                return null;
+            }
+            return {
+                type: "extension_ui_request",
+                id: raw.id,
+                method: "set_editor_text",
+                text: raw.text,
+            };
+        }
+        default:
+            return null;
+    }
+}
+
+function parsePendingUiRequests(raw: unknown): ExtensionDialogRequest[] | null {
     if (!Array.isArray(raw)) {
         return null;
     }
-    const requests: RpcExtensionUIRequest[] = [];
+    const requests: ExtensionDialogRequest[] = [];
     for (const item of raw) {
-        if (!isRpcExtensionUiRequest(item)) {
+        const dialog = parseExtensionDialogRequest(item);
+        if (dialog === null) {
             return null;
         }
-        requests.push(item);
+        requests.push(dialog);
     }
     return requests;
+}
+
+/**
+ * Extension UI request that blocks its extension until a client answers.
+ *
+ * Derived from the SDK union so the dialog fields stay in step with the installed SDK. The wire
+ * parser accepts every request method because the sync lane also carries notifications and status
+ * updates; a dialog renders only these four.
+ */
+export type ExtensionDialogRequest = Extract<
+    RpcExtensionUIRequest,
+    { readonly method: "select" | "confirm" | "input" | "editor" }
+>;
+
+/** Decode one dialog request from an untrusted sync payload, or return `null` when malformed. */
+export function parseExtensionDialogRequest(raw: unknown): ExtensionDialogRequest | null {
+    if (!isRecord(raw) || raw.type !== "extension_ui_request" || typeof raw.id !== "string") {
+        return null;
+    }
+    const timeout = raw.timeout;
+    if (timeout !== undefined && (!isFiniteNumber(timeout) || timeout < 0)) {
+        return null;
+    }
+    const withTimeout = timeout === undefined ? {} : { timeout };
+    switch (raw.method) {
+        case "select": {
+            if (typeof raw.title !== "string" || !isStringArray(raw.options)) {
+                return null;
+            }
+            return {
+                type: "extension_ui_request",
+                id: raw.id,
+                method: "select",
+                title: raw.title,
+                options: raw.options,
+                ...withTimeout,
+            };
+        }
+        case "confirm": {
+            if (typeof raw.title !== "string" || typeof raw.message !== "string") {
+                return null;
+            }
+            return {
+                type: "extension_ui_request",
+                id: raw.id,
+                method: "confirm",
+                title: raw.title,
+                message: raw.message,
+                ...withTimeout,
+            };
+        }
+        case "input": {
+            if (
+                typeof raw.title !== "string" ||
+                (raw.placeholder !== undefined && typeof raw.placeholder !== "string")
+            ) {
+                return null;
+            }
+            return {
+                type: "extension_ui_request",
+                id: raw.id,
+                method: "input",
+                title: raw.title,
+                ...(raw.placeholder === undefined ? {} : { placeholder: raw.placeholder }),
+                ...withTimeout,
+            };
+        }
+        case "editor": {
+            if (typeof raw.title !== "string" || (raw.prefill !== undefined && typeof raw.prefill !== "string")) {
+                return null;
+            }
+            // The SDK editor dialog has no timeout field, so an extra one is dropped instead of forwarded.
+            return {
+                type: "extension_ui_request",
+                id: raw.id,
+                method: "editor",
+                title: raw.title,
+                ...(raw.prefill === undefined ? {} : { prefill: raw.prefill }),
+            };
+        }
+        default:
+            return null;
+    }
+}
+
+/** Decoded extension chrome command from the UI lane. */
+export type SessionUiChromeRequest =
+    | { readonly kind: "status"; readonly key: string; readonly text: string | undefined }
+    | {
+          readonly kind: "widget";
+          readonly key: string;
+          readonly lines: readonly string[] | undefined;
+          readonly placement: "aboveEditor" | "belowEditor";
+      }
+    | { readonly kind: "title"; readonly title: string };
+
+/** Decode one `setStatus`, `setWidget`, or `setTitle` request, or return `null`. */
+export function parseSessionUiChromeRequest(raw: unknown): SessionUiChromeRequest | null {
+    if (!isRecord(raw) || raw.type !== "extension_ui_request" || typeof raw.id !== "string") {
+        return null;
+    }
+    switch (raw.method) {
+        case "setStatus":
+            if (
+                typeof raw.statusKey !== "string" ||
+                (raw.statusText !== undefined && typeof raw.statusText !== "string")
+            ) {
+                return null;
+            }
+            return { kind: "status", key: raw.statusKey, text: raw.statusText };
+        case "setWidget": {
+            if (
+                typeof raw.widgetKey !== "string" ||
+                (raw.widgetLines !== undefined && !isStringArray(raw.widgetLines))
+            ) {
+                return null;
+            }
+            const placement = parseOptionalWidgetPlacement(raw.widgetPlacement);
+            if (placement === null) {
+                return null;
+            }
+            return {
+                kind: "widget",
+                key: raw.widgetKey,
+                lines: raw.widgetLines,
+                placement: placement ?? "aboveEditor",
+            };
+        }
+        case "setTitle":
+            if (typeof raw.title !== "string") {
+                return null;
+            }
+            return { kind: "title", title: raw.title };
+        default:
+            return null;
+    }
+}
+
+/** Editor text command carried by the sync lane; it replaces the composer draft. */
+export interface SetEditorTextRequest {
+    readonly text: string;
+}
+
+/** Decode one `set_editor_text` command, or return `null` when the shape is invalid. */
+export function parseSetEditorTextRequest(raw: unknown): SetEditorTextRequest | null {
+    if (
+        !isRecord(raw) ||
+        raw.type !== "extension_ui_request" ||
+        typeof raw.id !== "string" ||
+        raw.method !== "set_editor_text" ||
+        typeof raw.text !== "string"
+    ) {
+        return null;
+    }
+    return { text: raw.text };
+}
+
+function isNullableNonNegativeFinite(raw: unknown): raw is number | null {
+    return raw === null || (isFiniteNumber(raw) && raw >= 0);
+}
+
+function parseNullableModelInfo(raw: unknown): SessionModelInfo | null | undefined {
+    if (raw === null) {
+        return null;
+    }
+    const parsed = parseSessionModelInfo(raw);
+    return parsed === null ? undefined : parsed;
+}
+
+function parseContextUsage(raw: unknown): ContextUsage | null | undefined {
+    if (raw === null) {
+        return null;
+    }
+    if (
+        !isRecord(raw) ||
+        !isNullableNonNegativeFinite(raw.tokens) ||
+        !isFiniteNumber(raw.contextWindow) ||
+        raw.contextWindow < 0 ||
+        !isNullableNonNegativeFinite(raw.percent)
+    ) {
+        return undefined;
+    }
+    return { tokens: raw.tokens, contextWindow: raw.contextWindow, percent: raw.percent };
+}
+
+function parseSessionRoutedModel(raw: unknown): SessionRoutedModel | null | undefined {
+    if (raw === null) {
+        return null;
+    }
+    if (!isRecord(raw)) {
+        return undefined;
+    }
+    const model = parseSessionModelInfo(raw.model);
+    if (model === null || (raw.thinkingLevel !== undefined && !isThinkingLevel(raw.thinkingLevel))) {
+        return undefined;
+    }
+    return { model, ...(raw.thinkingLevel === undefined ? {} : { thinkingLevel: raw.thinkingLevel }) };
 }
 
 /** Parse one {@link SessionStateSnapshot} payload, or return `null` when malformed. */
@@ -456,17 +799,13 @@ export function parseSessionStateSnapshot(raw: unknown): SessionStateSnapshot | 
     if (sessionId === null || typeof raw.cwd !== "string" || (raw.name !== null && typeof raw.name !== "string")) {
         return null;
     }
-    let model: SessionModelInfo | null;
-    if (raw.model === null) {
-        model = null;
-    } else {
-        const parsedModel = parseSessionModelInfo(raw.model);
-        if (parsedModel === null) {
-            return null;
-        }
-        model = parsedModel;
-    }
+    const model = parseNullableModelInfo(raw.model);
+    const contextUsage = parseContextUsage(raw.contextUsage);
+    const routedModel = parseSessionRoutedModel(raw.routedModel);
     if (
+        model === undefined ||
+        contextUsage === undefined ||
+        routedModel === undefined ||
         !isThinkingLevel(raw.thinkingLevel) ||
         typeof raw.isStreaming !== "boolean" ||
         typeof raw.isCompacting !== "boolean" ||
@@ -484,6 +823,8 @@ export function parseSessionStateSnapshot(raw: unknown): SessionStateSnapshot | 
         cwd: raw.cwd,
         name: raw.name,
         model,
+        contextUsage,
+        routedModel,
         thinkingLevel: raw.thinkingLevel,
         isStreaming: raw.isStreaming,
         isCompacting: raw.isCompacting,
@@ -523,6 +864,55 @@ function parseSessionEntrySlice(raw: Record<string, unknown>): SessionEntrySlice
     };
 }
 
+function parseSessionUiStatus(raw: unknown): SessionUiStatus | null {
+    if (!isRecord(raw) || typeof raw.key !== "string" || typeof raw.text !== "string") {
+        return null;
+    }
+    return { key: raw.key, text: raw.text };
+}
+
+function parseSessionUiWidget(raw: unknown): SessionUiWidget | null {
+    if (!isRecord(raw) || typeof raw.key !== "string" || !isStringArray(raw.lines)) {
+        return null;
+    }
+    const placement = parseOptionalWidgetPlacement(raw.placement);
+    if (placement === null) {
+        return null;
+    }
+    return {
+        key: raw.key,
+        lines: raw.lines,
+        placement: placement ?? "aboveEditor",
+    };
+}
+
+/** Parse one {@link SessionUiState} payload, or return `null` when malformed. */
+export function parseSessionUiState(raw: unknown): SessionUiState | null {
+    if (!isRecord(raw) || !Array.isArray(raw.statuses) || !Array.isArray(raw.widgets)) {
+        return null;
+    }
+    if (raw.title !== null && typeof raw.title !== "string") {
+        return null;
+    }
+    const statuses: SessionUiStatus[] = [];
+    for (const item of raw.statuses) {
+        const status = parseSessionUiStatus(item);
+        if (status === null) {
+            return null;
+        }
+        statuses.push(status);
+    }
+    const widgets: SessionUiWidget[] = [];
+    for (const item of raw.widgets) {
+        const widget = parseSessionUiWidget(item);
+        if (widget === null) {
+            return null;
+        }
+        widgets.push(widget);
+    }
+    return { statuses, widgets, title: raw.title };
+}
+
 /** Parse one {@link SessionSnapshot} payload, or return `null` when malformed. */
 export function parseSessionSnapshot(raw: unknown): SessionSnapshot | null {
     if (!isRecord(raw)) {
@@ -532,7 +922,14 @@ export function parseSessionSnapshot(raw: unknown): SessionSnapshot | null {
     const state = parseSessionStateSnapshot(raw.state);
     const liveMessage = parseLiveMessage(raw.liveMessage);
     const pendingUiRequests = parsePendingUiRequests(raw.pendingUiRequests);
-    if (slice === null || state === null || liveMessage === undefined || pendingUiRequests === null) {
+    const uiState = parseSessionUiState(raw.uiState);
+    if (
+        slice === null ||
+        state === null ||
+        liveMessage === undefined ||
+        pendingUiRequests === null ||
+        uiState === null
+    ) {
         return null;
     }
     return {
@@ -540,6 +937,7 @@ export function parseSessionSnapshot(raw: unknown): SessionSnapshot | null {
         state,
         liveMessage,
         pendingUiRequests,
+        uiState,
     };
 }
 
@@ -551,15 +949,29 @@ export function parseSessionStatePatch(raw: unknown): SessionStatePatch | null {
     let hasField = false;
     let model: SessionModelInfo | null | undefined;
     if (raw.model !== undefined) {
-        if (raw.model === null) {
-            model = null;
-        } else {
-            const parsedModel = parseSessionModelInfo(raw.model);
-            if (parsedModel === null) {
-                return null;
-            }
-            model = parsedModel;
+        const parsed = parseNullableModelInfo(raw.model);
+        if (parsed === undefined) {
+            return null;
         }
+        model = parsed;
+        hasField = true;
+    }
+    let contextUsage: ContextUsage | null | undefined;
+    if (raw.contextUsage !== undefined) {
+        const parsed = parseContextUsage(raw.contextUsage);
+        if (parsed === undefined) {
+            return null;
+        }
+        contextUsage = parsed;
+        hasField = true;
+    }
+    let routedModel: SessionRoutedModel | null | undefined;
+    if (raw.routedModel !== undefined) {
+        const parsed = parseSessionRoutedModel(raw.routedModel);
+        if (parsed === undefined) {
+            return null;
+        }
+        routedModel = parsed;
         hasField = true;
     }
     let messageCount: number | undefined;
@@ -599,6 +1011,8 @@ export function parseSessionStatePatch(raw: unknown): SessionStatePatch | null {
     }
     return {
         ...(model === undefined ? {} : { model }),
+        ...(contextUsage === undefined ? {} : { contextUsage }),
+        ...(routedModel === undefined ? {} : { routedModel }),
         ...(messageCount === undefined ? {} : { messageCount }),
         ...(autoCompactionEnabled === undefined ? {} : { autoCompactionEnabled }),
         ...(steeringMode === undefined ? {} : { steeringMode }),
@@ -622,8 +1036,10 @@ export function parseSessionDelta(raw: unknown): SessionDelta | null {
             const patch = parseSessionStatePatch(raw.patch);
             return patch === null ? null : { kind: "state_patched", patch };
         }
-        case "ui_request":
-            return isRpcExtensionUiRequest(raw.request) ? { kind: "ui_request", request: raw.request } : null;
+        case "ui_request": {
+            const request = parseRpcExtensionUiRequest(raw.request);
+            return request === null ? null : { kind: "ui_request", request };
+        }
         case "ui_resolved":
             return typeof raw.requestId === "string" && raw.requestId.length > 0
                 ? { kind: "ui_resolved", requestId: raw.requestId }

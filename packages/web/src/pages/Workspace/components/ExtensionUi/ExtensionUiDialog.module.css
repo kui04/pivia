@@ -1,0 +1,63 @@
+/*
+ * The extension dialog header row, its multiline editor and its inline error.
+ *
+ * The markup this file styles:
+ *
+ *   .headerRow                    dialog header plus the minimize action
+ *   └─ :where([data-slot="dialog-header"])  takes the remaining inline size
+ *   .editor                       the multiline editor, matching the Input surface
+ *   .note                         shown when a select dialog has no options
+ *   .error                        role="alert" message above the actions
+ */
+
+.headerRow {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-12);
+
+    :where([data-slot="dialog-header"]) {
+        flex: 1;
+    }
+}
+
+.editor {
+    inline-size: 100%;
+    min-block-size: calc(var(--space-40) * 2);
+    padding: var(--space-8) var(--space-12);
+    border: var(--border-width) solid var(--color-outline-control);
+    border-radius: var(--shape-corner-small);
+    background-color: var(--color-surface);
+    color: var(--color-on-surface);
+    font-family: var(--font-mono);
+    font-size: var(--type-code-size);
+    letter-spacing: var(--type-code-tracking);
+    line-height: var(--type-code-line-height);
+    resize: vertical;
+
+    &:focus-visible {
+        border-color: var(--color-primary);
+        outline: var(--border-width-strong) solid var(--color-primary);
+        outline-offset: calc(-1 * var(--border-width-strong));
+    }
+
+    &:disabled {
+        background-color: var(--color-secondary-container);
+        color: var(--color-on-surface-variant);
+        cursor: not-allowed;
+    }
+}
+
+.note {
+    margin: 0;
+    color: var(--color-on-surface-variant);
+    font-size: var(--type-body-size);
+    line-height: var(--type-body-line-height);
+}
+
+.error {
+    margin: 0;
+    color: var(--color-error);
+    font-size: var(--type-body-size);
+    line-height: var(--type-body-line-height);
+}

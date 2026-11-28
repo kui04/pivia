@@ -1,5 +1,14 @@
 import { parseSessionId, type SessionId } from "@pivia/protocol";
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactElement } from "react";
+import {
+    useCallback,
+    useEffect,
+    useMemo,
+    useRef,
+    useState,
+    useSyncExternalStore,
+    type DragEvent,
+    type ReactElement,
+} from "react";
 import { useNavigate, useParams } from "react-router";
 
 import { Drawer, type DropDockZone, type PaneSizePx } from "@components";
@@ -144,6 +153,7 @@ export function WorkspaceLayout(props: WorkspaceLayoutProps = {}): ReactElement 
     });
 
     const activePool = props.sessionPool ?? fallbackPool ?? defaultSessionPool;
+    const poolSnapshot = useSyncExternalStore(activePool.subscribe, activePool.getSnapshot);
 
     useEffect(() => {
         if (fallbackPool === null) {
@@ -607,6 +617,7 @@ export function WorkspaceLayout(props: WorkspaceLayoutProps = {}): ReactElement 
             query={query}
             nowMs={nowMs}
             closingIds={closingIds}
+            needsInputIds={poolSnapshot.needsInputIds}
             canSplitRow={canSplitRow}
             canSplitColumn={canSplitColumn}
             onQueryChange={setQuery}

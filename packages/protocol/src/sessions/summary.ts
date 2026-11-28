@@ -8,7 +8,7 @@ import { parseSessionId, type SessionId } from "./ids.ts";
 export type SessionRuntimeState = "starting" | "idle" | "streaming" | "compacting" | "closing";
 
 /** Public model identity sent to clients; never contains credentials. */
-export type SessionModelInfo = Pick<Model<Api>, "provider" | "id" | "name">;
+export type SessionModelInfo = Pick<Model<Api>, "provider" | "id" | "name" | "contextWindow" | "reasoning">;
 
 /**
  * Summary of one session, merged from disk discovery and any live runtime.
@@ -64,11 +64,20 @@ export function parseSessionModelInfo(raw: unknown): SessionModelInfo | null {
         !isRecord(raw) ||
         typeof raw.provider !== "string" ||
         typeof raw.id !== "string" ||
-        typeof raw.name !== "string"
+        typeof raw.name !== "string" ||
+        !isFiniteNumber(raw.contextWindow) ||
+        raw.contextWindow < 0 ||
+        typeof raw.reasoning !== "boolean"
     ) {
         return null;
     }
-    return { provider: raw.provider, id: raw.id, name: raw.name };
+    return {
+        provider: raw.provider,
+        id: raw.id,
+        name: raw.name,
+        contextWindow: raw.contextWindow,
+        reasoning: raw.reasoning,
+    };
 }
 
 /** Parse one {@link SessionSummary} payload, or return `null` when malformed. */

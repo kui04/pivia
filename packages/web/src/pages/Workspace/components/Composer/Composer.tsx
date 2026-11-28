@@ -1,7 +1,8 @@
 import { assertNever, type SessionId, type SessionStateSnapshot } from "@pivia/protocol";
-import { ArrowUp, Paperclip, Square } from "lucide-react";
+import { ArrowUp, MessageCircleQuestion, Paperclip, Square } from "lucide-react";
 import {
     useCallback,
+    useEffect,
     useId,
     useMemo,
     useRef,
@@ -12,8 +13,9 @@ import {
     type SubmitEvent,
 } from "react";
 
-import { IconButton, Popover, ScrollArea, VisuallyHidden } from "@components";
+import { IconButton, Popover, ScrollArea, Tabular, VisuallyHidden } from "@components";
 import { Clipboard, cn, isImeComposition } from "@/lib";
+import type { EditorTextRequest } from "@/stores/session";
 
 import {
     AttachmentStrip,
@@ -33,6 +35,7 @@ import {
     type AttachmentId,
     type ComposerCommandSender,
     type ComposerPanel,
+    type ComposerRuntimePhase,
     type LocalSlashCommandName,
     type SlashCommandRow,
     type StagedImageAttachment,
@@ -48,6 +51,16 @@ export interface ComposerProps {
     /** Optional remote slash commands when the server exposes `get_commands`. */
     readonly remoteCommands?:
         readonly { readonly name: string; readonly description?: string | undefined }[] | undefined;
+    /**
+     * Pending extension dialogs of this session; blocks the composer and replaces the primary
+     * send action with the prompt button while the runtime waits for an answer.
+     */
+    readonly extensionPrompt?:
+        { readonly count: number; readonly reason: string; readonly onOpen: () => void } | undefined;
+    /** Extension text that replaces the draft; the sequence keeps each command applied once. */
+    readonly editorTextRequest?: EditorTextRequest | undefined;
+    /** Called with the applied sequence so the store can clear the command. */
+    readonly onEditorTextApplied?: ((sequence: number) => void) | undefined;
     /** RPC dispatcher wired to `useSessionStore().sendCommand`. */
     readonly onSendCommand: ComposerCommandSender;
     /** Notifies the user of validation hints, attachment errors, or command outcomes. */
@@ -66,6 +79,9 @@ export function Composer({
     state,
     connected,
     remoteCommands,
+    extensionPrompt,
+    editorTextRequest,
+    onEditorTextApplied,
     onSendCommand,
     onNotify,
     className,
@@ -81,11 +97,30 @@ export function Composer({
     const [dismissedSlash, setDismissedSlash] = useState(false);
     const [highlightedId, setHighlightedId] = useState<string | null>(null);
     const [pointedId, setPointedId] = useState<string | null>(null);
+    const [appliedEditorTextSequence, setAppliedEditorTextSequence] = useState<number | null>(null);
 
-    const phase = useMemo(
-        () => toComposerRuntimePhase(connected, state, connected ? "Connecting session..." : "Session unavailable."),
-        [connected, state],
-    );
+    // An extension command replaces the draft once; the sequence makes a re-render a no-op.
+    if (editorTextRequest === undefined) {
+        if (appliedEditorTextSequence !== null) {
+            setAppliedEditorTextSequence(null);
+        }
+    } else if (appliedEditorTextSequence !== editorTextRequest.sequence) {
+        setAppliedEditorTextSequence(editorTextRequest.sequence);
+        setValue(editorTextRequest.text);
+    }
+
+    useEffect(() => {
+        if (editorTextRequest === undefined || appliedEditorTextSequence !== editorTextRequest.sequence) {
+            return;
+        }
+        textareaRef.current?.focus();
+        onEditorTextApplied?.(editorTextRequest.sequence);
+    }, [appliedEditorTextSequence, editorTextRequest, onEditorTextApplied]);
+
+    const hasPendingExtension = extensionPrompt !== undefined && extensionPrompt.count > 0;
+    const phase: ComposerRuntimePhase = hasPendingExtension
+        ? { kind: "unavailable", reason: extensionPrompt.reason }
+        : toComposerRuntimePhase(connected, state, connected ? "Connecting session..." : "Session unavailable.");
     const ready = phase.kind === "ready";
     const streaming = phase.kind === "ready" && phase.isStreaming;
     const [prevReady, setPrevReady] = useState(ready);
@@ -457,7 +492,28 @@ export function Composer({
                         >
                             <Paperclip />
                         </IconButton>
-                        {showSendButton ? (
+                        {hasPendingExtension ? (
+                            <span data-slot="extension-prompt-slot" className={styles.extensionSlot}>
+                                <IconButton
+                                    type="button"
+                                    label={`Show extension prompt, ${String(extensionPrompt.count)} waiting`}
+                                    radius="full"
+                                    className={styles.extensionButton}
+                                    onClick={() => {
+                                        extensionPrompt.onOpen();
+                                    }}
+                                >
+                                    <MessageCircleQuestion />
+                                </IconButton>
+                                <span
+                                    data-slot="extension-prompt-badge"
+                                    className={styles.extensionBadge}
+                                    aria-hidden="true"
+                                >
+                                    <Tabular>{extensionPrompt.count}</Tabular>
+                                </span>
+                            </span>
+                        ) : showSendButton ? (
                             <IconButton
                                 type="submit"
                                 label={streaming ? "Steer run" : "Send message"}
@@ -468,7 +524,7 @@ export function Composer({
                                 <ArrowUp />
                             </IconButton>
                         ) : null}
-                        {streaming ? (
+                        {!hasPendingExtension && streaming ? (
                             <IconButton
                                 type="button"
                                 label="Stop response"

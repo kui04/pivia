@@ -13,6 +13,8 @@ export interface FolderSectionProps {
     readonly folder: FolderSectionModel;
     readonly nowMs: number;
     readonly closingIds: ReadonlySet<SessionId>;
+    /** Sessions whose runtime waits for an extension answer. */
+    readonly needsInputIds?: ReadonlySet<SessionId> | undefined;
     readonly canSplitRow?: boolean | undefined;
     readonly canSplitColumn?: boolean | undefined;
     readonly onToggle: () => void;
@@ -35,6 +37,7 @@ export function FolderSection({
     folder,
     nowMs,
     closingIds,
+    needsInputIds,
     canSplitRow,
     canSplitColumn,
     onToggle,
@@ -70,6 +73,7 @@ export function FolderSection({
                             session={session}
                             nowMs={nowMs}
                             closing={closingIds.has(session.id)}
+                            needsInput={needsInputIds?.has(session.id) ?? false}
                             canSplitRow={canSplitRow}
                             canSplitColumn={canSplitColumn}
                             onSelect={onSelect}

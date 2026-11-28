@@ -1,6 +1,6 @@
 import type { RpcExtensionUIResponse } from "@earendil-works/pi-coding-agent";
 
-import { parseSessionId } from "@pivia/protocol";
+import { EMPTY_SESSION_UI_STATE, parseSessionId } from "@pivia/protocol";
 import { describe, expect, it } from "vitest";
 
 import { SessionUiBridge, type SessionUiDelta } from "./extension-ui.ts";
@@ -84,5 +84,66 @@ describe("SessionUiBridge", () => {
             kind: "ui_resolved",
             requestId: request.id,
         });
+    });
+
+    it("keeps statuses, widgets, and the title for late snapshots", () => {
+        const { bridge } = createBridge();
+
+        bridge.context.setStatus("lint", "clean");
+        bridge.context.setStatus("git", "main");
+        bridge.context.setStatus("lint", undefined);
+        bridge.context.setWidget("plan", ["step one"], { placement: "belowEditor" });
+        bridge.context.setWidget("todo", ["a", "b"]);
+        bridge.context.setTitle("Release checklist");
+
+        expect(bridge.uiState()).toEqual({
+            statuses: [{ key: "git", text: "main" }],
+            widgets: [
+                { key: "plan", lines: ["step one"], placement: "belowEditor" },
+                { key: "todo", lines: ["a", "b"], placement: "aboveEditor" },
+            ],
+            title: "Release checklist",
+        });
+    });
+
+    it("clears chrome on reset and dispose, telling clients to drop it", () => {
+        const { bridge, deltas } = createBridge();
+        bridge.context.setStatus("lint", "clean");
+        bridge.context.setWidget("todo", ["a"]);
+        bridge.context.setTitle("Release checklist");
+
+        bridge.resetUiState();
+
+        expect(bridge.uiState()).toEqual(EMPTY_SESSION_UI_STATE);
+        const requests = deltas.filter((delta) => delta.kind === "ui_request").map((delta) => delta.request);
+        expect(
+            requests.some(
+                (request) =>
+                    request.method === "setStatus" && request.statusKey === "lint" && request.statusText === undefined,
+            ),
+        ).toBe(true);
+        expect(
+            requests.some(
+                (request) =>
+                    request.method === "setWidget" &&
+                    request.widgetKey === "todo" &&
+                    request.widgetLines === undefined &&
+                    request.widgetPlacement === "aboveEditor",
+            ),
+        ).toBe(true);
+        expect(requests.some((request) => request.method === "setTitle" && request.title === "")).toBe(true);
+
+        bridge.context.setStatus("lint", "clean");
+        bridge.context.setTitle("");
+        expect(bridge.uiState().title).toBeNull();
+
+        bridge.dispose();
+        expect(bridge.uiState()).toEqual(EMPTY_SESSION_UI_STATE);
+
+        // Chrome updates arriving after dispose must not repopulate stored snapshot state.
+        bridge.context.setStatus("late", "value");
+        bridge.context.setWidget("late", ["line"]);
+        bridge.context.setTitle("Late");
+        expect(bridge.uiState()).toEqual(EMPTY_SESSION_UI_STATE);
     });
 });

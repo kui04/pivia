@@ -9,9 +9,27 @@ import {
     parseAvailableModelsData,
 } from "./models";
 
-const CLAUDE: SessionModelInfo = { provider: "anthropic", id: "claude-sonnet-4", name: "Claude Sonnet 4" };
-const GPT: SessionModelInfo = { provider: "openai", id: "gpt-5", name: "GPT-5" };
-const PROXY_GPT: SessionModelInfo = { provider: "openrouter", id: "openai/gpt-5", name: "GPT-5 (OpenRouter)" };
+const CLAUDE: SessionModelInfo = {
+    provider: "anthropic",
+    id: "claude-sonnet-4",
+    name: "Claude Sonnet 4",
+    contextWindow: 200_000,
+    reasoning: true,
+};
+const GPT: SessionModelInfo = {
+    provider: "openai",
+    id: "gpt-5",
+    name: "GPT-5",
+    contextWindow: 272_000,
+    reasoning: true,
+};
+const PROXY_GPT: SessionModelInfo = {
+    provider: "openrouter",
+    id: "openai/gpt-5",
+    name: "GPT-5 (OpenRouter)",
+    contextWindow: 272_000,
+    reasoning: true,
+};
 
 describe("ModelPicker boundary parsers", () => {
     it("parses valid get_available_models payloads and rejects malformed data", () => {

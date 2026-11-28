@@ -8,6 +8,8 @@ export {
 } from "./CreateSessionDialog";
 export { RenameSessionDialog, type RenameSessionDialogProps } from "./RenameSessionDialog";
 export { SessionPane, type SessionPaneHeaderProps, type SessionPaneProps } from "./SessionPane";
+export { SessionStatsDialog, type SessionStatsDialogProps } from "./SessionStatsDialog";
+export { SessionStatusBar, type SessionStatusBarProps } from "./SessionStatusBar";
 export { SettingsDialog, type SettingsAuthAction, type SettingsDialogProps } from "./SettingsDialog";
 export { Sidebar, type SidebarProps } from "./Sidebar";
 export { SplitWorkspace, type SplitWorkspaceProps, type WorkspaceDragSource } from "./SplitWorkspace";

@@ -1,5 +1,5 @@
 import type { FileEntry } from "@earendil-works/pi-coding-agent";
-import { initialSyncSeq, nextSyncSeq, type SessionSummary } from "@pivia/protocol";
+import { EMPTY_SESSION_UI_STATE, initialSyncSeq, nextSyncSeq, type SessionSummary } from "@pivia/protocol";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useState, type ReactElement } from "react";
 import { MemoryRouter, Route, Routes } from "react-router";
@@ -62,6 +62,7 @@ function createLiveSessionSocket(transcripts: Readonly<Record<string, readonly F
                 state: makeStorySessionState(sessionId, { messageCount: entries.length }),
                 liveMessage: null,
                 pendingUiRequests: [],
+                uiState: EMPTY_SESSION_UI_STATE,
             },
         });
     }).WebSocket;

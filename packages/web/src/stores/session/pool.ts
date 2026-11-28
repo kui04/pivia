@@ -21,6 +21,13 @@ export interface SessionPoolOptions extends SessionStoreOptions {
 export interface SessionPoolSnapshot {
     /** Every session that currently has a store entry in the pool. */
     readonly attachedIds: ReadonlySet<SessionId>;
+    /**
+     * Attached sessions whose runtime waits for an extension UI answer.
+     *
+     * The sidebar marks them because a closed pane or a hidden narrow-screen pane would otherwise
+     * leave the request invisible while it blocks the runtime.
+     */
+    readonly needsInputIds: ReadonlySet<SessionId>;
 }
 
 /**
@@ -58,6 +65,7 @@ interface PoolEntry {
     readonly store: SessionStoreInstance;
     unsubscribe: () => void;
     wasBusy: boolean;
+    hasPendingUi: boolean;
 }
 
 function setsEqual<T>(a: ReadonlySet<T>, b: ReadonlySet<T>): boolean {
@@ -106,14 +114,21 @@ export function createSessionPool(options: SessionPoolOptions): SessionPool {
 
     let snapshot: SessionPoolSnapshot = {
         attachedIds: new Set<SessionId>(),
+        needsInputIds: new Set<SessionId>(),
     };
 
     const emitIfChanged = (): void => {
         const nextAttached = new Set<SessionId>(entries.keys());
-        if (setsEqual(snapshot.attachedIds, nextAttached)) {
+        const nextNeedsInput = new Set<SessionId>();
+        for (const [sessionId, entry] of entries) {
+            if (entry.hasPendingUi) {
+                nextNeedsInput.add(sessionId);
+            }
+        }
+        if (setsEqual(snapshot.attachedIds, nextAttached) && setsEqual(snapshot.needsInputIds, nextNeedsInput)) {
             return;
         }
-        snapshot = { attachedIds: nextAttached };
+        snapshot = { attachedIds: nextAttached, needsInputIds: nextNeedsInput };
         for (const listener of [...listeners]) {
             listener();
         }
@@ -197,6 +212,7 @@ export function createSessionPool(options: SessionPoolOptions): SessionPool {
             store,
             unsubscribe: () => undefined,
             wasBusy: isSessionKeepAliveBusy(store.getState()),
+            hasPendingUi: store.getState().pendingUiRequests.length > 0,
         };
 
         entry.unsubscribe = store.subscribe((state) => {
@@ -206,8 +222,15 @@ export function createSessionPool(options: SessionPoolOptions): SessionPool {
             const busy = isSessionKeepAliveBusy(state);
             const becameIdle = entry.wasBusy && !busy;
             entry.wasBusy = busy;
+            const hasPendingUi = state.pendingUiRequests.length > 0;
+            const pendingChanged = entry.hasPendingUi !== hasPendingUi;
+            entry.hasPendingUi = hasPendingUi;
             if (becameIdle && !visibleIds.has(sessionId)) {
                 evictOverflow();
+                emitIfChanged();
+                return;
+            }
+            if (pendingChanged) {
                 emitIfChanged();
             }
         });
@@ -217,6 +240,7 @@ export function createSessionPool(options: SessionPoolOptions): SessionPool {
         // Re-check in case `connect` resolved synchronously from memory/tests into a missing or busy state.
         if (entries.get(sessionId) === entry) {
             entry.wasBusy = isSessionKeepAliveBusy(store.getState());
+            entry.hasPendingUi = store.getState().pendingUiRequests.length > 0;
         }
         return store;
     };
@@ -283,7 +307,10 @@ export function createSessionPool(options: SessionPoolOptions): SessionPool {
                 removeEntry(id, "disconnect");
             }
             listeners.clear();
-            snapshot = { attachedIds: new Set<SessionId>() };
+            snapshot = {
+                attachedIds: new Set<SessionId>(),
+                needsInputIds: new Set<SessionId>(),
+            };
         },
     };
 }

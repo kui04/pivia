@@ -5,8 +5,10 @@ import { join } from "node:path";
 import type { RpcExtensionUIResponse, SessionManager } from "@earendil-works/pi-coding-agent";
 
 import {
+    EMPTY_SESSION_UI_STATE,
     parseSessionId,
     parseSyncSeq,
+    type SessionDelta,
     type SessionId,
     type SessionRpcCommand,
     type SessionRpcServerMessage,
@@ -946,24 +948,42 @@ describe("SessionRegistry", () => {
             error: "Session name cannot be empty.",
         });
 
+        session.setModelHandler = (provider, modelId) => {
+            session.setState({
+                contextUsage: { tokens: 10_000, contextWindow: 200_000, percent: 5 },
+                routedModel: null,
+            });
+            return {
+                provider,
+                id: modelId,
+                name: `${provider}/${modelId}`,
+                contextWindow: 200_000,
+                reasoning: true,
+            };
+        };
         await sendCommand(attachment, { type: "set_model", id: "model", provider: "fake", modelId: "model-2" });
         expect((await successResponseFor(collector.messages, "model")).data).toEqual({
             provider: "fake",
             id: "model-2",
             name: "fake/model-2",
+            contextWindow: 200_000,
+            reasoning: true,
         });
         expect(
             collector.messages.some(
                 (message) =>
                     message.type === "sync:delta" &&
                     message.delta.kind === "state_patched" &&
-                    message.delta.patch.model?.id === "model-2",
+                    message.delta.patch.model?.id === "model-2" &&
+                    message.delta.patch.contextUsage?.percent === 5,
             ),
         ).toBe(true);
 
         await sendCommand(attachment, { type: "get_available_models", id: "models" });
         expect((await successResponseFor(collector.messages, "models")).data).toEqual({
-            models: [{ provider: "fake", id: "model-2", name: "fake/model-2" }],
+            models: [
+                { provider: "fake", id: "model-2", name: "fake/model-2", contextWindow: 200_000, reasoning: true },
+            ],
         });
 
         await sendCommand(attachment, { type: "set_thinking_level", id: "thinking", level: "high" });
@@ -1180,7 +1200,8 @@ describe("SessionRegistry", () => {
         const handle = await fixture.registry.createSession(fixture.projectDir);
         await waitForRuntimeState(fixture.registry, handle.sessionId, "idle");
         const { collector } = attach(fixture.registry, handle.sessionId);
-        const ui = fakeSession(fixture, handle).bindings?.uiContext;
+        const session = fakeSession(fixture, handle);
+        const ui = session.bindings?.uiContext;
         if (ui === undefined) {
             throw new Error("expected extension bindings");
         }
@@ -1217,6 +1238,42 @@ describe("SessionRegistry", () => {
                 (message) => message.type === "sync:delta" && message.delta.kind === "ui_request",
             ),
         ).toHaveLength(5);
+
+        // A late client gets the cached chrome from the snapshot, not by replaying the deltas.
+        const late = attach(fixture.registry, handle.sessionId);
+        const cached = await waitForMessage(
+            late.collector.messages,
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:snapshot" }> =>
+                message.type === "sync:snapshot",
+        );
+        expect(cached.snapshot.uiState).toEqual({
+            statuses: [{ key: "build", text: "running" }],
+            widgets: [{ key: "widget", lines: ["line one", "line two"], placement: "belowEditor" }],
+            title: "pivia",
+        });
+
+        // A reload rebinds the extension set, so clients receive removals and the next snapshot is empty.
+        await session.bindings?.commandContextActions.reload();
+        const uiRequests = collector.messages.filter(
+            (
+                message,
+            ): message is Extract<SessionWsServerMessage, { type: "sync:delta" }> & {
+                readonly delta: Extract<SessionDelta, { kind: "ui_request" }>;
+            } => message.type === "sync:delta" && message.delta.kind === "ui_request",
+        );
+        expect(uiRequests.slice(5).map((message) => message.delta.request.method)).toEqual([
+            "setStatus",
+            "setWidget",
+            "setTitle",
+        ]);
+
+        const afterReload = attach(fixture.registry, handle.sessionId);
+        const empty = await waitForMessage(
+            afterReload.collector.messages,
+            (message): message is Extract<SessionWsServerMessage, { type: "sync:snapshot" }> =>
+                message.type === "sync:snapshot",
+        );
+        expect(empty.snapshot.uiState).toEqual(EMPTY_SESSION_UI_STATE);
     });
 
     it("resolves dialogs on timeout, abort, and session close", async () => {

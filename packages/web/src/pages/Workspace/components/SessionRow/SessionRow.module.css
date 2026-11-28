@@ -176,6 +176,11 @@
             background-color: var(--color-on-surface-variant);
             animation: none;
         }
+
+        /* An extension waits for an answer: the accent dot reads as "needs you", not as a failure. */
+        &[data-state="needs-input"] .indicator {
+            background-color: var(--color-tertiary);
+        }
     }
 
     @media (hover: hover) {

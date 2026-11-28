@@ -3,6 +3,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, within } from "storybook/test";
 
 import { makeStorySessionRow, STORY_NOW } from "@/storybook/fixtures";
+import { sid } from "@/storybook/ids";
 import type { FolderSection as FolderSectionModel, SessionRow as SessionRowModel } from "@/stores/workspace";
 
 import { FolderSection } from "./FolderSection";
@@ -80,5 +81,19 @@ export const Collapsed: Story = {
         await expect(canvas.getByText("pivia")).toBeVisible();
         await expect(canvasElement.querySelector("ul")).not.toBeInTheDocument();
         await expect(canvas.queryByText("Fix the session list")).not.toBeInTheDocument();
+    },
+};
+
+export const NeedsInput: Story = {
+    args: {
+        needsInputIds: new Set([sid("session-b")]),
+    },
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+
+        await expect(canvas.getAllByRole("img", { name: "Needs your answer" })).toHaveLength(1);
+        await expect(canvas.getByText("Fix the session list")).toBeVisible();
+        // The untouched row keeps its relative age; only the pending row swaps it for the dot.
+        await expect(canvas.getAllByText("30m")).toHaveLength(1);
     },
 };

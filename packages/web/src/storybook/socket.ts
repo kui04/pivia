@@ -7,10 +7,14 @@ export class StorySocket implements WebSocketLike {
     onmessage: ((event: MessageEvent) => void) | null = null;
     onclose: ((event: CloseEvent) => void) | null = null;
     onerror: (() => void) | null = null;
+    /** Client frames the store sent, in order, so a play function can assert them. */
+    readonly sent: string[] = [];
 
     constructor(readonly url: string) {}
 
-    send(): void {}
+    send(data: string): void {
+        this.sent.push(data);
+    }
 
     close(): void {
         this.readyState = 3;

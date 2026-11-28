@@ -24,7 +24,15 @@ export type FakePromptHandler = (text: string, options: ManagedPromptOptions) =>
 
 function defaultState(): ManagedSessionState {
     return {
-        model: { provider: "fake", id: "fake-model", name: "Fake Model" },
+        model: {
+            provider: "fake",
+            id: "fake-model",
+            name: "Fake Model",
+            contextWindow: 200_000,
+            reasoning: true,
+        },
+        contextUsage: null,
+        routedModel: null,
         thinkingLevel: "medium",
         isStreaming: false,
         isCompacting: false,
@@ -53,6 +61,8 @@ export class FakeSession implements ManagedSession {
         provider,
         id: modelId,
         name: `${provider}/${modelId}`,
+        contextWindow: 200_000,
+        reasoning: true,
     });
     readonly promptCalls: Array<{ readonly text: string; readonly options: ManagedPromptOptions }> = [];
     readonly steerCalls: Array<{ readonly text: string; readonly images: unknown }> = [];

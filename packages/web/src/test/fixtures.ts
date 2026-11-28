@@ -40,6 +40,8 @@ export function makeSessionStateSnapshot(overrides: Partial<SessionStateSnapshot
         cwd: "/home/u/project",
         name: null,
         model: null,
+        contextUsage: null,
+        routedModel: null,
         thinkingLevel: "medium",
         isStreaming: false,
         isCompacting: false,

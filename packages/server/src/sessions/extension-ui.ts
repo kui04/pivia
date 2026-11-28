@@ -8,7 +8,7 @@ import {
     type Theme,
 } from "@earendil-works/pi-coding-agent";
 
-import type { SessionDelta, SessionId } from "@pivia/protocol";
+import type { ExtensionDialogRequest, SessionDelta, SessionId, SessionUiState, SessionUiWidget } from "@pivia/protocol";
 
 /**
  * Text-preserving theme for the headless bridge.
@@ -55,7 +55,7 @@ const plainTextTheme = new Proxy({} as Theme, {
 });
 
 interface PendingDialog {
-    readonly request: RpcExtensionUIRequest;
+    readonly request: ExtensionDialogRequest;
     readonly registeredAtMs: number;
     respond(response: RpcExtensionUIResponse): void;
     /** Resolve with the dialog default and notify clients that the dialog is gone. */
@@ -111,6 +111,9 @@ export class SessionUiBridge {
     private readonly onPendingChange: (() => void) | undefined;
     private readonly nowMs: () => number;
     private readonly pending = new Map<string, PendingDialog>();
+    private readonly statuses = new Map<string, string>();
+    private readonly widgets = new Map<string, SessionUiWidget>();
+    private title: string | null = null;
     private disposed = false;
 
     constructor(_sessionId: SessionId, publish: (delta: SessionUiDelta) => void, options: SessionUiBridgeOptions = {}) {
@@ -134,8 +137,85 @@ export class SessionUiBridge {
         return latest;
     }
 
-    pendingRequests(): readonly RpcExtensionUIRequest[] {
+    pendingRequests(): readonly ExtensionDialogRequest[] {
         return [...this.pending.values()].map((dialog) => dialog.request);
+    }
+
+    /** Extension chrome that a late client needs from the snapshot. */
+    uiState(): SessionUiState {
+        return {
+            statuses: [...this.statuses]
+                .map(([key, text]) => ({ key, text }))
+                .sort((first, second) => first.key.localeCompare(second.key)),
+            widgets: [...this.widgets.values()],
+            title: this.title,
+        };
+    }
+
+    /** Record one `setStatus` value; `undefined` removes the key. */
+    applyStatus(key: string, text: string | undefined): void {
+        if (this.disposed) {
+            return;
+        }
+        if (text === undefined) {
+            this.statuses.delete(key);
+        } else {
+            this.statuses.set(key, text);
+        }
+    }
+
+    /** Record one `setWidget` value; `undefined` removes the key. */
+    applyWidget(key: string, lines: readonly string[] | undefined, placement: "aboveEditor" | "belowEditor"): void {
+        if (this.disposed) {
+            return;
+        }
+        if (lines === undefined) {
+            this.widgets.delete(key);
+        } else {
+            this.widgets.set(key, { key, lines, placement });
+        }
+    }
+
+    /** Record the title set by `setTitle`; an empty string clears the stored title. */
+    applyTitle(title: string): void {
+        if (this.disposed) {
+            return;
+        }
+        this.title = title === "" ? null : title;
+    }
+
+    /**
+     * Clear extension chrome and tell clients to drop it.
+     *
+     * Extension reloads rebind the extension set, so statuses and widgets from the previous set
+     * must not linger. `setTitle` has no clear method, so the empty string stands for "no title".
+     */
+    resetUiState(): void {
+        for (const key of [...this.statuses.keys()]) {
+            this.statuses.delete(key);
+            this.emit({
+                type: "extension_ui_request",
+                id: randomUUID(),
+                method: "setStatus",
+                statusKey: key,
+                statusText: undefined,
+            });
+        }
+        for (const widget of [...this.widgets.values()]) {
+            this.widgets.delete(widget.key);
+            this.emit({
+                type: "extension_ui_request",
+                id: randomUUID(),
+                method: "setWidget",
+                widgetKey: widget.key,
+                widgetLines: undefined,
+                widgetPlacement: widget.placement,
+            });
+        }
+        if (this.title !== null) {
+            this.title = null;
+            this.emit({ type: "extension_ui_request", id: randomUUID(), method: "setTitle", title: "" });
+        }
     }
 
     /**
@@ -184,6 +264,9 @@ export class SessionUiBridge {
             dialog.dispose();
         }
         this.pending.clear();
+        this.statuses.clear();
+        this.widgets.clear();
+        this.title = null;
     }
 
     /** Emit a dialog or notification request onto the session sync stream. No-op after dispose. */
@@ -195,7 +278,7 @@ export class SessionUiBridge {
     }
 
     requestDialog<T>(
-        buildRequest: (id: string) => RpcExtensionUIRequest,
+        buildRequest: (id: string) => ExtensionDialogRequest,
         defaultValue: T,
         parseResponse: (response: RpcExtensionUIResponse) => T,
         options?: ExtensionUIDialogOptions,
@@ -346,6 +429,7 @@ function createExtensionUIContext(bridge: SessionUiBridge): ExtensionUIContext {
             return () => {};
         },
         setStatus(key, text) {
+            bridge.applyStatus(key, text);
             bridge.emit({
                 type: "extension_ui_request",
                 id: randomUUID(),
@@ -358,6 +442,7 @@ function createExtensionUIContext(bridge: SessionUiBridge): ExtensionUIContext {
             if (!isWidgetLines(content)) {
                 return;
             }
+            bridge.applyWidget(key, content, options?.placement ?? "aboveEditor");
             bridge.emit({
                 type: "extension_ui_request",
                 id: randomUUID(),
@@ -368,6 +453,7 @@ function createExtensionUIContext(bridge: SessionUiBridge): ExtensionUIContext {
             });
         },
         setTitle(title) {
+            bridge.applyTitle(title);
             bridge.emit({ type: "extension_ui_request", id: randomUUID(), method: "setTitle", title });
         },
         pasteToEditor: setEditorText,

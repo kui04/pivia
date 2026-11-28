@@ -274,6 +274,15 @@ export class SyncStreamClient<D extends string, TState, TSnapshot, TDelta, THydr
         this.emit("phase");
     }
 
+    /** Update client-owned state fields (such as UI acknowledgements) without altering phase or cursor. */
+    updateLocalState(updater: (prev: TState) => TState): void {
+        const next = updater(this.state);
+        if (next !== this.state) {
+            this.state = next;
+            this.emit("phase");
+        }
+    }
+
     /**
      * Re-run the most recent recoverable HTTP hydration failure while keeping the WebSocket `live`.
      *

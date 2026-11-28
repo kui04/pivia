@@ -29,6 +29,8 @@ export default mergeConfig(
                 "@base-ui/react/menu",
                 "@base-ui/react/popover",
                 "@base-ui/react/progress",
+                "@base-ui/react/radio",
+                "@base-ui/react/radio-group",
                 "@base-ui/react/scroll-area",
                 "@base-ui/react/select",
                 "@base-ui/react/toast",

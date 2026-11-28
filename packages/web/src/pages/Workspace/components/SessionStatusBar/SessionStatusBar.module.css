@@ -1,0 +1,55 @@
+/*
+ * The compact telemetry strip below the composer.
+ *
+ * The markup this file styles:
+ *
+ *   .bar                        flex row: usage totals on the start, model on the end
+ *   ├─ .totals                  token, cache, cost, and context text
+ *   │   └─ .context             data-tone="warning" | "error" paints the context usage
+ *   └─ .model                   model and thinking label, ellipsized
+ */
+
+.bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-4) var(--space-12);
+    min-inline-size: 0;
+    padding-inline: var(--space-4);
+    color: var(--color-on-surface-variant);
+    font-size: var(--type-caption-size);
+    font-weight: var(--type-caption-weight);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+    letter-spacing: var(--type-caption-tracking);
+    line-height: var(--type-caption-line-height);
+
+    .totals {
+        display: inline-flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: var(--space-4);
+        min-inline-size: 0;
+    }
+
+    .context {
+        /* The footer warning marker (#bf8803) is below the 4.5:1 small-text ratio; the tertiary
+         * accent is contrast-safe in both themes and already marks extension surfaces. */
+        &[data-tone="warning"] {
+            color: var(--color-tertiary);
+        }
+
+        &[data-tone="error"] {
+            color: var(--color-error);
+        }
+    }
+
+    .model {
+        overflow: hidden;
+        min-inline-size: 0;
+        max-inline-size: 100%;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+}

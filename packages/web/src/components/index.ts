@@ -46,6 +46,7 @@ export {
     type PopoverTitleProps,
     type PopoverTriggerProps,
 } from "./Popover";
+export { RadioGroup, RadioGroupItem, type RadioGroupItemProps, type RadioGroupProps } from "./RadioGroup";
 export { ScrollArea, type ScrollAreaProps } from "./ScrollArea";
 export { Select, type SelectOption, type SelectProps } from "./Select";
 export {

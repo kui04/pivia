@@ -57,6 +57,8 @@ export function makeStorySessionState(
         cwd: "/home/u/pivia",
         name: "First task",
         model: null,
+        contextUsage: null,
+        routedModel: null,
         thinkingLevel: "medium",
         isStreaming: false,
         isCompacting: false,

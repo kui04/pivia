@@ -9,10 +9,13 @@ const TICK_MS = 30_000;
  * It only drives the relative ages, so the tick is coarse on purpose: a scan never runs because
  * of it, and a minute-granularity row cannot be off by more than half a tick.
  */
-export function useNow(tickMs: number = TICK_MS): number {
+export function useNow(tickMs: number | null = TICK_MS): number {
     const [now, setNow] = useState(() => Date.now());
 
     useEffect(() => {
+        if (tickMs === null) {
+            return undefined;
+        }
         const timer = window.setInterval(() => {
             setNow(Date.now());
         }, tickMs);

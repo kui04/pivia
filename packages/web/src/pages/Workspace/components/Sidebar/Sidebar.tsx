@@ -17,6 +17,7 @@ export interface SidebarProps {
     readonly query: string;
     readonly nowMs: number;
     readonly closingIds: ReadonlySet<SessionId>;
+    readonly needsInputIds?: ReadonlySet<SessionId> | undefined;
     readonly canSplitRow?: boolean | undefined;
     readonly canSplitColumn?: boolean | undefined;
     readonly onQueryChange: (query: string) => void;
@@ -43,6 +44,7 @@ export function Sidebar({
     query,
     nowMs,
     closingIds,
+    needsInputIds,
     canSplitRow,
     canSplitColumn,
     onQueryChange,
@@ -231,6 +233,7 @@ export function Sidebar({
                                                 session={session}
                                                 nowMs={nowMs}
                                                 closing={closingIds.has(session.id)}
+                                                needsInput={needsInputIds?.has(session.id) ?? false}
                                                 canSplitRow={canSplitRow}
                                                 canSplitColumn={canSplitColumn}
                                                 onSelect={onSelect}
@@ -251,6 +254,7 @@ export function Sidebar({
                                     folder={folder}
                                     nowMs={nowMs}
                                     closingIds={closingIds}
+                                    needsInputIds={needsInputIds}
                                     canSplitRow={canSplitRow}
                                     canSplitColumn={canSplitColumn}
                                     onToggle={() => {

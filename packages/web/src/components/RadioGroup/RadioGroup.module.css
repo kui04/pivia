@@ -1,0 +1,111 @@
+/*
+ * A single-select group of labelled radio items.
+ *
+ * The nesting this file styles:
+ *
+ *   .group                      the radiogroup container
+ *   └─ .item                    the label row of one option
+ *       ├─ .control             focusable role="radio" span
+ *       │   ├─ &[data-checked]  primary ring with the dot
+ *       │   ├─ &[data-disabled]
+ *       │   └─ .indicator       the dot, hidden while unchecked
+ *       └─ .label               dims when the control is disabled
+ *
+ * The focus rule lives in global.css: Base UI keeps focus on .control, not the hidden input.
+ */
+
+.group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-12);
+    min-inline-size: 0;
+}
+
+.item {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-12);
+    min-inline-size: 0;
+    cursor: pointer;
+
+    &:has(.control[data-disabled]) {
+        cursor: not-allowed;
+
+        .label {
+            color: var(--color-on-surface-variant);
+            cursor: not-allowed;
+        }
+    }
+}
+
+/*
+ * The control stays top-level so its rules keep one class of specificity and the document focus
+ * rule in global.css draws its ring. Base UI keeps focus on this span, not the hidden input.
+ */
+.control {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    inline-size: var(--space-16);
+    block-size: var(--space-16);
+    margin-block-start: var(--space-2);
+    border: var(--border-width-strong) solid var(--color-outline-control);
+    border-radius: var(--shape-corner-full);
+    background-color: var(--color-surface);
+    color: var(--color-primary);
+    cursor: pointer;
+    transition:
+        border-color var(--motion-duration-effects-fast) var(--motion-easing-standard),
+        background-color var(--motion-duration-effects-fast) var(--motion-easing-standard);
+
+    &[data-checked] {
+        border-color: var(--color-primary);
+    }
+
+    &[data-disabled] {
+        border-color: var(--color-outline-variant);
+        background-color: var(--color-secondary-container);
+        color: var(--color-on-surface-variant);
+        cursor: not-allowed;
+    }
+}
+
+.indicator {
+    inline-size: var(--space-8);
+    block-size: var(--space-8);
+    border-radius: var(--shape-corner-full);
+    background-color: currentColor;
+    transition: opacity var(--motion-duration-effects-fast) var(--motion-easing-standard);
+
+    &[data-unchecked] {
+        opacity: 0;
+    }
+}
+
+.label {
+    color: var(--color-on-surface);
+    font-size: var(--type-label-size);
+    font-weight: var(--type-label-weight);
+    letter-spacing: var(--type-label-tracking);
+    line-height: var(--type-label-line-height);
+    cursor: pointer;
+}
+
+@media (forced-colors: active) {
+    .control {
+        border-color: ButtonText;
+    }
+
+    .control[data-checked] {
+        border-color: Highlight;
+        color: Highlight;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .control,
+    .indicator {
+        transition: none;
+    }
+}

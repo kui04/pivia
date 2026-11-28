@@ -87,7 +87,13 @@ export function observeSessionManagerAppends(sessionManager: SessionManager, onA
 }
 
 function toModelInfo(model: SessionModelInfo): SessionModelInfo {
-    return { provider: model.provider, id: model.id, name: model.name };
+    return {
+        provider: model.provider,
+        id: model.id,
+        name: model.name,
+        contextWindow: model.contextWindow,
+        reasoning: model.reasoning,
+    };
 }
 
 /**
@@ -135,8 +141,17 @@ class AgentSessionAdapter implements ManagedSession {
 
     getState(): ManagedSessionState {
         const model = this.session.model;
+        const routed = this.session.routedModel;
         return {
             model: model === undefined ? null : toModelInfo(model),
+            contextUsage: this.session.getContextUsage() ?? null,
+            routedModel:
+                routed === undefined
+                    ? null
+                    : {
+                          model: toModelInfo(routed.model),
+                          ...(routed.thinkingLevel === undefined ? {} : { thinkingLevel: routed.thinkingLevel }),
+                      },
             thinkingLevel: this.session.thinkingLevel,
             isStreaming: this.session.isStreaming,
             isCompacting: this.session.isCompacting,

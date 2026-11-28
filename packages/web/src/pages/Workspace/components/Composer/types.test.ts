@@ -4,7 +4,13 @@ import { makeSessionStateSnapshot } from "@/test/fixtures";
 
 import { toComposerRuntimePhase } from "./types";
 
-const MODEL = { provider: "anthropic", id: "claude-sonnet-4", name: "Claude Sonnet 4" } as const;
+const MODEL = {
+    provider: "anthropic",
+    id: "claude-sonnet-4",
+    name: "Claude Sonnet 4",
+    contextWindow: 200_000,
+    reasoning: true,
+} as const;
 
 function state(overrides: Partial<Parameters<typeof makeSessionStateSnapshot>[0]> = {}) {
     return makeSessionStateSnapshot({ model: MODEL, ...overrides });

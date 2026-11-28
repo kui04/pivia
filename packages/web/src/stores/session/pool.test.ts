@@ -1,6 +1,7 @@
-import type { RpcExtensionUIRequest } from "@earendil-works/pi-coding-agent";
 import {
+    EMPTY_SESSION_UI_STATE,
     SESSION_CLOSE_CODE,
+    type ExtensionDialogRequest,
     type SessionDelta,
     type SessionId,
     type SessionSnapshot,
@@ -27,7 +28,7 @@ const stubApiClient: Pick<ApiClient, "getSession"> = {
     getSession: () => Promise.reject(new Error("unexpected getSession call")),
 };
 
-function dialogRequest(id: string): RpcExtensionUIRequest {
+function dialogRequest(id: string): ExtensionDialogRequest {
     return {
         type: "extension_ui_request",
         id,
@@ -52,6 +53,7 @@ function snapshotFrame(
             state: makeSessionStateSnapshot({ sessionId }),
             liveMessage: null,
             pendingUiRequests: [],
+            uiState: EMPTY_SESSION_UI_STATE,
             ...overrides,
         },
     };
@@ -104,6 +106,7 @@ describe("isSessionKeepAliveBusy", () => {
             sessionId: S1,
             state: makeSessionStateSnapshot({ sessionId: S1, isStreaming: false, isCompacting: false }),
             pendingUiRequests: [],
+            uiState: EMPTY_SESSION_UI_STATE,
         };
 
         expect(isSessionKeepAliveBusy(idle)).toBe(false);
@@ -165,9 +168,7 @@ describe("createSessionPool", () => {
         const pool = createSessionPool({ WebSocket: FakeWebSocket, apiClient: stubApiClient });
 
         expect(pool.getStore(S1)).toBeNull();
-        expect(pool.getSnapshot()).toEqual({
-            attachedIds: new Set(),
-        });
+        expect(pool.getSnapshot()).toEqual({ attachedIds: new Set(), needsInputIds: new Set() });
 
         const firstStore = pool.attach(S1);
         const secondStore = pool.attach(S1);
@@ -176,9 +177,7 @@ describe("createSessionPool", () => {
         expect(pool.getStore(S1)).toBe(firstStore);
         expect(FakeWebSocket.instances).toHaveLength(1);
         expect(socketFor(S1).url).toBe("ws://localhost:3141/ws/sessions/session-1");
-        expect(pool.getSnapshot()).toEqual({
-            attachedIds: new Set([S1]),
-        });
+        expect(pool.getSnapshot()).toEqual({ attachedIds: new Set([S1]), needsInputIds: new Set() });
     });
 
     it("isolates state and sockets across concurrently attached sessions", () => {
@@ -207,15 +206,11 @@ describe("createSessionPool", () => {
 
         pool.setVisibleSessions(new Set([S1, S2, S3]));
         expect(FakeWebSocket.instances).toHaveLength(3);
-        expect(pool.getSnapshot()).toEqual({
-            attachedIds: new Set([S1, S2, S3]),
-        });
+        expect(pool.getSnapshot()).toEqual({ attachedIds: new Set([S1, S2, S3]), needsInputIds: new Set() });
 
         // Moving S1 out of visibleIds keeps it in background within budget (1).
         pool.setVisibleSessions(new Set([S2, S3]));
-        expect(pool.getSnapshot()).toEqual({
-            attachedIds: new Set([S1, S2, S3]),
-        });
+        expect(pool.getSnapshot()).toEqual({ attachedIds: new Set([S1, S2, S3]), needsInputIds: new Set() });
         expect(socketFor(S1).closeCalls).toHaveLength(0);
     });
 
@@ -320,9 +315,8 @@ describe("createSessionPool", () => {
         sock3.receive(deltaFrame(4, { kind: "ui_request", request: dialogRequest("req-1") }));
         const sock4 = connectSession(pool, S4, 1);
 
-        // S3 is protected by pending UI request; S4 is newest within budget (1) or wait: background has S3 + S4.
-        // S3 is skipped, S4 is kept if S4 is busy or wait: if budget is 1 and S3 is busy + S4 is idle, S4 could be evicted
-        // unless S4 is also busy or visible; make S4 busy first, then settle S3 via ui_resolved!
+        // S3 stays pinned by its pending UI request while S4 is also busy; resolving S3's UI
+        // request leaves S3 idle over the background budget (1), so S3 is evicted automatically.
         expect(pool.getStore(S3)).not.toBeNull();
         sock4.receive(deltaFrame(2, { kind: "agent_event", event: { type: "agent_start" } }));
 
@@ -362,18 +356,14 @@ describe("createSessionPool", () => {
         expect(sock1.closeCalls.length).toBeGreaterThan(0);
         expect(pool.getStore(S2)).not.toBeNull();
         expect(sock2.closeCalls).toHaveLength(0);
-        expect(pool.getSnapshot()).toEqual({
-            attachedIds: new Set([S2]),
-        });
+        expect(pool.getSnapshot()).toEqual({ attachedIds: new Set([S2]), needsInputIds: new Set() });
 
         // Once S2 becomes idle, it is evicted automatically because budget is 0.
         sock2.receive(deltaFrame(2, { kind: "agent_event", event: { type: "agent_settled", aborted: false } }));
 
         expect(pool.getStore(S2)).toBeNull();
         expect(sock2.closeCalls.length).toBeGreaterThan(0);
-        expect(pool.getSnapshot()).toEqual({
-            attachedIds: new Set(),
-        });
+        expect(pool.getSnapshot()).toEqual({ attachedIds: new Set(), needsInputIds: new Set() });
     });
 
     it("detaches a single session without disturbing other attached sessions", () => {
@@ -391,9 +381,7 @@ describe("createSessionPool", () => {
         expect(sock1.closeCalls.length).toBeGreaterThan(0);
         expect(pool.getStore(S2)).not.toBeNull();
         expect(sock2.closeCalls).toHaveLength(0);
-        expect(pool.getSnapshot()).toEqual({
-            attachedIds: new Set([S2]),
-        });
+        expect(pool.getSnapshot()).toEqual({ attachedIds: new Set([S2]), needsInputIds: new Set() });
     });
 
     it("disconnects every store and clears caches on clearAll", () => {
@@ -425,9 +413,7 @@ describe("createSessionPool", () => {
         expect(sock2.closeCalls.length).toBeGreaterThan(0);
         expect(pool.getStore(S1)).toBeNull();
         expect(pool.getStore(S2)).toBeNull();
-        expect(pool.getSnapshot()).toEqual({
-            attachedIds: new Set(),
-        });
+        expect(pool.getSnapshot()).toEqual({ attachedIds: new Set(), needsInputIds: new Set() });
 
         // Re-attaching S1 starts fresh with cleared in-memory entries.
         const freshStore = pool.attach(S1);
@@ -505,9 +491,7 @@ describe("createSessionPool", () => {
 
         expect(onSessionMissing).toHaveBeenCalledExactlyOnceWith(S1);
         expect(pool.getStore(S1)).toBeNull();
-        expect(pool.getSnapshot()).toEqual({
-            attachedIds: new Set(),
-        });
+        expect(pool.getSnapshot()).toEqual({ attachedIds: new Set(), needsInputIds: new Set() });
     });
 
     it("invokes onSessionMissing and removes the session cleanly on HTTP 404 during hydration", async () => {
@@ -531,9 +515,7 @@ describe("createSessionPool", () => {
         });
         expect(pool.getStore(S1)).toBeNull();
         expect(sock1.closeCalls.length).toBeGreaterThan(0);
-        expect(pool.getSnapshot()).toEqual({
-            attachedIds: new Set(),
-        });
+        expect(pool.getSnapshot()).toEqual({ attachedIds: new Set(), needsInputIds: new Set() });
     });
 
     it("releases all sockets and clears the pool on dispose without notifying cleared listeners", () => {
@@ -550,7 +532,54 @@ describe("createSessionPool", () => {
         expect(sock2.closeCalls.length).toBeGreaterThan(0);
         expect(pool.getStore(S1)).toBeNull();
         expect(pool.getStore(S2)).toBeNull();
-        expect(pool.getSnapshot()).toEqual({ attachedIds: new Set() });
+        expect(pool.getSnapshot()).toEqual({ attachedIds: new Set(), needsInputIds: new Set() });
         expect(listener).not.toHaveBeenCalled();
+    });
+});
+
+describe("session pool needs-input tracking", () => {
+    it("marks and unmarks a session while an extension answer is pending", () => {
+        const pool = createSessionPool({ WebSocket: FakeWebSocket, apiClient: stubApiClient });
+        const socket = connectSession(pool, S1);
+
+        expect(pool.getSnapshot().needsInputIds).toEqual(new Set());
+
+        socket.receive(deltaFrame(2, { kind: "ui_request", request: dialogRequest("req-1") }));
+        expect(pool.getSnapshot().needsInputIds).toEqual(new Set([S1]));
+
+        socket.receive(deltaFrame(3, { kind: "ui_resolved", requestId: "req-1" }));
+        expect(pool.getSnapshot().needsInputIds).toEqual(new Set());
+    });
+
+    it("notifies subscribers when only the needs-input set changes", () => {
+        const pool = createSessionPool({ WebSocket: FakeWebSocket, apiClient: stubApiClient });
+        const socket = connectSession(pool, S1);
+        const listener = vi.fn();
+        pool.subscribe(listener);
+
+        socket.receive(deltaFrame(2, { kind: "ui_request", request: dialogRequest("req-1") }));
+
+        expect(listener).toHaveBeenCalled();
+        expect(pool.getSnapshot().needsInputIds).toEqual(new Set([S1]));
+    });
+
+    it("keeps a hidden session with a pending answer and evicts it once answered", () => {
+        const pool = createSessionPool({
+            WebSocket: FakeWebSocket,
+            apiClient: stubApiClient,
+            maxBackgroundSessions: 0,
+        });
+        const socket = connectSession(pool, S1);
+
+        socket.receive(deltaFrame(2, { kind: "ui_request", request: dialogRequest("req-1") }));
+        pool.setVisibleSessions(new Set());
+
+        expect(pool.getStore(S1)).not.toBeNull();
+        expect(pool.getSnapshot().needsInputIds).toEqual(new Set([S1]));
+
+        socket.receive(deltaFrame(3, { kind: "ui_resolved", requestId: "req-1" }));
+
+        expect(pool.getStore(S1)).toBeNull();
+        expect(pool.getSnapshot().needsInputIds).toEqual(new Set());
     });
 });

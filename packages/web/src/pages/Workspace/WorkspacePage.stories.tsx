@@ -1,7 +1,9 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { FileEntry } from "@earendil-works/pi-coding-agent";
 import {
+    EMPTY_SESSION_UI_STATE,
     SESSION_CLOSE_CODE,
+    type ExtensionDialogRequest,
     type SessionDelta,
     type SessionDetailResponse,
     type SessionStateSnapshot,
@@ -13,9 +15,11 @@ import { useEffect, useRef, useState, type ReactElement } from "react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { expect, userEvent, waitFor, within } from "storybook/test";
 
+import { ToastProvider } from "@components";
 import { ev, sessionEpoch, sessionSeq, sid } from "@/storybook/ids";
 import { makeStorySessionState, makeStorySessionSummary } from "@/storybook/fixtures";
-import { createStorySocket } from "@/storybook/socket";
+import { toastManager } from "@/lib/toast";
+import { createStorySocket, type StorySocket } from "@/storybook/socket";
 import { createSessionStore } from "@/stores/session";
 
 import { WorkspacePage } from "./WorkspacePage";
@@ -129,6 +133,7 @@ function inlineSnapshot(
             state: sessionState(overrides),
             liveMessage: null,
             pendingUiRequests: [],
+            uiState: EMPTY_SESSION_UI_STATE,
         },
     };
 }
@@ -144,6 +149,7 @@ function httpSnapshot(entryCount: number): SessionWsServerMessage {
             state: sessionState(),
             liveMessage: null,
             pendingUiRequests: [],
+            uiState: EMPTY_SESSION_UI_STATE,
         },
     };
 }
@@ -205,12 +211,14 @@ function PageHarness({ route, setup }: PageHarnessProps): ReactElement {
 
     return (
         <div className={styles.frame}>
-            <MemoryRouter initialEntries={[route]}>
-                <Routes>
-                    <Route path="/workspace" element={<WorkspacePage sessionStore={context.store} />} />
-                    <Route path="/workspace/:sessionId" element={<WorkspacePage sessionStore={context.store} />} />
-                </Routes>
-            </MemoryRouter>
+            <ToastProvider toastManager={toastManager}>
+                <MemoryRouter initialEntries={[route]}>
+                    <Routes>
+                        <Route path="/workspace" element={<WorkspacePage sessionStore={context.store} />} />
+                        <Route path="/workspace/:sessionId" element={<WorkspacePage sessionStore={context.store} />} />
+                    </Routes>
+                </MemoryRouter>
+            </ToastProvider>
         </div>
     );
 }
@@ -375,3 +383,209 @@ export const ConnectionLost: Story = {
         await expect(canvas.getByText("Cannot reconnect to the session.")).toBeVisible();
     },
 };
+
+const EXTENSION_REQUEST: ExtensionDialogRequest = {
+    type: "extension_ui_request",
+    id: "req-story-1",
+    method: "confirm",
+    title: "Continue?",
+    message: "This resumes the turn.",
+};
+
+function createExtensionPromptStory(): Story {
+    let extensionSocket: StorySocket | null = null;
+    const extensionPromptScenario: Scenario = ({ socket }) => {
+        extensionSocket = socket.latest();
+        const ws = extensionSocket;
+        ws?.open();
+        ws?.receive(inlineSnapshot([]));
+    };
+
+    return {
+        render: () => <PageHarness route="/workspace/session-1" setup={extensionPromptScenario} />,
+        play: async ({ canvasElement }) => {
+            const canvas = within(canvasElement);
+            await expect(canvas.getByRole("textbox", { name: "Message" })).toBeEnabled();
+
+            extensionSocket?.receive(deltaFrame(2, { kind: "ui_request", request: EXTENSION_REQUEST }));
+
+            const dialog = await within(document.body).findByRole("dialog", { name: "Continue?" });
+            await expect(within(dialog).getByText("This resumes the turn.")).toBeVisible();
+            // The modal makes the rest of the page inert, so the composer is not reachable by role.
+            await expect(canvas.queryByRole("textbox", { name: "Message" })).not.toBeInTheDocument();
+
+            await userEvent.click(within(dialog).getByRole("button", { name: "Minimize prompt" }));
+            await waitFor(() =>
+                expect(within(document.body).queryByRole("dialog", { name: "Continue?" })).not.toBeInTheDocument(),
+            );
+
+            const input = canvas.getByRole("textbox", { name: "Message" });
+            await expect(input).toBeDisabled();
+            await expect(input).toHaveAttribute("placeholder", "Waiting for an extension answer.");
+            await expect(canvas.getByRole("button", { name: "Show extension prompt, 1 waiting" })).toBeVisible();
+
+            await userEvent.click(canvas.getByRole("button", { name: "Show extension prompt, 1 waiting" }));
+            const reopened = await within(document.body).findByRole("dialog", { name: "Continue?" });
+            await userEvent.click(within(reopened).getByRole("button", { name: "Confirm" }));
+
+            await waitFor(() => expect(extensionSocket?.sent).toHaveLength(1));
+            const frame: unknown = JSON.parse(extensionSocket?.sent[0] ?? "{}");
+            await expect(frame).toEqual({
+                type: "rpc:ui_response",
+                response: { type: "extension_ui_response", id: "req-story-1", confirmed: true },
+            });
+
+            extensionSocket?.receive(deltaFrame(3, { kind: "ui_resolved", requestId: "req-story-1" }));
+
+            await waitFor(() =>
+                expect(within(document.body).queryByRole("dialog", { name: "Continue?" })).not.toBeInTheDocument(),
+            );
+            await waitFor(() =>
+                expect(
+                    canvas.queryByRole("button", { name: "Show extension prompt, 1 waiting" }),
+                ).not.toBeInTheDocument(),
+            );
+            await expect(canvas.getByRole("textbox", { name: "Message" })).toBeEnabled();
+        },
+    };
+}
+
+const noticeScenario: Scenario = ({ socket }) => {
+    const ws = socket.latest();
+    ws?.open();
+    ws?.receive(inlineSnapshot([]));
+    ws?.receive(
+        deltaFrame(2, {
+            kind: "ui_request",
+            request: {
+                type: "extension_ui_request",
+                id: "req-notify",
+                method: "notify",
+                message: "Reload the extension to pick up changes.",
+                notifyType: "warning",
+            },
+        }),
+    );
+    ws?.receive(
+        deltaFrame(3, {
+            kind: "extension_error",
+            extensionPath: "/home/u/.pi/extensions/lint.ts",
+            event: "tool_call",
+            error: "Cannot read the config",
+        }),
+    );
+};
+
+export const ExtensionNotices: Story = {
+    parameters: {
+        // Base UI hides high-priority toasts from assistive technology (their content is announced
+        // by its own role="alert" region) but keeps the toast focusable, so axe reports
+        // aria-hidden-focus. Track the upstream fix instead of changing the toast stack.
+        a11y: { test: "todo" },
+    },
+    render: () => <PageHarness route="/workspace/session-1" setup={noticeScenario} />,
+    play: async () => {
+        const warning = await within(document.body).findByRole("dialog", {
+            name: "Reload the extension to pick up changes.",
+        });
+        await waitFor(() => expect(warning).toBeVisible());
+        // High-priority toasts are alertdialogs hidden from assistive technology unless the viewport
+        // has focus, so query the hidden element and assert its content.
+        const failure = await within(document.body).findByRole("alertdialog", { hidden: true });
+        await waitFor(() => expect(failure).toBeVisible());
+        await expect(failure).toHaveTextContent("Extension failed");
+        await expect(within(failure).getByText("/home/u/.pi/extensions/lint.ts: Cannot read the config")).toBeVisible();
+
+        // The manager is a module singleton, so clear the stack and wait for the exit animation.
+        toastManager.close();
+        await waitFor(() =>
+            expect(within(document.body).queryByRole("alertdialog", { hidden: true })).not.toBeInTheDocument(),
+        );
+        await waitFor(() =>
+            expect(
+                within(document.body).queryByRole("dialog", { name: "Reload the extension to pick up changes." }),
+            ).not.toBeInTheDocument(),
+        );
+    },
+};
+
+const chromeScenario: Scenario = ({ socket }) => {
+    const ws = socket.latest();
+    ws?.open();
+    ws?.receive(inlineSnapshot([]));
+    ws?.receive(
+        deltaFrame(2, {
+            kind: "ui_request",
+            request: {
+                type: "extension_ui_request",
+                id: "chrome-status-git",
+                method: "setStatus",
+                statusKey: "git",
+                statusText: "main",
+            },
+        }),
+    );
+    ws?.receive(
+        deltaFrame(3, {
+            kind: "ui_request",
+            request: {
+                type: "extension_ui_request",
+                id: "chrome-status-lint",
+                method: "setStatus",
+                statusKey: "lint",
+                statusText: "clean",
+            },
+        }),
+    );
+    ws?.receive(
+        deltaFrame(4, {
+            kind: "ui_request",
+            request: {
+                type: "extension_ui_request",
+                id: "chrome-widget-above",
+                method: "setWidget",
+                widgetKey: "above",
+                widgetLines: ["Above widget"],
+            },
+        }),
+    );
+    ws?.receive(
+        deltaFrame(5, {
+            kind: "ui_request",
+            request: {
+                type: "extension_ui_request",
+                id: "chrome-widget-below",
+                method: "setWidget",
+                widgetKey: "below",
+                widgetLines: ["Below widget"],
+                widgetPlacement: "belowEditor",
+            },
+        }),
+    );
+    ws?.receive(
+        deltaFrame(6, {
+            kind: "ui_request",
+            request: {
+                type: "extension_ui_request",
+                id: "chrome-title",
+                method: "setTitle",
+                title: "Release checklist",
+            },
+        }),
+    );
+};
+
+export const ExtensionChrome: Story = {
+    render: () => <PageHarness route="/workspace/session-1" setup={chromeScenario} />,
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+
+        // Status texts join in key order: git=main, lint=clean.
+        await expect(canvas.getByText("main clean")).toBeVisible();
+        await expect(canvas.getByText("Above widget")).toBeVisible();
+        await expect(canvas.getByText("Below widget")).toBeVisible();
+        await waitFor(() => expect(document.title).toBe("Release checklist"));
+    },
+};
+
+export const ExtensionPrompt: Story = createExtensionPromptStory();

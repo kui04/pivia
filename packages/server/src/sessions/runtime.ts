@@ -40,7 +40,9 @@ import type {
     SessionRpcCommand,
     SessionRpcServerMessage,
     SessionRuntimeState,
+    SessionRoutedModel,
     SessionSnapshot,
+    SessionStatePatch,
     SessionStateSnapshot,
     SessionSummary,
     SessionWsClientMessage,
@@ -49,6 +51,8 @@ import type {
     StrictOmit,
     SyncHandshake,
 } from "@pivia/protocol";
+
+import type { ContextUsage } from "@earendil-works/pi-coding-agent";
 
 import { SessionUiBridge } from "./extension-ui.ts";
 import {
@@ -291,7 +295,13 @@ interface ActiveSession {
     lastBroadcastEntryCount: number;
     lastTrackedState: {
         -readonly [
-            K in "messageCount" | "steeringMode" | "followUpMode" | "autoCompactionEnabled"
+            K in
+                | "messageCount"
+                | "steeringMode"
+                | "followUpMode"
+                | "autoCompactionEnabled"
+                | "contextUsage"
+                | "routedModel"
         ]: SessionStateSnapshot[K];
     };
     flushScheduled: boolean;
@@ -304,6 +314,31 @@ interface ActiveSession {
     readonly hasParent: boolean;
     firstMessage: string | null;
     lastSummary: SessionSummary | null;
+}
+
+function contextUsageEquals(first: ContextUsage | null, second: ContextUsage | null): boolean {
+    if (first === null || second === null) {
+        return first === second;
+    }
+    return (
+        first.tokens === second.tokens &&
+        first.contextWindow === second.contextWindow &&
+        first.percent === second.percent
+    );
+}
+
+function routedModelEquals(first: SessionRoutedModel | null, second: SessionRoutedModel | null): boolean {
+    if (first === null || second === null) {
+        return first === second;
+    }
+    return (
+        first.model.provider === second.model.provider &&
+        first.model.id === second.model.id &&
+        first.model.name === second.model.name &&
+        first.model.contextWindow === second.model.contextWindow &&
+        first.model.reasoning === second.model.reasoning &&
+        first.thinkingLevel === second.thinkingLevel
+    );
 }
 
 function toRuntimeState(state: ManagedSessionState): SessionRuntimeState {
@@ -964,6 +999,8 @@ export class SessionRegistry {
                 steeringMode: initialState.steeringMode,
                 followUpMode: initialState.followUpMode,
                 autoCompactionEnabled: initialState.autoCompactionEnabled,
+                contextUsage: initialState.contextUsage,
+                routedModel: initialState.routedModel,
             },
             flushScheduled: false,
             liveMessage: null,
@@ -1139,6 +1176,9 @@ export class SessionRegistry {
             navigateTree: unsupported,
             switchSession: unsupported,
             reload: async () => {
+                // Extension reloads rebind the extension set; statuses and widgets from the old set
+                // must not linger, and clients receive the removals as ui_request deltas.
+                entry.uiBridge.resetUiState();
                 await entry.runtime.session.reload();
                 this.emitTrackedStateDiff(entry);
             },
@@ -1293,10 +1333,7 @@ export class SessionRegistry {
                 }
                 case "set_model": {
                     const model = await entry.runtime.session.setModel(command.provider, command.modelId);
-                    this.publishSessionDelta(entry.sessionId, {
-                        kind: "state_patched",
-                        patch: { model },
-                    });
+                    this.emitTrackedStateDiff(entry, { model });
                     this.sendSuccess(client, command.id, "set_model", model);
                     return;
                 }
@@ -1415,6 +1452,7 @@ export class SessionRegistry {
                     state,
                     liveMessage: entry.liveMessage,
                     pendingUiRequests,
+                    uiState: entry.uiBridge.uiState(),
                 },
             };
         }
@@ -1426,6 +1464,7 @@ export class SessionRegistry {
             state,
             liveMessage: entry.liveMessage,
             pendingUiRequests,
+            uiState: entry.uiBridge.uiState(),
         };
         const serializedBytes = Buffer.byteLength(JSON.stringify(inlineSnapshot), "utf8");
         if (shouldOffloadPayload({ serializedBytes })) {
@@ -1438,6 +1477,7 @@ export class SessionRegistry {
                     state,
                     liveMessage: entry.liveMessage,
                     pendingUiRequests,
+                    uiState: entry.uiBridge.uiState(),
                 },
             };
         }
@@ -1521,16 +1561,29 @@ export class SessionRegistry {
         }
     }
 
-    private emitTrackedStateDiff(entry: ActiveSession): void {
+    private emitTrackedStateDiff(entry: ActiveSession, extraPatch?: Pick<SessionStatePatch, "model">): void {
         const state = entry.runtime.session.getState();
         const prev = entry.lastTrackedState;
         const patch: {
+            model?: SessionStatePatch["model"];
             messageCount?: number;
             steeringMode?: SessionStateSnapshot["steeringMode"];
             followUpMode?: SessionStateSnapshot["followUpMode"];
             autoCompactionEnabled?: boolean;
-        } = {};
-        let changed = false;
+            contextUsage?: SessionStateSnapshot["contextUsage"];
+            routedModel?: SessionStateSnapshot["routedModel"];
+        } = extraPatch === undefined ? {} : { ...extraPatch };
+        let changed = extraPatch !== undefined;
+        if (!contextUsageEquals(state.contextUsage, prev.contextUsage)) {
+            patch.contextUsage = state.contextUsage;
+            prev.contextUsage = state.contextUsage;
+            changed = true;
+        }
+        if (!routedModelEquals(state.routedModel, prev.routedModel)) {
+            patch.routedModel = state.routedModel;
+            prev.routedModel = state.routedModel;
+            changed = true;
+        }
         if (state.messageCount !== prev.messageCount) {
             patch.messageCount = state.messageCount;
             prev.messageCount = state.messageCount;

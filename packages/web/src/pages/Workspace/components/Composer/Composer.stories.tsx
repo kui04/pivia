@@ -1,21 +1,24 @@
 import type { SessionModelInfo, SessionRpcCommand, SessionStateSnapshot } from "@pivia/protocol";
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { useState, type ReactElement } from "react";
 import { expect, fireEvent, fn, screen, userEvent, waitFor, within } from "storybook/test";
 
+import { Button } from "@components";
 import type { SessionRpcResponseMessage } from "@/lib/transport";
+import type { EditorTextRequest } from "@/stores/session";
 import { sid } from "@/storybook/ids";
 import { DarkTheme } from "@/storybook/theme";
 
 import { requireElement } from "@/storybook/dom";
-import { Composer } from "./Composer";
+import { Composer, type ComposerProps } from "./Composer";
 import styles from "./Composer.stories.module.css";
 
 const SESSION_ID = sid("story-session");
 
 const MODELS: readonly SessionModelInfo[] = [
-    { provider: "anthropic", id: "claude-sonnet-4", name: "Claude Sonnet 4" },
-    { provider: "openai", id: "gpt-5", name: "GPT-5" },
-    { provider: "google", id: "gemini-2.5-pro", name: "Gemini 2.5 Pro" },
+    { provider: "anthropic", id: "claude-sonnet-4", name: "Claude Sonnet 4", contextWindow: 200_000, reasoning: true },
+    { provider: "openai", id: "gpt-5", name: "GPT-5", contextWindow: 272_000, reasoning: true },
+    { provider: "google", id: "gemini-2.5-pro", name: "Gemini 2.5 Pro", contextWindow: 1_000_000, reasoning: true },
 ];
 
 function makeState(overrides: Partial<SessionStateSnapshot> = {}): SessionStateSnapshot {
@@ -24,6 +27,8 @@ function makeState(overrides: Partial<SessionStateSnapshot> = {}): SessionStateS
         cwd: "/home/u/pivia",
         name: "Composer story",
         model: MODELS[0] ?? null,
+        contextUsage: null,
+        routedModel: null,
         thinkingLevel: "medium",
         isStreaming: false,
         isCompacting: false,
@@ -240,6 +245,8 @@ const MANY_MODELS: readonly SessionModelInfo[] = Array.from({ length: 20 }, (_, 
     provider: "openai",
     id: `story-model-${index}`,
     name: `Story model ${index}`,
+    contextWindow: 200_000,
+    reasoning: false,
 }));
 
 const manyModelsCommand = fn((command: SessionRpcCommand): Promise<SessionRpcResponseMessage> => {
@@ -291,5 +298,98 @@ export const HoverDoesNotScroll: Story = {
         // Close the picker so the a11y scan checks the resting composer like the other stories.
         await userEvent.keyboard("{Escape}");
         await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    },
+};
+
+const onOpenExtension = fn();
+const onEditorTextApplied = fn<(sequence: number) => void>();
+
+function EditorTextHarness(props: Omit<ComposerProps, "editorTextRequest" | "onEditorTextApplied">): ReactElement {
+    const [request, setRequest] = useState<EditorTextRequest>({
+        sequence: 1,
+        text: "Draft from the extension",
+    });
+
+    return (
+        <>
+            <Button
+                type="button"
+                variant="secondary"
+                onClick={() => {
+                    setRequest((previous) => ({ sequence: previous.sequence + 1, text: "Replacement draft" }));
+                }}
+            >
+                New draft
+            </Button>
+            <Composer {...props} editorTextRequest={request} onEditorTextApplied={onEditorTextApplied} />
+        </>
+    );
+}
+
+export const ExtensionPrompt: Story = {
+    args: {
+        extensionPrompt: {
+            count: 2,
+            reason: "Waiting for an extension answer.",
+            onOpen: onOpenExtension,
+        },
+    },
+    play: async ({ canvasElement }) => {
+        onOpenExtension.mockClear();
+        const canvas = within(canvasElement);
+        const input = canvas.getByRole("textbox", { name: "Message" });
+        const button = canvas.getByRole("button", { name: "Show extension prompt, 2 waiting" });
+
+        await expect(input).toBeDisabled();
+        await expect(input).toHaveAttribute("placeholder", "Waiting for an extension answer.");
+        await expect(canvas.queryByRole("button", { name: "Send message" })).not.toBeInTheDocument();
+        await expect(canvas.queryByRole("button", { name: "Stop response" })).not.toBeInTheDocument();
+
+        const badge = requireElement(
+            canvasElement.querySelector('[data-slot="extension-prompt-badge"]'),
+            "the extension prompt badge",
+        );
+        await expect(badge).toHaveAttribute("aria-hidden", "true");
+        await expect(badge).toHaveTextContent("2");
+
+        await userEvent.click(button);
+        await expect(onOpenExtension).toHaveBeenCalledTimes(1);
+    },
+};
+
+export const ExtensionPromptWhileStreaming: Story = {
+    args: {
+        state: makeState({ isStreaming: true }),
+        extensionPrompt: {
+            count: 1,
+            reason: "Waiting for an extension answer.",
+            onOpen: onOpenExtension,
+        },
+    },
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+
+        await expect(canvas.getByRole("button", { name: "Show extension prompt, 1 waiting" })).toBeVisible();
+        await expect(canvas.queryByRole("button", { name: "Stop response" })).not.toBeInTheDocument();
+        await expect(canvas.queryByRole("button", { name: "Steer run" })).not.toBeInTheDocument();
+    },
+};
+
+export const EditorText: Story = {
+    render: (args) => <EditorTextHarness {...args} />,
+    play: async ({ canvasElement }) => {
+        onEditorTextApplied.mockClear();
+        const canvas = within(canvasElement);
+        const input = canvas.getByRole("textbox", { name: "Message" });
+
+        await expect(input).toHaveValue("Draft from the extension");
+        await userEvent.type(input, " (edited)");
+        // The applied sequence must keep a later render from replacing the user edit.
+        await expect(input).toHaveValue("Draft from the extension (edited)");
+
+        await userEvent.click(canvas.getByRole("button", { name: "New draft" }));
+        await waitFor(() => expect(input).toHaveValue("Replacement draft"));
+        await expect(onEditorTextApplied).toHaveBeenLastCalledWith(2);
+        await expect(input).toHaveFocus();
     },
 };

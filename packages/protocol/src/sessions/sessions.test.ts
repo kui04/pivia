@@ -5,18 +5,24 @@ import {
     parseCloseSessionResponse,
     parseCreateSessionResponse,
     parseEntriesVersion,
+    parseExtensionDialogRequest,
     parseExtensionUiResponse,
+    parseRpcExtensionUiRequest,
     parseSessionDetailResponse,
     parseSessionId,
     parseSessionListResponse,
+    parseSetEditorTextRequest,
     parseSessionPrefixAnchor,
     parseSessionRpcCommand,
     parseSessionStateSnapshot,
     parseSessionSummary,
     parseSessionSummaryPatch,
+    parseSessionUiChromeRequest,
+    parseSessionUiState,
     parseSessionWsClientMessage,
     parseSessionWsHandshakeQuery,
     parseSessionWsServerMessage,
+    EMPTY_SESSION_UI_STATE,
 } from "./index.ts";
 
 describe("sessions codecs", () => {
@@ -103,7 +109,6 @@ describe("sessions codecs", () => {
             id: "req-1",
             confirmed: true,
         });
-
         expect(
             parseSessionRpcCommand({ type: "prompt", id: "p1", message: "hello", streamingBehavior: "steer" }),
         ).toEqual({
@@ -233,7 +238,15 @@ describe("sessions codecs", () => {
             sessionId: "session-1",
             cwd: "/tmp/project",
             name: null,
-            model: { provider: "anthropic", id: "claude", name: "Claude" },
+            model: {
+                provider: "anthropic",
+                id: "claude",
+                name: "Claude",
+                contextWindow: 200_000,
+                reasoning: true,
+            },
+            contextUsage: null,
+            routedModel: null,
             thinkingLevel: "medium",
             isStreaming: false,
             isCompacting: false,
@@ -259,6 +272,7 @@ describe("sessions codecs", () => {
                     state: stateSnapshot,
                     liveMessage: null,
                     pendingUiRequests: [],
+                    uiState: EMPTY_SESSION_UI_STATE,
                 },
             }),
         ).toMatchObject({ type: "sync:snapshot", cursor: { epoch: "rt-1", seq: 0 } });
@@ -274,6 +288,7 @@ describe("sessions codecs", () => {
                     state: stateSnapshot,
                     liveMessage: null,
                     pendingUiRequests: [],
+                    uiState: EMPTY_SESSION_UI_STATE,
                 },
             }),
         ).toMatchObject({
@@ -307,7 +322,16 @@ describe("sessions codecs", () => {
                 cursor: { epoch: "rt-1", seq: 4 },
                 delta: {
                     kind: "state_patched",
-                    patch: { model: { provider: "openai", id: "gpt-5", name: "GPT-5" }, messageCount: 4 },
+                    patch: {
+                        model: {
+                            provider: "openai",
+                            id: "gpt-5",
+                            name: "GPT-5",
+                            contextWindow: 272_000,
+                            reasoning: true,
+                        },
+                        messageCount: 4,
+                    },
                 },
             }),
         ).toMatchObject({ type: "sync:delta", cursor: { epoch: "rt-1", seq: 4 } });
@@ -325,5 +349,331 @@ describe("sessions codecs", () => {
             message: "Bad JSON",
         });
         expect(parseSessionWsServerMessage({ type: "unknown_type" })).toBeNull();
+    });
+});
+
+describe("extension dialog request decoding", () => {
+    const dialogBase = { type: "extension_ui_request", id: "req-1" } as const;
+
+    it("accepts each interactive method with its required fields", () => {
+        expect(
+            parseExtensionDialogRequest({
+                ...dialogBase,
+                method: "select",
+                title: "Pick a branch",
+                options: ["a", "b"],
+            }),
+        ).toEqual({ ...dialogBase, method: "select", title: "Pick a branch", options: ["a", "b"] });
+        expect(
+            parseExtensionDialogRequest({
+                ...dialogBase,
+                method: "confirm",
+                title: "Continue?",
+                message: "This resumes the turn.",
+            }),
+        ).toEqual({ ...dialogBase, method: "confirm", title: "Continue?", message: "This resumes the turn." });
+        expect(
+            parseExtensionDialogRequest({ ...dialogBase, method: "input", title: "Name", placeholder: "a name" }),
+        ).toEqual({ ...dialogBase, method: "input", title: "Name", placeholder: "a name" });
+        expect(
+            parseExtensionDialogRequest({ ...dialogBase, method: "editor", title: "Edit", prefill: "text" }),
+        ).toEqual({ ...dialogBase, method: "editor", title: "Edit", prefill: "text" });
+    });
+
+    it("keeps an optional timeout only when it is a finite non-negative number", () => {
+        expect(
+            parseExtensionDialogRequest({
+                ...dialogBase,
+                method: "confirm",
+                title: "Go?",
+                message: "Now.",
+                timeout: 5000,
+            }),
+        ).toEqual({ ...dialogBase, method: "confirm", title: "Go?", message: "Now.", timeout: 5000 });
+        expect(
+            parseExtensionDialogRequest({
+                ...dialogBase,
+                method: "confirm",
+                title: "Go?",
+                message: "Now.",
+                timeout: 0,
+            }),
+        ).toEqual({ ...dialogBase, method: "confirm", title: "Go?", message: "Now.", timeout: 0 });
+    });
+
+    it("accepts a select with no options", () => {
+        expect(
+            parseExtensionDialogRequest({ ...dialogBase, method: "select", title: "Nothing to pick", options: [] }),
+        ).toEqual({ ...dialogBase, method: "select", title: "Nothing to pick", options: [] });
+    });
+
+    it("rejects malformed or incomplete dialog requests", () => {
+        expect(parseExtensionDialogRequest(null)).toBeNull();
+        expect(parseExtensionDialogRequest("select")).toBeNull();
+        expect(parseExtensionDialogRequest({ ...dialogBase, method: "select", title: "Pick" })).toBeNull();
+        expect(
+            parseExtensionDialogRequest({ ...dialogBase, method: "select", title: "Pick", options: ["a", 2] }),
+        ).toBeNull();
+        expect(parseExtensionDialogRequest({ ...dialogBase, method: "select", options: [] })).toBeNull();
+        expect(parseExtensionDialogRequest({ ...dialogBase, method: "confirm", title: "Go?" })).toBeNull();
+        expect(parseExtensionDialogRequest({ ...dialogBase, method: "confirm", title: "Go?", message: 3 })).toBeNull();
+        expect(
+            parseExtensionDialogRequest({ ...dialogBase, method: "input", title: "Name", placeholder: 3 }),
+        ).toBeNull();
+        expect(parseExtensionDialogRequest({ ...dialogBase, method: "editor", title: "Edit", prefill: 3 })).toBeNull();
+        expect(
+            parseExtensionDialogRequest({
+                ...dialogBase,
+                method: "confirm",
+                title: "Go?",
+                message: "Now.",
+                timeout: -1,
+            }),
+        ).toBeNull();
+        expect(
+            parseExtensionDialogRequest({
+                ...dialogBase,
+                method: "confirm",
+                title: "Go?",
+                message: "Now.",
+                timeout: Number.POSITIVE_INFINITY,
+            }),
+        ).toBeNull();
+        expect(
+            parseExtensionDialogRequest({
+                type: "extension_ui_request",
+                method: "confirm",
+                title: "Go?",
+                message: "Now.",
+            }),
+        ).toBeNull();
+    });
+
+    it("rejects extension UI requests that are not dialogs", () => {
+        expect(parseExtensionDialogRequest({ ...dialogBase, method: "notify", message: "Heads up" })).toBeNull();
+        expect(
+            parseExtensionDialogRequest({ ...dialogBase, method: "setStatus", statusKey: "k", statusText: "v" }),
+        ).toBeNull();
+        expect(parseExtensionDialogRequest({ ...dialogBase, method: "setWidget", widgetKey: "k" })).toBeNull();
+        expect(parseExtensionDialogRequest({ ...dialogBase, method: "setTitle", title: "T" })).toBeNull();
+        expect(parseExtensionDialogRequest({ ...dialogBase, method: "set_editor_text", text: "hello" })).toBeNull();
+    });
+});
+
+describe("editor text request decoding", () => {
+    const base = { type: "extension_ui_request", id: "req-1", method: "set_editor_text" } as const;
+
+    it("returns the text of a valid command, including an empty draft", () => {
+        expect(parseSetEditorTextRequest({ ...base, text: "Summarize the diff" })).toEqual({
+            text: "Summarize the diff",
+        });
+        expect(parseSetEditorTextRequest({ ...base, text: "" })).toEqual({ text: "" });
+    });
+
+    it("rejects other methods and malformed text", () => {
+        expect(parseSetEditorTextRequest(null)).toBeNull();
+        expect(parseSetEditorTextRequest({ ...base })).toBeNull();
+        expect(parseSetEditorTextRequest({ ...base, text: 3 })).toBeNull();
+        expect(parseSetEditorTextRequest({ ...base, text: "x", type: "other" })).toBeNull();
+        expect(parseSetEditorTextRequest({ ...base, text: "x", method: "notify" })).toBeNull();
+        expect(
+            parseSetEditorTextRequest({ type: "extension_ui_request", method: "set_editor_text", text: "x" }),
+        ).toBeNull();
+    });
+});
+
+describe("session ui state decoding", () => {
+    it("accepts statuses, widgets, and a title", () => {
+        expect(
+            parseSessionUiState({
+                statuses: [{ key: "lint", text: "clean" }],
+                widgets: [
+                    { key: "todo", lines: ["one", "two"], placement: "belowEditor" },
+                    { key: "plan", lines: ["step"] },
+                ],
+                title: "Working",
+            }),
+        ).toEqual({
+            statuses: [{ key: "lint", text: "clean" }],
+            widgets: [
+                { key: "todo", lines: ["one", "two"], placement: "belowEditor" },
+                { key: "plan", lines: ["step"], placement: "aboveEditor" },
+            ],
+            title: "Working",
+        });
+        expect(parseSessionUiState(EMPTY_SESSION_UI_STATE)).toEqual(EMPTY_SESSION_UI_STATE);
+    });
+
+    it("rejects malformed chrome", () => {
+        expect(parseSessionUiState(null)).toBeNull();
+        expect(parseSessionUiState({ statuses: [], widgets: [] })).toBeNull();
+        expect(parseSessionUiState({ statuses: [{ key: "a" }], widgets: [], title: null })).toBeNull();
+        expect(parseSessionUiState({ statuses: [], widgets: [{ key: "w", lines: ["a", 2] }], title: null })).toBeNull();
+        expect(
+            parseSessionUiState({
+                statuses: [],
+                widgets: [{ key: "w", lines: ["a"], placement: "side" }],
+                title: null,
+            }),
+        ).toBeNull();
+        expect(parseSessionUiState({ statuses: [], widgets: [], title: 3 })).toBeNull();
+    });
+});
+
+describe("session ui chrome request decoding", () => {
+    const base = { type: "extension_ui_request", id: "req-1" } as const;
+
+    it("decodes status, widget, and title commands", () => {
+        expect(
+            parseSessionUiChromeRequest({ ...base, method: "setStatus", statusKey: "lint", statusText: "clean" }),
+        ).toEqual({ kind: "status", key: "lint", text: "clean" });
+        expect(
+            parseSessionUiChromeRequest({ ...base, method: "setStatus", statusKey: "lint", statusText: undefined }),
+        ).toEqual({ kind: "status", key: "lint", text: undefined });
+        expect(
+            parseSessionUiChromeRequest({
+                ...base,
+                method: "setWidget",
+                widgetKey: "todo",
+                widgetLines: ["one", "two"],
+                widgetPlacement: "belowEditor",
+            }),
+        ).toEqual({ kind: "widget", key: "todo", lines: ["one", "two"], placement: "belowEditor" });
+        expect(
+            parseSessionUiChromeRequest({ ...base, method: "setWidget", widgetKey: "todo", widgetLines: ["one"] }),
+        ).toEqual({ kind: "widget", key: "todo", lines: ["one"], placement: "aboveEditor" });
+        expect(
+            parseSessionUiChromeRequest({ ...base, method: "setWidget", widgetKey: "todo", widgetLines: undefined }),
+        ).toEqual({ kind: "widget", key: "todo", lines: undefined, placement: "aboveEditor" });
+        expect(parseSessionUiChromeRequest({ ...base, method: "setTitle", title: "Working" })).toEqual({
+            kind: "title",
+            title: "Working",
+        });
+    });
+
+    it("rejects non-chrome methods and malformed fields", () => {
+        expect(parseSessionUiChromeRequest(null)).toBeNull();
+        expect(parseSessionUiChromeRequest({ ...base, method: "notify", message: "Heads up" })).toBeNull();
+        expect(parseSessionUiChromeRequest({ ...base, method: "setStatus", statusKey: 3 })).toBeNull();
+        expect(parseSessionUiChromeRequest({ ...base, method: "setStatus", statusKey: "a", statusText: 3 })).toBeNull();
+        expect(
+            parseSessionUiChromeRequest({ ...base, method: "setWidget", widgetKey: "a", widgetLines: [1] }),
+        ).toBeNull();
+        expect(
+            parseSessionUiChromeRequest({
+                ...base,
+                method: "setWidget",
+                widgetKey: "a",
+                widgetLines: ["x"],
+                widgetPlacement: "side",
+            }),
+        ).toBeNull();
+        expect(parseSessionUiChromeRequest({ ...base, method: "setTitle", title: 3 })).toBeNull();
+    });
+
+    it("parses all RpcExtensionUIRequest variants at the wire boundary and rejects malformed ones", () => {
+        expect(
+            parseRpcExtensionUiRequest({
+                type: "extension_ui_request",
+                id: "n1",
+                method: "notify",
+                message: "Saved",
+                notifyType: "warning",
+            }),
+        ).toEqual({
+            type: "extension_ui_request",
+            id: "n1",
+            method: "notify",
+            message: "Saved",
+            notifyType: "warning",
+        });
+        expect(
+            parseRpcExtensionUiRequest({
+                type: "extension_ui_request",
+                id: "n2",
+                method: "notify",
+                message: "Saved",
+                notifyType: "bogus",
+            }),
+        ).toBeNull();
+        expect(
+            parseRpcExtensionUiRequest({
+                type: "extension_ui_request",
+                id: "d1",
+                method: "select",
+                title: "Pick",
+            }),
+        ).toBeNull();
+
+        expect(
+            parseSessionWsServerMessage({
+                type: "sync:delta",
+                cursor: { epoch: "rt-1", seq: 5 },
+                delta: {
+                    kind: "ui_request",
+                    request: {
+                        type: "extension_ui_request",
+                        id: "n3",
+                        method: "notify",
+                        message: "Bad tone",
+                        notifyType: "critical",
+                    },
+                },
+            }),
+        ).toBeNull();
+
+        expect(
+            parseSessionWsServerMessage({
+                type: "sync:snapshot",
+                cursor: { epoch: "rt-1", seq: 0 },
+                snapshot: {
+                    entriesVersion: "3:1.5.2",
+                    baseEntryCount: 0,
+                    entries: { mode: "inline", data: [] },
+                    state: {
+                        sessionId: "session-1",
+                        cwd: "/tmp/project",
+                        name: null,
+                        model: null,
+                        contextUsage: null,
+                        routedModel: null,
+                        thinkingLevel: "medium",
+                        isStreaming: false,
+                        isCompacting: false,
+                        steeringMode: "one-at-a-time",
+                        followUpMode: "all",
+                        autoCompactionEnabled: true,
+                        messageCount: 0,
+                        steeringMessages: [],
+                        followUpMessages: [],
+                    },
+                    liveMessage: null,
+                    pendingUiRequests: [
+                        { type: "extension_ui_request", id: "n4", method: "notify", message: "Not a dialog" },
+                    ],
+                    uiState: EMPTY_SESSION_UI_STATE,
+                },
+            }),
+        ).toBeNull();
+
+        expect(
+            parseSessionStateSnapshot({
+                sessionId: "session-1",
+                cwd: "/tmp/project",
+                name: null,
+                model: null,
+                contextUsage: { tokens: -1, contextWindow: 1000, percent: 0 },
+                routedModel: null,
+                thinkingLevel: "medium",
+                isStreaming: false,
+                isCompacting: false,
+                steeringMode: "one-at-a-time",
+                followUpMode: "all",
+                autoCompactionEnabled: true,
+                messageCount: 0,
+                steeringMessages: [],
+                followUpMessages: [],
+            }),
+        ).toBeNull();
     });
 });

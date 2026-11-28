@@ -1,5 +1,5 @@
 import type { SessionId } from "@pivia/protocol";
-import { Copy, EllipsisVertical, Minimize2, PanelLeft, Pencil, Unplug, X } from "lucide-react";
+import { ChartColumn, Copy, EllipsisVertical, Minimize2, PanelLeft, Pencil, Unplug, X } from "lucide-react";
 import { memo, type DragEvent, type ReactElement } from "react";
 
 import { IconButton, Menu, MenuItem, MenuSeparator } from "@components";
@@ -28,6 +28,7 @@ export interface TopbarProps {
     readonly onToggleSidebar: () => void;
     readonly onCopySessionId: (id: SessionId) => void;
     readonly onDetachSession: (id: SessionId) => void;
+    readonly onShowStats?: ((session: SelectedSession) => void) | undefined;
     readonly onRenameSession?: ((session: SelectedSession) => void) | undefined;
     readonly onCompactSession?: ((id: SessionId) => void) | undefined;
     readonly onClosePane?: (() => void) | undefined;
@@ -56,11 +57,13 @@ function TopbarInner({
     onToggleSidebar,
     onCopySessionId,
     onDetachSession,
+    onShowStats,
     onRenameSession,
     onCompactSession,
     onClosePane,
 }: TopbarProps): ReactElement {
-    const hasRuntimeMenuItems = onRenameSession !== undefined || onCompactSession !== undefined;
+    const hasRuntimeMenuItems =
+        onShowStats !== undefined || onRenameSession !== undefined || onCompactSession !== undefined;
     const titleText = session?.title ?? "No session selected";
     const disambiguate = paneCount > 1 ? ` (${titleText})` : "";
     const Heading = headingLevel === 1 ? "h1" : "h2";
@@ -103,6 +106,16 @@ function TopbarInner({
                     >
                         {session === null ? null : (
                             <>
+                                {onShowStats === undefined ? null : (
+                                    <MenuItem
+                                        icon={<ChartColumn />}
+                                        onClick={() => {
+                                            onShowStats(session);
+                                        }}
+                                    >
+                                        Session stats
+                                    </MenuItem>
+                                )}
                                 {onRenameSession === undefined ? null : (
                                     <MenuItem
                                         icon={<Pencil />}

@@ -1,9 +1,14 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { FileEntry, JsonAgentSessionEvent, RpcExtensionUIRequest } from "@earendil-works/pi-coding-agent";
 import {
+    EMPTY_SESSION_UI_STATE,
     assertNever,
     isRecord,
+    parseExtensionDialogRequest,
+    parseSetEditorTextRequest,
+    parseSessionUiChromeRequest,
     type EntriesVersion,
+    type ExtensionDialogRequest,
     type HydratableSyncReducer,
     type SessionCloseReason,
     type SessionDelta,
@@ -12,6 +17,8 @@ import {
     type SessionSnapshot,
     type SessionStatePatch,
     type SessionStateSnapshot,
+    type SessionUiChromeRequest,
+    type SessionUiState,
 } from "@pivia/protocol";
 
 import { readNonNegativeNumber } from "./readers";
@@ -108,6 +115,21 @@ export interface SessionHttpHydrationDescriptor {
     readonly baseEntryCount: number;
 }
 
+/** One transient extension message that the session view reports through the toast stack. */
+export interface SessionNotice {
+    /** Stable key; a repeated wire message with the same key is shown once. */
+    readonly id: string;
+    readonly tone: "info" | "warning" | "error";
+    readonly title: string;
+    readonly description: string | null;
+}
+
+/** One `set_editor_text` command; `sequence` grows so the composer applies each command once. */
+export interface EditorTextRequest {
+    readonly sequence: number;
+    readonly text: string;
+}
+
 /** Everything the session view needs from the active runtime. */
 export interface SessionState {
     readonly status: SessionConnectionStatus;
@@ -125,7 +147,15 @@ export interface SessionState {
     readonly liveActivity: SessionLiveActivity;
     /** Terminal cancellation or retry-failure notice cleared on the next run or session reset. */
     readonly activityNotice: SessionActivityNotice | null;
-    readonly pendingUiRequests: readonly RpcExtensionUIRequest[];
+    readonly pendingUiRequests: readonly ExtensionDialogRequest[];
+    /** Extension notifications and failures waiting to be shown as toasts. */
+    readonly notices: readonly SessionNotice[];
+    /** Monotonic counter for `set_editor_text` so acknowledged commands never reuse a sequence. */
+    readonly editorTextSequence: number;
+    /** Newest editor text command not yet applied by the composer. */
+    readonly editorTextRequest: EditorTextRequest | null;
+    /** Extension status lines, widgets, and window title cached by the server snapshot. */
+    readonly uiState: SessionUiState;
     readonly lastError: string | null;
 }
 
@@ -150,6 +180,10 @@ export const initialSessionState: SessionState = {
     liveActivity: { kind: "idle" },
     activityNotice: null,
     pendingUiRequests: [],
+    notices: [],
+    editorTextSequence: 0,
+    editorTextRequest: null,
+    uiState: EMPTY_SESSION_UI_STATE,
     lastError: null,
 };
 
@@ -173,19 +207,82 @@ export function buildSessionPrefixAnchor(state: SessionState): SessionPrefixAnch
 
 type AssistantDelta = Extract<JsonAgentSessionEvent, { type: "message_update" }>["assistantMessageEvent"];
 
-const INTERACTIVE_METHODS: ReadonlySet<RpcExtensionUIRequest["method"]> = new Set([
-    "select",
-    "confirm",
-    "input",
-    "editor",
-]);
+/** Cap on undrained notices so a noisy extension cannot grow session state without bound. */
+const MAX_SESSION_NOTICES = 20;
 
-function isDialogRequest(request: RpcExtensionUIRequest): boolean {
-    return INTERACTIVE_METHODS.has(request.method);
+type ExtensionErrorDelta = Extract<SessionDelta, { readonly kind: "extension_error" }>;
+
+function noticeForUiRequest(request: RpcExtensionUIRequest): SessionNotice | null {
+    if (request.method !== "notify") {
+        return null;
+    }
+    return {
+        id: `notify:${request.id}`,
+        tone: request.notifyType ?? "info",
+        title: request.message,
+        description: null,
+    };
 }
 
-function filterInteractiveUiRequests(requests: readonly RpcExtensionUIRequest[]): readonly RpcExtensionUIRequest[] {
-    return requests.filter(isDialogRequest);
+function noticeForExtensionError(delta: ExtensionErrorDelta): SessionNotice {
+    return {
+        id: `extension-error:${delta.extensionPath}:${delta.event}`,
+        tone: "error",
+        title: "Extension failed",
+        description: `${delta.extensionPath}: ${delta.error}`,
+    };
+}
+
+function replaceByKey<T>(items: readonly T[], next: T, keyOf: (item: T) => string): readonly T[] {
+    const index = items.findIndex((item) => keyOf(item) === keyOf(next));
+    if (index === -1) {
+        return [...items, next];
+    }
+    const current = items[index];
+    if (current === undefined) {
+        return items;
+    }
+    const updated = [...items];
+    updated[index] = next;
+    return updated;
+}
+
+/** Apply one extension chrome command; `null` means the request is not chrome. */
+function applyUiChrome(state: SessionUiState, request: SessionUiChromeRequest): SessionUiState {
+    switch (request.kind) {
+        case "status": {
+            const statuses =
+                request.text === undefined
+                    ? state.statuses.filter((status) => status.key !== request.key)
+                    : replaceByKey(state.statuses, { key: request.key, text: request.text }, (status) => status.key);
+            return statuses === state.statuses ? state : { ...state, statuses };
+        }
+        case "widget": {
+            const widgets =
+                request.lines === undefined
+                    ? state.widgets.filter((widget) => widget.key !== request.key)
+                    : replaceByKey(
+                          state.widgets,
+                          { key: request.key, lines: request.lines, placement: request.placement },
+                          (widget) => widget.key,
+                      );
+            return widgets === state.widgets ? state : { ...state, widgets };
+        }
+        case "title": {
+            const title = request.title === "" ? null : request.title;
+            return title === state.title ? state : { ...state, title };
+        }
+        default:
+            return assertNever(request);
+    }
+}
+
+function appendNotice(notices: readonly SessionNotice[], notice: SessionNotice): readonly SessionNotice[] {
+    if (notices.some((candidate) => candidate.id === notice.id)) {
+        return notices;
+    }
+    const next = [...notices, notice];
+    return next.length > MAX_SESSION_NOTICES ? next.slice(next.length - MAX_SESSION_NOTICES) : next;
 }
 
 function replaceContent(message: AssistantMessage, index: number, block: AssistantMessage["content"][number]) {
@@ -365,6 +462,17 @@ function applySessionEvent(
     }
 }
 
+const STATE_PATCH_KEYS: Record<keyof SessionStatePatch, true> = {
+    model: true,
+    contextUsage: true,
+    routedModel: true,
+    messageCount: true,
+    autoCompactionEnabled: true,
+    steeringMode: true,
+    followUpMode: true,
+};
+void STATE_PATCH_KEYS;
+
 function applyStatePatch(summary: SessionStateSnapshot | null, patch: SessionStatePatch): SessionStateSnapshot | null {
     if (summary === null) {
         return null;
@@ -372,6 +480,8 @@ function applyStatePatch(summary: SessionStateSnapshot | null, patch: SessionSta
     return {
         ...summary,
         ...(patch.model === undefined ? {} : { model: patch.model }),
+        ...(patch.contextUsage === undefined ? {} : { contextUsage: patch.contextUsage }),
+        ...(patch.routedModel === undefined ? {} : { routedModel: patch.routedModel }),
         ...(patch.messageCount === undefined ? {} : { messageCount: patch.messageCount }),
         ...(patch.autoCompactionEnabled === undefined ? {} : { autoCompactionEnabled: patch.autoCompactionEnabled }),
         ...(patch.steeringMode === undefined ? {} : { steeringMode: patch.steeringMode }),
@@ -659,7 +769,19 @@ export const CLEARED_LIVE_RUNTIME_STATE = {
     liveToolExecutions: EMPTY_LIVE_TOOL_EXECUTIONS,
     liveActivity: { kind: "idle" },
     activityNotice: null,
-} as const satisfies Pick<SessionState, "liveMessage" | "liveToolExecutions" | "liveActivity" | "activityNotice">;
+    notices: [],
+    editorTextRequest: null,
+    uiState: EMPTY_SESSION_UI_STATE,
+} as const satisfies Pick<
+    SessionState,
+    | "liveMessage"
+    | "liveToolExecutions"
+    | "liveActivity"
+    | "activityNotice"
+    | "notices"
+    | "editorTextRequest"
+    | "uiState"
+>;
 
 /** Transition into terminal `closed` state while wiping transient dialogs and live streams. */
 export function applySessionClosed(state: SessionState, reason: SessionCloseReason, message?: string): SessionState {
@@ -703,7 +825,8 @@ export function createSessionSyncReducer(): HydratableSyncReducer<
                     liveToolExecutions: EMPTY_LIVE_TOOL_EXECUTIONS,
                     liveActivity: snapshotLiveActivity(snapshot.state),
                     activityNotice: null,
-                    pendingUiRequests: filterInteractiveUiRequests(snapshot.pendingUiRequests),
+                    pendingUiRequests: snapshot.pendingUiRequests,
+                    uiState: snapshot.uiState,
                     lastError: null,
                 };
             }
@@ -723,7 +846,8 @@ export function createSessionSyncReducer(): HydratableSyncReducer<
                 liveToolExecutions: EMPTY_LIVE_TOOL_EXECUTIONS,
                 liveActivity: snapshotLiveActivity(snapshot.state),
                 activityNotice: null,
-                pendingUiRequests: filterInteractiveUiRequests(snapshot.pendingUiRequests),
+                pendingUiRequests: snapshot.pendingUiRequests,
+                uiState: snapshot.uiState,
                 lastError: null,
             };
         },
@@ -818,16 +942,39 @@ export function createSessionSyncReducer(): HydratableSyncReducer<
                         lastError: null,
                     };
                 case "ui_request": {
-                    if (!isDialogRequest(delta.request)) {
+                    const dialog = parseExtensionDialogRequest(delta.request);
+                    if (dialog !== null) {
+                        if (prev.pendingUiRequests.some((candidate) => candidate.id === dialog.id)) {
+                            return prev;
+                        }
+                        return {
+                            ...prev,
+                            pendingUiRequests: [...prev.pendingUiRequests, dialog],
+                        };
+                    }
+                    const editorText = parseSetEditorTextRequest(delta.request);
+                    if (editorText !== null) {
+                        const sequence = prev.editorTextSequence + 1;
+                        return {
+                            ...prev,
+                            editorTextSequence: sequence,
+                            editorTextRequest: {
+                                sequence,
+                                text: editorText.text,
+                            },
+                        };
+                    }
+                    const chrome = parseSessionUiChromeRequest(delta.request);
+                    if (chrome !== null) {
+                        const uiState = applyUiChrome(prev.uiState, chrome);
+                        return uiState === prev.uiState ? prev : { ...prev, uiState };
+                    }
+                    const notice = noticeForUiRequest(delta.request);
+                    if (notice === null) {
                         return prev;
                     }
-                    if (prev.pendingUiRequests.some((candidate) => candidate.id === delta.request.id)) {
-                        return prev;
-                    }
-                    return {
-                        ...prev,
-                        pendingUiRequests: [...prev.pendingUiRequests, delta.request],
-                    };
+                    const notices = appendNotice(prev.notices, notice);
+                    return notices === prev.notices ? prev : { ...prev, notices };
                 }
                 case "ui_resolved": {
                     const pendingUiRequests = prev.pendingUiRequests.filter(
@@ -837,8 +984,10 @@ export function createSessionSyncReducer(): HydratableSyncReducer<
                         ? prev
                         : { ...prev, pendingUiRequests };
                 }
-                case "extension_error":
-                    return prev;
+                case "extension_error": {
+                    const notices = appendNotice(prev.notices, noticeForExtensionError(delta));
+                    return notices === prev.notices ? prev : { ...prev, notices };
+                }
                 default:
                     return assertNever(delta);
             }

@@ -1,6 +1,8 @@
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { EMPTY_SESSION_UI_STATE } from "@pivia/protocol";
+
 import { IndexedDbAppCache } from "@/lib/cache";
 import { createApiClient, type FetchLike } from "@/lib/transport";
 import { FakeWebSocket } from "@/test/fake-socket";
@@ -78,6 +80,7 @@ describe("createAppStores", () => {
                 state: makeSessionStateSnapshot({ sessionId: SESSION_1 }),
                 liveMessage: null,
                 pendingUiRequests: [],
+                uiState: EMPTY_SESSION_UI_STATE,
             },
         });
         sock2.open();
@@ -169,6 +172,7 @@ describe("createAppStores", () => {
                 state: makeSessionStateSnapshot({ sessionId: SESSION_1 }),
                 liveMessage: null,
                 pendingUiRequests: [],
+                uiState: EMPTY_SESSION_UI_STATE,
             },
         });
 

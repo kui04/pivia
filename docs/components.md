@@ -37,6 +37,7 @@
 - **Input**: Bare text-field styling over Base UI Input. Always wrap in `Field` when a label, description, or validation error is needed.
 - **Select**: Bare single-select control over Base UI Select. Wrap in `Field` with `nativeLabel={false}`. Uses `items` for selected labels, copies the trigger's `aria-labelledby` to the listbox, defaults to `modal={false}` so it works inside `Dialog`, and uses `--z-modal` (its portal must stay ordered after the dialog portal).
 - **Checkbox**: Renders a native `<label>` beside a 16px box with a direct 12px check. Focus stays on the visible `role="checkbox"` element. Because it is not a `Field`, `Form.onFormSubmit` does not collect it; use native form submission when needed.
+- **RadioGroup**: Single-select group built on Base UI Radio Group (`RadioGroup` + `RadioGroupItem`). Arrow keys move and select, Space selects the focused item, and the group exposes `role="radiogroup"`. Each item wires its label through `aria-labelledby`, because a custom `role="radio"` span takes no name from the wrapping `<label>` alone. Selection never submits on its own: callers place the confirm action in the surrounding form. Keep `value` controlled with `null` for "nothing selected".
 
 ## Rich Content and Media
 

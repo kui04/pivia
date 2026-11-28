@@ -96,12 +96,13 @@ export const RuntimeStates: Story = {
             />
             <SessionRow {...args} session={{ ...args.session, id: sid("session-attached"), attachedClients: 1 }} />
             <SessionRow {...args} session={{ ...args.session, id: sid("session-closing"), runtimeState: "closing" }} />
+            <SessionRow {...args} session={{ ...args.session, id: sid("session-needs-input") }} needsInput />
         </>
     ),
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
 
-        for (const label of ["Streaming", "Attached", "Closing"]) {
+        for (const label of ["Streaming", "Attached", "Closing", "Needs your answer"]) {
             const dot = canvas.getByRole("img", { name: label });
             await expect(dot).toBeVisible();
             const row = requireElement(dot.closest("li"), "row");

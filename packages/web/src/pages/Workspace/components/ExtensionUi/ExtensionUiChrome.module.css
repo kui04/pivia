@@ -1,0 +1,65 @@
+/*
+ * Extension chrome around the composer: the footer status line and plain-text widgets.
+ *
+ * The markup this file styles:
+ *
+ *   .chrome                     one placement group
+ *   ├─ .statuses                sanitized status texts joined into one line
+ *   └─ .widget                  one widget body
+ *       ├─ .widgetLine          one extension-provided line
+ *       └─ .truncated           replacement for lines past the cap
+ */
+
+.chrome {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-8);
+    min-inline-size: 0;
+    color: var(--color-on-surface-variant);
+
+    &[data-placement="above"] {
+        margin-block-end: var(--space-8);
+    }
+
+    &[data-placement="below"] {
+        margin-block-start: var(--space-8);
+    }
+}
+
+.statuses {
+    margin: 0;
+    overflow: hidden;
+    font-size: var(--type-caption-size);
+    font-weight: var(--type-caption-weight);
+    letter-spacing: var(--type-caption-tracking);
+    line-height: var(--type-caption-line-height);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.widget {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    min-inline-size: 0;
+}
+
+.widgetLine {
+    margin: 0;
+    color: var(--color-on-surface);
+    font-size: var(--type-caption-size);
+    font-weight: var(--type-caption-weight);
+    letter-spacing: var(--type-caption-tracking);
+    line-height: var(--type-caption-line-height);
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+}
+
+.truncated {
+    margin: 0;
+    color: var(--color-on-surface-variant);
+    font-size: var(--type-caption-size);
+    font-weight: var(--type-caption-weight);
+    letter-spacing: var(--type-caption-tracking);
+    line-height: var(--type-caption-line-height);
+}

@@ -1,5 +1,6 @@
-import { assertNever, type SessionId } from "@pivia/protocol";
-import { memo, useCallback, useEffect, useMemo, useState, type DragEvent, type ReactElement } from "react";
+import { assertNever, EMPTY_SESSION_UI_STATE, type ExtensionDialogRequest, type SessionId } from "@pivia/protocol";
+import type { RpcExtensionUIResponse } from "@earendil-works/pi-coding-agent";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactElement } from "react";
 
 import { Button, LoadingIndicator } from "@components";
 import { ensureFontRole } from "@/lib";
@@ -9,6 +10,7 @@ import {
     projectSessionTranscript,
     type SessionActivityNotice,
     type SessionLiveActivity,
+    type SessionNotice,
     type SessionStoreInstance,
     type TranscriptItem,
 } from "@/stores/session";
@@ -17,6 +19,9 @@ import type { SelectedSession } from "@/stores/workspace";
 import type { PaneTarget } from "../../splitLayout";
 import { selectWorkspaceView, type WorkspaceView } from "../../workspaceView";
 import { Composer } from "../Composer";
+import { ExtensionUiChrome, ExtensionUiPrompt } from "../ExtensionUi";
+import { SessionStatsDialog } from "../SessionStatsDialog";
+import { SessionStatusBar } from "../SessionStatusBar";
 import { Topbar } from "../Topbar";
 import { collectQueuedEntries, Transcript, type QueuedEntry } from "../Transcript";
 import styles from "./SessionPane.module.css";
@@ -51,10 +56,35 @@ export interface SessionPaneProps {
     readonly onOpenLink: (href: string) => void;
 }
 
+function pushToast(id: string, tone: SessionNotice["tone"], title: string, description?: string): void {
+    if (tone === "error") {
+        showError({ id, title, description });
+        return;
+    }
+    if (tone === "warning") {
+        showWarning({ id, title, description });
+        return;
+    }
+    toastManager.add({
+        id,
+        type: "info",
+        priority: "low",
+        title,
+        description,
+    });
+}
+
+/** Report one extension notice through the shared toast stack. */
+function reportNotice(notice: SessionNotice): void {
+    pushToast(notice.id, notice.tone, notice.title, notice.description ?? undefined);
+}
+
 const IDLE_ACTIVITY: SessionLiveActivity = { kind: "idle" };
 const WORKING_ACTIVITY: SessionLiveActivity = { kind: "working" };
 const EMPTY_QUEUE: readonly string[] = [];
 const EMPTY_QUEUED_ENTRIES: readonly QueuedEntry[] = [];
+const EMPTY_NOTICES: readonly SessionNotice[] = [];
+const EMPTY_UI_REQUESTS: readonly ExtensionDialogRequest[] = [];
 
 interface StageProps {
     readonly view: WorkspaceView;
@@ -159,9 +189,15 @@ interface PaneHeaderProps {
     readonly header?: SessionPaneHeaderProps | undefined;
     readonly runtimeReady?: boolean | undefined;
     readonly compacting?: boolean | undefined;
+    readonly onShowStats?: (() => void) | undefined;
 }
 
-function PaneHeader({ header, runtimeReady = false, compacting = false }: PaneHeaderProps): ReactElement | null {
+function PaneHeader({
+    header,
+    runtimeReady = false,
+    compacting = false,
+    onShowStats,
+}: PaneHeaderProps): ReactElement | null {
     if (header === undefined) {
         return null;
     }
@@ -182,6 +218,7 @@ function PaneHeader({ header, runtimeReady = false, compacting = false }: PaneHe
             onToggleSidebar={header.onToggleSidebar}
             onCopySessionId={header.onCopySessionId}
             onDetachSession={header.onDetachSession}
+            onShowStats={onShowStats}
             onRenameSession={header.onRenameSession}
             onCompactSession={header.onCompactSession}
             onClosePane={header.onClosePane}
@@ -221,8 +258,83 @@ function ConnectedSessionBody({
     const lastError = sessionStore((state) => state.lastError);
     const retryEntriesSync = sessionStore((state) => state.retryEntriesSync);
     const sendCommand = sessionStore((state) => state.sendCommand);
+    const pendingUiRequests = sessionStore((state) => state.pendingUiRequests);
+    const sendUiResponse = sessionStore((state) => state.sendUiResponse);
+    const notices = sessionStore((state) => state.notices);
+    const dismissNotices = sessionStore((state) => state.dismissNotices);
+    const editorTextRequest = sessionStore((state) => state.editorTextRequest);
+    const acknowledgeEditorText = sessionStore((state) => state.acknowledgeEditorText);
+    const uiState = sessionStore((state) => state.uiState);
 
     const routeMatchesStore = activeSessionId === sessionId;
+    const scopedNotices = routeMatchesStore ? notices : EMPTY_NOTICES;
+    const scopedPendingUiRequests = routeMatchesStore ? pendingUiRequests : EMPTY_UI_REQUESTS;
+    const scopedUiState = routeMatchesStore ? uiState : EMPTY_SESSION_UI_STATE;
+    const scopedEditorTextRequest = routeMatchesStore ? editorTextRequest : null;
+
+    useEffect(() => {
+        if (scopedNotices.length === 0) {
+            return;
+        }
+        for (const notice of scopedNotices) {
+            reportNotice(notice);
+        }
+        dismissNotices(scopedNotices.map((notice) => notice.id));
+    }, [dismissNotices, scopedNotices]);
+
+    const [statsOpen, setStatsOpen] = useState(false);
+    const [promptMinimized, setPromptMinimized] = useState(false);
+    const [answeringPromptId, setAnsweringPromptId] = useState<string | null>(null);
+    const [promptError, setPromptError] = useState<string | null>(null);
+
+    const prompt = scopedPendingUiRequests[0];
+    const promptId = prompt?.id;
+    const promptIdRef = useRef(promptId);
+    const paneFocused = header?.focused ?? true;
+
+    // A new request opens on top of the last one, so an answer is never left hidden by a minimize.
+    const [promptTrackedId, setPromptTrackedId] = useState<string | undefined>(promptId);
+    if (promptTrackedId !== promptId) {
+        setPromptTrackedId(promptId);
+        setPromptMinimized(false);
+        setAnsweringPromptId(null);
+        setPromptError(null);
+    }
+    if (answeringPromptId !== null && status !== "open") {
+        setAnsweringPromptId(null);
+    }
+
+    useEffect(() => {
+        promptIdRef.current = promptId;
+    }, [promptId]);
+
+    // Only the focused pane owns the window title; an unfocused pane must not overwrite it.
+    useEffect(() => {
+        if (!paneFocused || scopedUiState.title === null) {
+            return undefined;
+        }
+        const previous = document.title;
+        document.title = scopedUiState.title;
+        return () => {
+            document.title = previous;
+        };
+    }, [paneFocused, scopedUiState.title]);
+
+    const handlePromptReply = (reply: RpcExtensionUIResponse): void => {
+        if (prompt === undefined || answeringPromptId === prompt.id) {
+            return;
+        }
+        const requestId = prompt.id;
+        setAnsweringPromptId(requestId);
+        setPromptError(null);
+        void sendUiResponse(reply).catch((error: unknown) => {
+            setAnsweringPromptId((current) => (current === requestId ? null : current));
+            if (promptIdRef.current === requestId) {
+                setPromptError(error instanceof Error ? error.message : String(error));
+            }
+        });
+    };
+
     const terminalStatus = status === "error" || status === "closed";
     const connectedRuntime = status === "open" || status === "reconnecting";
     const composerConnected = routeMatchesStore && status === "open";
@@ -270,17 +382,10 @@ function ConnectedSessionBody({
     const handleNotify = useCallback(
         (notice: { readonly tone: "info" | "warning" | "error"; readonly message: string }) => {
             if (notice.tone === "error") {
-                showError({ id: "composer-error", title: "Composer error", description: notice.message });
-            } else if (notice.tone === "warning") {
-                showWarning({ id: "composer-warning", title: notice.message });
-            } else {
-                toastManager.add({
-                    id: "composer-info",
-                    type: "info",
-                    priority: "low",
-                    title: notice.message,
-                });
+                pushToast("composer-error", "error", "Composer error", notice.message);
+                return;
             }
+            pushToast(`composer-${notice.tone}`, notice.tone, notice.message);
         },
         [],
     );
@@ -319,6 +424,9 @@ function ConnectedSessionBody({
                 header={header}
                 runtimeReady={composerConnected}
                 compacting={routeMatchesStore && sessionState?.isCompacting === true}
+                onShowStats={() => {
+                    setStatsOpen(true);
+                }}
             />
             <div className={styles.stage}>
                 {renderStage({
@@ -338,16 +446,51 @@ function ConnectedSessionBody({
             <div className={styles.composerBand}>
                 <div className={styles.composerFade} aria-hidden="true" />
                 <div className={styles.composerColumn}>
+                    <ExtensionUiChrome uiState={scopedUiState} placement="above" />
                     <Composer
                         key={sessionId}
                         sessionId={sessionId}
                         state={routeMatchesStore ? sessionState : null}
                         connected={composerConnected}
+                        extensionPrompt={
+                            scopedPendingUiRequests.length === 0
+                                ? undefined
+                                : {
+                                      count: scopedPendingUiRequests.length,
+                                      reason: "Waiting for an extension answer.",
+                                      onOpen: () => {
+                                          setPromptMinimized(false);
+                                      },
+                                  }
+                        }
+                        editorTextRequest={scopedEditorTextRequest ?? undefined}
+                        onEditorTextApplied={acknowledgeEditorText}
                         onSendCommand={sendCommand}
                         onNotify={handleNotify}
                     />
+                    <ExtensionUiChrome uiState={scopedUiState} placement="below" />
+                    <SessionStatusBar state={routeMatchesStore ? sessionState : null} entries={entries} />
                 </div>
             </div>
+            <SessionStatsDialog
+                open={statsOpen}
+                onOpenChange={setStatsOpen}
+                state={routeMatchesStore ? sessionState : null}
+                entries={entries}
+            />
+            {prompt !== undefined ? (
+                <ExtensionUiPrompt
+                    key={prompt.id}
+                    open={paneFocused && !promptMinimized}
+                    request={prompt}
+                    pending={answeringPromptId === prompt.id || status !== "open"}
+                    error={promptError}
+                    onReply={handlePromptReply}
+                    onMinimize={() => {
+                        setPromptMinimized(true);
+                    }}
+                />
+            ) : null}
         </section>
     );
 }
@@ -427,6 +570,7 @@ function SessionPaneInner({ target, sessionStore, header, onFocus, onOpenLink }:
 
     return (
         <ConnectedSessionBody
+            key={target.sessionId}
             sessionId={target.sessionId}
             sessionStore={sessionStore}
             header={header}

@@ -15,6 +15,9 @@ import styles from "./SessionRow.module.css";
 /** How long a touch must rest before the session menu opens. */
 const LONG_PRESS_MS = 500;
 
+/** Accessible name of the trailing dot shown while an extension waits for an answer. */
+const NEEDS_INPUT_LABEL = "Needs your answer";
+
 /** How far a touching finger may drift before the press counts as a scroll instead of a hold. */
 const LONG_PRESS_MOVE_TOLERANCE_PX = 10;
 
@@ -22,6 +25,8 @@ export interface SessionRowProps {
     readonly session: SessionRowModel;
     readonly nowMs: number;
     readonly closing: boolean;
+    /** True while the session runtime waits for an extension answer. */
+    readonly needsInput?: boolean | undefined;
     readonly canSplitRow?: boolean | undefined;
     readonly canSplitColumn?: boolean | undefined;
     readonly onSelect: (id: SessionId) => void;
@@ -37,6 +42,7 @@ function areSessionRowPropsEqual(prev: SessionRowProps, next: SessionRowProps): 
     if (
         prev.nowMs !== next.nowMs ||
         prev.closing !== next.closing ||
+        prev.needsInput !== next.needsInput ||
         prev.canSplitRow !== next.canSplitRow ||
         prev.canSplitColumn !== next.canSplitColumn ||
         prev.onSelect !== next.onSelect ||
@@ -70,12 +76,14 @@ function areSessionRowPropsEqual(prev: SessionRowProps, next: SessionRowProps): 
  * The row renders one primary button plus a sibling action layer (never nested buttons) so
  * keyboard focus reaches the title and actions separately. Touch devices open the same actions
  * via a long-press context menu. The trailing slot shows the relative age, or a status dot while
- * the runtime is starting, streaming, compacting, closing or attached.
+ * the runtime is starting, streaming, compacting, closing or attached. A pending extension answer
+ * replaces either with a needs-input dot, because it blocks the runtime until the user replies.
  */
 function SessionRowInner({
     session,
     nowMs,
     closing,
+    needsInput = false,
     canSplitRow = true,
     canSplitColumn = true,
     onSelect,
@@ -173,8 +181,18 @@ function SessionRowInner({
                 <span className={styles.title} data-named={session.named} title={session.title}>
                     {session.title}
                 </span>
-                <span className={styles.age} data-state={status.kind === "active" ? status.state : undefined}>
-                    {status.kind === "idle" ? (
+                <span
+                    className={styles.age}
+                    data-state={needsInput ? "needs-input" : status.kind === "active" ? status.state : undefined}
+                >
+                    {needsInput ? (
+                        <span
+                            className={styles.indicator}
+                            role="img"
+                            aria-label={NEEDS_INPUT_LABEL}
+                            title={NEEDS_INPUT_LABEL}
+                        />
+                    ) : status.kind === "idle" ? (
                         Formatter.relativeAge(status.modifiedAtMs, nowMs)
                     ) : (
                         <span className={styles.indicator} role="img" aria-label={status.label} title={status.label} />

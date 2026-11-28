@@ -8,6 +8,8 @@ export {
     type SessionStoreInstance,
 } from "./pool";
 export { projectSessionTranscript, type ProjectedTranscriptItem, type ProjectTranscriptOptions } from "./projection";
+export { summarizeSessionStats, type SessionStatsSummary, type SessionUsageTotals } from "./stats";
+export type { EditorTextRequest, SessionNotice } from "./reducer";
 export {
     createSessionStore,
     initialSessionState,

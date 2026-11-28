@@ -1,5 +1,6 @@
 import type { FileEntry } from "@earendil-works/pi-coding-agent";
 import {
+    EMPTY_SESSION_UI_STATE,
     SESSION_CLOSE_CODE,
     type SessionDetailResponse,
     type SessionSnapshot,
@@ -38,6 +39,7 @@ function snapshot(seqNum: number, overrides: Partial<SessionSnapshot> = {}): Ses
             state: makeSessionStateSnapshot(),
             liveMessage: null,
             pendingUiRequests: [],
+            uiState: EMPTY_SESSION_UI_STATE,
             ...overrides,
         },
     };
@@ -131,6 +133,7 @@ describe("createSessionStore", () => {
             sessionId: SESSION_1,
             entries: [],
             pendingUiRequests: [],
+            uiState: EMPTY_SESSION_UI_STATE,
         });
         expect(store.getState().state).toEqual(makeSessionStateSnapshot());
     });
@@ -251,6 +254,7 @@ describe("createSessionStore", () => {
             sessionId: null,
             state: null,
             pendingUiRequests: [],
+            uiState: EMPTY_SESSION_UI_STATE,
         });
     });
 
@@ -271,6 +275,7 @@ describe("createSessionStore", () => {
             entries: [],
             state: null,
             pendingUiRequests: [],
+            uiState: EMPTY_SESSION_UI_STATE,
         });
 
         // The memory cache is gone, so reconnecting starts from an empty branch.
@@ -332,6 +337,7 @@ describe("createSessionStore", () => {
                 state: makeSessionStateSnapshot({ sessionId: SESSION_A }),
                 liveMessage: null,
                 pendingUiRequests: [],
+                uiState: EMPTY_SESSION_UI_STATE,
             },
         });
 
@@ -405,6 +411,7 @@ describe("createSessionStore", () => {
                 state: makeSessionStateSnapshot({ sessionId: SESSION_BIG }),
                 liveMessage: null,
                 pendingUiRequests: [],
+                uiState: EMPTY_SESSION_UI_STATE,
             },
         });
 
@@ -555,6 +562,7 @@ describe("createSessionStore", () => {
                 state: makeSessionStateSnapshot(),
                 liveMessage: null,
                 pendingUiRequests: [],
+                uiState: EMPTY_SESSION_UI_STATE,
             },
         });
         expect(store.getState().entries.map((entry) => entry.id)).toEqual(["session-1", "e1", "e2", "e3", "e4"]);
@@ -780,6 +788,61 @@ describe("createSessionStore", () => {
 
         expect(store.getState().entriesSync.kind).toBe("idle");
         expect(store.getState().entries.map((entry) => entry.id)).toEqual(["session-1", "e1", "e2", "e3"]);
+        store.getState().disconnect();
+    });
+
+    it("dismisses notices and acknowledges editor text commands by sequence", () => {
+        const store = createSessionStore({ WebSocket: FakeWebSocket, apiClient: stubApiClient });
+        const socket = connectAndOpen(store);
+
+        socket.receive({
+            type: "sync:delta",
+            cursor: { epoch: RUNTIME_1, seq: sessionSeq(1) },
+            delta: {
+                kind: "ui_request",
+                request: { type: "extension_ui_request", id: "n1", method: "notify", message: "Heads up" },
+            },
+        });
+        socket.receive({
+            type: "sync:delta",
+            cursor: { epoch: RUNTIME_1, seq: sessionSeq(2) },
+            delta: {
+                kind: "ui_request",
+                request: { type: "extension_ui_request", id: "e1", method: "set_editor_text", text: "draft" },
+            },
+        });
+
+        expect(store.getState().notices).toEqual([
+            { id: "notify:n1", tone: "info", title: "Heads up", description: null },
+        ]);
+        expect(store.getState().editorTextRequest).toEqual({ sequence: 1, text: "draft" });
+
+        store.getState().acknowledgeEditorText(0);
+        expect(store.getState().editorTextRequest).toEqual({ sequence: 1, text: "draft" });
+        store.getState().acknowledgeEditorText(1);
+        expect(store.getState().editorTextRequest).toBeNull();
+
+        store.getState().dismissNotices(["notify:n1"]);
+        expect(store.getState().notices).toEqual([]);
+
+        // Subsequent deltas must neither resurrect dismissed notices nor reuse sequence 1.
+        socket.receive({
+            type: "sync:delta",
+            cursor: { epoch: RUNTIME_1, seq: sessionSeq(3) },
+            delta: { kind: "agent_event", event: { type: "agent_start" } },
+        });
+        expect(store.getState().notices).toEqual([]);
+        expect(store.getState().editorTextRequest).toBeNull();
+
+        socket.receive({
+            type: "sync:delta",
+            cursor: { epoch: RUNTIME_1, seq: sessionSeq(4) },
+            delta: {
+                kind: "ui_request",
+                request: { type: "extension_ui_request", id: "e2", method: "set_editor_text", text: "second" },
+            },
+        });
+        expect(store.getState().editorTextRequest).toEqual({ sequence: 2, text: "second" });
         store.getState().disconnect();
     });
 });

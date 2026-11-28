@@ -1,4 +1,5 @@
 import {
+    EMPTY_SESSION_UI_STATE,
     SESSION_CLOSE_CODE,
     type SessionRpcServerMessage,
     type SessionSyncFrame,
@@ -236,6 +237,8 @@ describe("SessionSocket", () => {
             cwd: "/tmp",
             name: null,
             model: null,
+            contextUsage: null,
+            routedModel: null,
             thinkingLevel: "off" as const,
             isStreaming: false,
             isCompacting: false,
@@ -258,6 +261,7 @@ describe("SessionSocket", () => {
                     state,
                     liveMessage: null,
                     pendingUiRequests: [],
+                    uiState: EMPTY_SESSION_UI_STATE,
                 },
             },
             {

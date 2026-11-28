@@ -87,6 +87,10 @@ export interface SessionStoreActions {
     retryEntriesSync: () => void;
     sendCommand: (command: SessionRpcCommand) => Promise<SessionRpcResponseMessage>;
     sendUiResponse: (response: RpcExtensionUIResponse) => Promise<void>;
+    /** Removes notices after the session view reported them through the toast stack. */
+    dismissNotices: (ids: readonly string[]) => void;
+    /** Clears the editor text command once the composer applied the given sequence. */
+    acknowledgeEditorText: (sequence: number) => void;
 }
 
 /** Combined state and actions of the active session store. */
@@ -631,6 +635,20 @@ export function createSessionStore(options: SessionStoreOptions) {
                 } catch (error) {
                     return Promise.reject(error instanceof Error ? error : new Error(String(error)));
                 }
+            },
+            dismissNotices: (ids) => {
+                if (ids.length === 0) {
+                    return;
+                }
+                syncClient.updateLocalState((state) => {
+                    const remaining = state.notices.filter((notice) => !ids.includes(notice.id));
+                    return remaining.length === state.notices.length ? state : { ...state, notices: remaining };
+                });
+            },
+            acknowledgeEditorText: (sequence) => {
+                syncClient.updateLocalState((state) =>
+                    state.editorTextRequest?.sequence === sequence ? { ...state, editorTextRequest: null } : state,
+                );
             },
         };
     });
