@@ -423,6 +423,7 @@ function ConnectedSessionBody({
             />
             <div className={styles.stage}>
                 <ConnectedTranscriptStage
+                    key={sessionId}
                     sessionId={sessionId}
                     sessionStore={sessionStore}
                     routeMatchesStore={routeMatchesStore}

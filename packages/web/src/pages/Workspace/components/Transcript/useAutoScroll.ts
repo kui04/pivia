@@ -353,6 +353,17 @@ export function useAutoScroll({
         wasEnabledRef.current = true;
         wasStreamingRef.current = streaming;
 
+        // A virtualized list measures its rows across several layout passes after the first
+        // commit. Close the initial phase after a quiet gap that starts only once the child
+        // reported a measurement; a reader's scroll up ends it first.
+        let settleTimer = 0;
+        const finishSettling = (): void => {
+            if (pendingInitialBottomRef.current) {
+                pendingInitialBottomRef.current = false;
+                setSettled(true);
+            }
+        };
+
         const apply = (signal: ScrollSignal): ScrollEdges => {
             const metrics = readScrollMetrics(node);
             const resolution = resolveScroll({
@@ -381,7 +392,7 @@ export function useAutoScroll({
             if (reachedBottom || (signal.kind === "scroll" && resolution.pin === "released")) {
                 finishSettling();
             }
-            scheduleSettle();
+            scheduleSettleRef.current();
             return edges;
         };
 
@@ -390,27 +401,7 @@ export function useAutoScroll({
             onViewportChangeRef.current?.();
         };
 
-        // The attach decision samples geometry as soon as the effect runs; its edges publish on the
-        // next frame because an effect must not update state synchronously.
-        let frame = 0;
-        const publishLater = (next: ScrollEdges): void => {
-            frame = window.requestAnimationFrame(() => {
-                frame = 0;
-                publish(next);
-            });
-        };
-
-        // A virtualized list measures its rows across several layout passes after the first
-        // commit. Close the initial phase after a quiet gap that starts only once the child
-        // reported a measurement; a reader's scroll up ends it first.
-        function finishSettling(): void {
-            if (pendingInitialBottomRef.current) {
-                pendingInitialBottomRef.current = false;
-                setSettled(true);
-            }
-        }
-        let settleTimer = 0;
-        function scheduleSettle(): void {
+        const scheduleSettle = (): void => {
             if (settleTimer !== 0) {
                 window.clearTimeout(settleTimer);
                 settleTimer = 0;
@@ -425,8 +416,18 @@ export function useAutoScroll({
                     publish(apply({ kind: "settled" }));
                 }
             }, SETTLE_QUIET_MS);
-        }
+        };
         scheduleSettleRef.current = scheduleSettle;
+
+        // The attach decision samples geometry as soon as the effect runs; its edges publish on the
+        // next frame because an effect must not update state synchronously.
+        let frame = 0;
+        const publishLater = (next: ScrollEdges): void => {
+            frame = window.requestAnimationFrame(() => {
+                frame = 0;
+                publish(next);
+            });
+        };
 
         if (justEnabled) {
             publishLater(apply({ kind: "attach" }));

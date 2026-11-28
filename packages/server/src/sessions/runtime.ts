@@ -248,10 +248,10 @@ export interface SessionRegistryOptions {
 }
 
 /** Delta subtypes eligible for per-frame stream coalescing without altering message structure. */
-export type CoalescedDeltaKind = "text_delta" | "thinking_delta";
+type CoalescedDeltaKind = "text_delta" | "thinking_delta";
 
 /** Pending stream delta buffer for one active session, preserving exact wire ordering across non-delta boundaries. */
-export type PendingStreamDelta =
+type PendingStreamDelta =
     | { readonly kind: "idle" }
     | {
           readonly kind: "buffered";
@@ -262,10 +262,17 @@ export type PendingStreamDelta =
           readonly timer: ReturnType<typeof setTimeout>;
       };
 
+function publishAgentEvent(
+    syncHost: SyncStreamHost<"session", SessionSnapshot, SessionDelta, SessionPrefixAnchor, SessionCloseCode>,
+    event: JsonAgentSessionEvent,
+): void {
+    syncHost.publish({ kind: "agent_event", event });
+}
+
 /** Flushes any buffered `text_delta` / `thinking_delta` on `entry` before emitting a following wire frame. */
-export function flushPendingStreamDelta(
+function flushPendingStreamDelta(
     pending: PendingStreamDelta,
-    publish: (event: JsonAgentSessionEvent) => void,
+    syncHost: SyncStreamHost<"session", SessionSnapshot, SessionDelta, SessionPrefixAnchor, SessionCloseCode>,
 ): PendingStreamDelta {
     if (pending.kind === "idle") {
         return pending;
@@ -275,7 +282,7 @@ export function flushPendingStreamDelta(
         pending.deltaType === "text_delta"
             ? { type: "text_delta", contentIndex: pending.contentIndex, delta: pending.delta }
             : { type: "thinking_delta", contentIndex: pending.contentIndex, delta: pending.delta };
-    publish({
+    publishAgentEvent(syncHost, {
         type: "message_update",
         usage: pending.usage,
         assistantMessageEvent,
@@ -287,17 +294,18 @@ export function flushPendingStreamDelta(
  * Buffers consecutive `text_delta` / `thinking_delta` events on the same content index within a
  * session, flushing any incompatible buffered delta first.
  */
-export function bufferAssistantStreamDelta(
+function bufferAssistantStreamDelta(
     pending: PendingStreamDelta,
     event: Extract<JsonAgentSessionEvent, { type: "message_update" }>,
     coalesceMs: number,
     scheduleFlush: () => ReturnType<typeof setTimeout>,
-    publish: (event: JsonAgentSessionEvent) => void,
-): { readonly buffered: boolean; readonly nextPending: PendingStreamDelta } {
+    syncHost: SyncStreamHost<"session", SessionSnapshot, SessionDelta, SessionPrefixAnchor, SessionCloseCode>,
+): PendingStreamDelta {
     const assistantEvent = event.assistantMessageEvent;
     if (coalesceMs <= 0 || (assistantEvent.type !== "text_delta" && assistantEvent.type !== "thinking_delta")) {
-        const nextPending = flushPendingStreamDelta(pending, publish);
-        return { buffered: false, nextPending };
+        const nextPending = flushPendingStreamDelta(pending, syncHost);
+        publishAgentEvent(syncHost, event);
+        return nextPending;
     }
 
     if (
@@ -306,30 +314,23 @@ export function bufferAssistantStreamDelta(
         pending.contentIndex === assistantEvent.contentIndex
     ) {
         return {
-            buffered: true,
-            nextPending: {
-                kind: "buffered",
-                deltaType: pending.deltaType,
-                contentIndex: pending.contentIndex,
-                delta: pending.delta + assistantEvent.delta,
-                usage: event.usage,
-                timer: pending.timer,
-            },
+            kind: "buffered",
+            deltaType: pending.deltaType,
+            contentIndex: pending.contentIndex,
+            delta: pending.delta + assistantEvent.delta,
+            usage: event.usage,
+            timer: pending.timer,
         };
     }
 
-    flushPendingStreamDelta(pending, publish);
-    const timer = scheduleFlush();
+    flushPendingStreamDelta(pending, syncHost);
     return {
-        buffered: true,
-        nextPending: {
-            kind: "buffered",
-            deltaType: assistantEvent.type,
-            contentIndex: assistantEvent.contentIndex,
-            delta: assistantEvent.delta,
-            usage: event.usage,
-            timer,
-        },
+        kind: "buffered",
+        deltaType: assistantEvent.type,
+        contentIndex: assistantEvent.contentIndex,
+        delta: assistantEvent.delta,
+        usage: event.usage,
+        timer: scheduleFlush(),
     };
 }
 
@@ -1670,9 +1671,19 @@ export class SessionRegistry {
     }
 
     private flushEntryStreamDelta(entry: ActiveSession): void {
-        entry.pendingStreamDelta = flushPendingStreamDelta(entry.pendingStreamDelta, (wireEvent) => {
-            entry.syncHost.publish({ kind: "agent_event", event: wireEvent });
-        });
+        entry.pendingStreamDelta = flushPendingStreamDelta(entry.pendingStreamDelta, entry.syncHost);
+    }
+
+    private scheduleStreamFlush(entry: ActiveSession): ReturnType<typeof setTimeout> {
+        const timer = setTimeout(() => {
+            if (entry.lifecycle.phase === "closing" || this.active.get(entry.sessionId) !== entry) {
+                entry.pendingStreamDelta = { kind: "idle" };
+                return;
+            }
+            this.flushEntryStreamDelta(entry);
+        }, this.streamCoalesceMs);
+        timer.unref();
+        return timer;
     }
 
     private clearPendingStreamDelta(entry: ActiveSession): void {
@@ -1717,33 +1728,16 @@ export class SessionRegistry {
         }
 
         if (wire.type === "message_update") {
-            const publishWire = (wireEvent: JsonAgentSessionEvent): void => {
-                entry.syncHost.publish({ kind: "agent_event", event: wireEvent });
-            };
-            const result = bufferAssistantStreamDelta(
+            entry.pendingStreamDelta = bufferAssistantStreamDelta(
                 entry.pendingStreamDelta,
                 wire,
                 this.streamCoalesceMs,
-                () => {
-                    const timer = setTimeout(() => {
-                        if (entry.lifecycle.phase === "closing" || this.active.get(entry.sessionId) !== entry) {
-                            entry.pendingStreamDelta = { kind: "idle" };
-                            return;
-                        }
-                        this.flushEntryStreamDelta(entry);
-                    }, this.streamCoalesceMs);
-                    timer.unref();
-                    return timer;
-                },
-                publishWire,
+                () => this.scheduleStreamFlush(entry),
+                entry.syncHost,
             );
-            entry.pendingStreamDelta = result.nextPending;
-            if (!result.buffered) {
-                publishWire(wire);
-            }
         } else {
             this.flushEntryStreamDelta(entry);
-            entry.syncHost.publish({ kind: "agent_event", event: wire });
+            publishAgentEvent(entry.syncHost, wire);
         }
 
         entry.lastActivityMs = this.nowMs();

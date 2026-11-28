@@ -43,12 +43,65 @@ interface DirectHighlightJob {
     readonly removeAbortListener: () => void;
 }
 
+interface AbortableJobHandle {
+    readonly promise: Promise<readonly (readonly HighlightToken[])[] | undefined>;
+    readonly resolve: (tokens: readonly (readonly HighlightToken[])[] | undefined) => void;
+    readonly reject: (error: unknown) => void;
+    readonly cleanup: () => void;
+}
+
+function createAbortableHighlightJob(
+    signal: AbortSignal | undefined,
+    onAbort: (resolve: (tokens: readonly (readonly HighlightToken[])[] | undefined) => void) => void,
+): AbortableJobHandle {
+    let resolveFn!: (tokens: readonly (readonly HighlightToken[])[] | undefined) => void;
+    let rejectFn!: (error: unknown) => void;
+    let settled = false;
+
+    const finishResolve = (value: readonly (readonly HighlightToken[])[] | undefined): void => {
+        if (settled) {
+            return;
+        }
+        settled = true;
+        resolveFn(value);
+    };
+
+    const finishReject = (error: unknown): void => {
+        if (settled) {
+            return;
+        }
+        settled = true;
+        rejectFn(error instanceof Error ? error : new Error(String(error)));
+    };
+
+    const handleAbort = (): void => {
+        onAbort(finishResolve);
+    };
+
+    const promise = new Promise<readonly (readonly HighlightToken[])[] | undefined>((resolve, reject) => {
+        resolveFn = resolve;
+        rejectFn = reject;
+        if (signal !== undefined) {
+            signal.addEventListener("abort", handleAbort, { once: true });
+        }
+    });
+
+    return {
+        promise,
+        resolve: finishResolve,
+        reject: finishReject,
+        cleanup: () => {
+            signal?.removeEventListener("abort", handleAbort);
+        },
+    };
+}
+
 /**
  * Fallback main-thread executor used in Node unit tests and if the dedicated
  * highlight Web Worker cannot start. Yields across macrotasks between queued jobs
  * so back-to-back blocks do not stack into one long main-thread task.
  */
-export function createDirectHighlightExecutor(scheduleTurn?: (flush: () => void) => void): HighlightExecutor {
+function createDirectHighlightExecutor(scheduleTurn?: (flush: () => void) => void): HighlightExecutor {
     const queue: DirectHighlightJob[] = [];
     let draining = false;
     const schedule =
@@ -116,41 +169,19 @@ export function createDirectHighlightExecutor(scheduleTurn?: (flush: () => void)
             if (signal?.aborted) {
                 return Promise.resolve(undefined);
             }
-            return new Promise<readonly (readonly HighlightToken[])[] | undefined>((resolve, reject) => {
-                let settled = false;
-                const finishResolve = (value: readonly (readonly HighlightToken[])[] | undefined): void => {
-                    if (settled) {
-                        return;
-                    }
-                    settled = true;
-                    resolve(value);
-                };
-                const finishReject = (error: unknown): void => {
-                    if (settled) {
-                        return;
-                    }
-                    settled = true;
-                    reject(error instanceof Error ? error : new Error(String(error)));
-                };
-                const onAbort = (): void => {
-                    finishResolve(undefined);
-                };
-                if (signal !== undefined) {
-                    signal.addEventListener("abort", onAbort, { once: true });
-                }
-                const removeAbortListener = (): void => {
-                    signal?.removeEventListener("abort", onAbort);
-                };
-                queue.push({
-                    code,
-                    grammarId,
-                    signal,
-                    resolve: finishResolve,
-                    reject: finishReject,
-                    removeAbortListener,
-                });
-                void drain();
+            const job = createAbortableHighlightJob(signal, (finishResolve) => {
+                finishResolve(undefined);
             });
+            queue.push({
+                code,
+                grammarId,
+                signal,
+                resolve: job.resolve,
+                reject: job.reject,
+                removeAbortListener: job.cleanup,
+            });
+            void drain();
+            return job.promise;
         },
         dispose() {
             while (queue.length > 0) {
@@ -288,67 +319,44 @@ export function createWorkerHighlightExecutor(
 
             const id = nextId;
             nextId += 1;
-
-            return new Promise<readonly (readonly HighlightToken[])[] | undefined>((resolve, reject) => {
-                let settled = false;
-                const finishResolve = (value: readonly (readonly HighlightToken[])[] | undefined): void => {
-                    if (settled) {
-                        return;
-                    }
-                    settled = true;
-                    resolve(value);
-                };
-                const finishReject = (error: unknown): void => {
-                    if (settled) {
-                        return;
-                    }
-                    settled = true;
-                    reject(error instanceof Error ? error : new Error(String(error)));
-                };
-                const onAbort = (): void => {
-                    const entry = pending.get(id);
-                    if (entry === undefined) {
-                        return;
-                    }
-                    pending.delete(id);
-                    entry.cleanup();
-                    if (!workerFailed && worker !== undefined) {
-                        try {
-                            worker.postMessage({ kind: "cancel", id });
-                        } catch {
-                            failoverToFallback();
-                        }
-                    }
-                    finishResolve(undefined);
-                };
-                if (signal !== undefined) {
-                    signal.addEventListener("abort", onAbort, { once: true });
+            const job = createAbortableHighlightJob(signal, (finishResolve) => {
+                const entry = pending.get(id);
+                if (entry === undefined) {
+                    return;
                 }
-                const cleanup = (): void => {
-                    signal?.removeEventListener("abort", onAbort);
-                };
+                pending.delete(id);
+                entry.cleanup();
+                if (!workerFailed && worker !== undefined) {
+                    try {
+                        worker.postMessage({ kind: "cancel", id });
+                    } catch {
+                        failoverToFallback();
+                    }
+                }
+                finishResolve(undefined);
+            });
 
-                pending.set(id, {
+            pending.set(id, {
+                id,
+                code,
+                grammarId,
+                signal,
+                resolve: job.resolve,
+                reject: job.reject,
+                cleanup: job.cleanup,
+            });
+
+            try {
+                activeWorker.postMessage({
+                    kind: "highlight",
                     id,
                     code,
                     grammarId,
-                    signal,
-                    resolve: finishResolve,
-                    reject: finishReject,
-                    cleanup,
                 });
-
-                try {
-                    activeWorker.postMessage({
-                        kind: "highlight",
-                        id,
-                        code,
-                        grammarId,
-                    });
-                } catch {
-                    failoverToFallback();
-                }
-            });
+            } catch {
+                failoverToFallback();
+            }
+            return job.promise;
         },
         dispose() {
             teardownWorker();

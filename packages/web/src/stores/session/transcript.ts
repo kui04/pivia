@@ -644,6 +644,88 @@ function computeToolDurationMs(
     return result.timestamp >= assistant.timestamp ? result.timestamp - assistant.timestamp : null;
 }
 
+type ToolCallStepInput = {
+    readonly stepId: string;
+    readonly block: Extract<AssistantBlock, { type: "toolCall" }>;
+    readonly assistant: ViewAssistantMessage;
+    readonly persistedResult: ViewToolResultMessage | undefined;
+    readonly liveExecution: LiveToolExecutionState | undefined;
+    readonly canStillRun: boolean;
+};
+
+function buildToolCallStep({
+    stepId,
+    block,
+    assistant,
+    persistedResult,
+    liveExecution,
+    canStillRun,
+}: ToolCallStepInput): TranscriptToolCallStep {
+    const effectiveArgs =
+        Object.keys(block.arguments).length === 0 &&
+        liveExecution !== undefined &&
+        Object.keys(liveExecution.args).length > 0
+            ? liveExecution.args
+            : block.arguments;
+    const meta = describeToolCall(block.name, effectiveArgs);
+
+    const activeResult =
+        persistedResult ??
+        (liveExecution?.kind === "running"
+            ? liveExecution.partialResult
+            : liveExecution?.kind === "settled"
+              ? liveExecution.result
+              : null);
+
+    const { output, images } = readToolResultContent(activeResult?.content ?? []);
+
+    let status: TranscriptToolStatus;
+    let timing: TranscriptTiming;
+    if (persistedResult !== undefined) {
+        status = persistedResult.isError ? "error" : "done";
+        timing = { kind: "static", durationMs: computeToolDurationMs(assistant, persistedResult) };
+    } else if (liveExecution?.kind === "settled") {
+        status = liveExecution.isError ? "error" : "done";
+        timing = { kind: "static", durationMs: liveExecution.durationMs };
+    } else if (assistant.stopReason === "error" || assistant.stopReason === "aborted") {
+        status = "error";
+        timing = { kind: "static", durationMs: null };
+    } else if (canStillRun) {
+        status = "running";
+        timing = { kind: "since", startedAtMs: assistant.timestamp };
+    } else {
+        status = "error";
+        timing = { kind: "static", durationMs: null };
+    }
+
+    const presentation = buildToolPresentation({
+        toolKind: meta.toolKind,
+        args: effectiveArgs,
+        argumentsError: block.argumentsError,
+        status,
+        output,
+        hasImages: images.length > 0,
+        details: activeResult?.details,
+        nestedCalls: persistedResult?.nestedCalls,
+    });
+
+    return {
+        kind: "toolCall",
+        id: stepId,
+        toolName: block.name,
+        ...meta,
+        arguments: effectiveArgs,
+        argumentsError: block.argumentsError,
+        status,
+        output: presentation.output,
+        images,
+        preview: presentation.preview,
+        warnings: presentation.warnings,
+        nestedCalls: presentation.nestedCalls,
+        timing,
+    };
+}
+
 function buildTurnItem(
     turnMessages: readonly TurnMessage[],
     precedingUserTimestamp: number | null,
@@ -749,75 +831,17 @@ function buildTurnItem(
                 }
                 seenToolIds.add(stepId);
 
-                const buildStep = (): TranscriptToolCallStep => {
-                    const effectiveArgs =
-                        Object.keys(block.arguments).length === 0 &&
-                        liveExecution !== undefined &&
-                        Object.keys(liveExecution.args).length > 0
-                            ? liveExecution.args
-                            : block.arguments;
-                    const meta = describeToolCall(block.name, effectiveArgs);
-
-                    const activeResult =
-                        persistedResult ??
-                        (liveExecution?.kind === "running"
-                            ? liveExecution.partialResult
-                            : liveExecution?.kind === "settled"
-                              ? liveExecution.result
-                              : null);
-
-                    const { output, images } = readToolResultContent(activeResult?.content ?? []);
-
-                    let status: TranscriptToolStatus;
-                    let timing: TranscriptTiming;
-                    if (persistedResult !== undefined) {
-                        status = persistedResult.isError ? "error" : "done";
-                        timing = { kind: "static", durationMs: computeToolDurationMs(assistant, persistedResult) };
-                    } else if (liveExecution?.kind === "settled") {
-                        status = liveExecution.isError ? "error" : "done";
-                        timing = { kind: "static", durationMs: liveExecution.durationMs };
-                    } else if (assistant.stopReason === "error" || assistant.stopReason === "aborted") {
-                        status = "error";
-                        timing = { kind: "static", durationMs: null };
-                    } else if (stepCanStillRun) {
-                        status = "running";
-                        timing = { kind: "since", startedAtMs: assistant.timestamp };
-                    } else {
-                        status = "error";
-                        timing = { kind: "static", durationMs: null };
-                    }
-
-                    const presentation = buildToolPresentation({
-                        toolKind: meta.toolKind,
-                        args: effectiveArgs,
-                        argumentsError: block.argumentsError,
-                        status,
-                        output,
-                        hasImages: images.length > 0,
-                        details: activeResult?.details,
-                        nestedCalls: persistedResult?.nestedCalls,
-                    });
-
-                    return {
-                        kind: "toolCall",
-                        id: stepId,
-                        toolName: block.name,
-                        ...meta,
-                        arguments: effectiveArgs,
-                        argumentsError: block.argumentsError,
-                        status,
-                        output: presentation.output,
-                        images,
-                        preview: presentation.preview,
-                        warnings: presentation.warnings,
-                        nestedCalls: presentation.nestedCalls,
-                        timing,
-                    };
+                const stepInput: ToolCallStepInput = {
+                    stepId,
+                    block,
+                    assistant,
+                    persistedResult,
+                    liveExecution,
+                    canStillRun: stepCanStillRun,
                 };
-
                 const step =
                     trailingStepCache === undefined
-                        ? buildStep()
+                        ? buildToolCallStep(stepInput)
                         : resolveCachedTrailingToolStep(
                               trailingStepCache,
                               stepPrefix,
@@ -828,7 +852,7 @@ function buildTurnItem(
                                   liveExecution,
                                   canStillRun: stepCanStillRun,
                               },
-                              buildStep,
+                              () => buildToolCallStep(stepInput),
                           );
                 steps.push(step);
             }
@@ -1042,7 +1066,9 @@ export function createTranscriptRowBuilder(): TranscriptRowBuilder {
 
     return {
         build: (items, options = {}) => {
+            let planChanged = false;
             if (plan === null || plannedFor !== items) {
+                planChanged = true;
                 droppedLeadingEntries =
                     plannedFor !== null &&
                     items.length < plannedFor.length &&
@@ -1064,6 +1090,11 @@ export function createTranscriptRowBuilder(): TranscriptRowBuilder {
                 lastBuild.runtimeActive === runtimeActive
             ) {
                 return lastBuild.rows;
+            }
+            if (!planChanged) {
+                // Only the first materialization for the shrunken entry list should hold a released
+                // reader's scroll offset; subsequent live updates on that same list clear the flag.
+                droppedLeadingEntries = false;
             }
             const rows = materializeTranscript(plan, options, trailingStepCache);
             lastBuild = { liveMessage, liveToolExecutions, runtimeActive, rows };
@@ -1089,7 +1120,7 @@ type LastBuild = {
  * When every input reference stays identical across streamed text tokens, the cached step keeps its
  * exact object reference so memoized `ToolCallBlock` rows skip re-rendering.
  */
-export type TrailingToolStepCacheEntry = {
+type TrailingToolStepCacheEntry = {
     readonly assistantMessage: ViewAssistantMessage;
     readonly blockIndex: number;
     readonly persistedResult: ViewToolResultMessage | undefined;
@@ -1099,10 +1130,10 @@ export type TrailingToolStepCacheEntry = {
 };
 
 /** Per-builder cache preserving settled `trailingTurn` tool-call steps across streamed tokens. */
-export type TrailingToolStepCache = Map<string, TrailingToolStepCacheEntry>;
+type TrailingToolStepCache = Map<string, TrailingToolStepCacheEntry>;
 
 /** Resolves or builds one `TranscriptToolCallStep`, reusing cached step identity when inputs match. */
-export function resolveCachedTrailingToolStep(
+function resolveCachedTrailingToolStep(
     cache: TrailingToolStepCache,
     key: string,
     candidate: Omit<TrailingToolStepCacheEntry, "step">,

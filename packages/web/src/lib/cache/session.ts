@@ -46,8 +46,7 @@ const DEFAULT_MAX_SESSIONS = 80;
 const ENFORCE_LIMITS_BYTE_THRESHOLD = 256 * 1024;
 
 /** Tracks accumulated un-checked writes so incremental appends amortize `enforceLimits` scans. */
-export type CacheEvictionCheckState =
-    { readonly kind: "clean" } | { readonly kind: "dirty"; readonly pendingBytes: number };
+type CacheEvictionCheckState = { readonly kind: "clean" } | { readonly kind: "dirty"; readonly pendingBytes: number };
 
 /** Advances the eviction-check tracker and reports whether `enforceLimits` should run now. */
 export function advanceEvictionCheckState(
@@ -79,7 +78,7 @@ function runTxWritesAtomically<T>(tx: IDBTransaction, write: () => T): T {
 }
 
 /** Queues synchronous `put` operations inside one active IndexedDB transaction without per-row awaits. */
-export function putEntriesInTransaction(
+function putEntriesInTransaction(
     entriesStore: IDBObjectStore,
     sessionId: SessionId,
     startIndex: number,
@@ -277,8 +276,7 @@ export class IndexedDbSessionCacheSlice implements SessionCache, CacheSlice {
                 rows[0]?.entry.type !== "session" ||
                 (lastEntry?.id !== undefined && lastEntry.id !== meta.lastEntryId)
             ) {
-                await requestPromise(metaStore.delete(sessionId));
-                await requestPromise(entriesStore.delete(this.sessionEntryRange(sessionId)));
+                await this.deleteSessionRecords(metaStore, entriesStore, sessionId);
                 await transactionDone(tx);
                 return null;
             }
@@ -439,8 +437,7 @@ export class IndexedDbSessionCacheSlice implements SessionCache, CacheSlice {
         }
         await this.coordinator.runCleanup("session cache delete", async (db) => {
             const tx = db.transaction([STORE_META, STORE_ENTRIES], "readwrite");
-            await requestPromise(tx.objectStore(STORE_META).delete(sessionId));
-            await requestPromise(tx.objectStore(STORE_ENTRIES).delete(this.sessionEntryRange(sessionId)));
+            await this.deleteSessionRecords(tx.objectStore(STORE_META), tx.objectStore(STORE_ENTRIES), sessionId);
             await transactionDone(tx);
         });
     }
@@ -469,21 +466,36 @@ export class IndexedDbSessionCacheSlice implements SessionCache, CacheSlice {
         }
     }
 
+    private async deleteSessionRecords(
+        metaStore: IDBObjectStore,
+        entriesStore: IDBObjectStore,
+        rawSessionId: string,
+    ): Promise<void> {
+        await requestPromise(metaStore.delete(rawSessionId));
+        await requestPromise(entriesStore.delete(this.rawSessionEntryRange(rawSessionId)));
+    }
+
+    private async loadValidMetasPurgingCorrupt(
+        metaStore: IDBObjectStore,
+        entriesStore: IDBObjectStore,
+    ): Promise<SessionCacheMeta[]> {
+        const { valid, corruptIds } = partitionSessionCacheMetas(await requestPromise(metaStore.getAll()));
+        for (const corruptId of corruptIds) {
+            await this.deleteSessionRecords(metaStore, entriesStore, corruptId);
+        }
+        return valid;
+    }
+
     private async evictAllExcept(db: IDBDatabase, keepSessionId: SessionId | null): Promise<void> {
         const tx = db.transaction([STORE_META, STORE_ENTRIES], "readwrite");
         const metaStore = tx.objectStore(STORE_META);
         const entriesStore = tx.objectStore(STORE_ENTRIES);
-        const { valid, corruptIds } = partitionSessionCacheMetas(await requestPromise(metaStore.getAll()));
-        for (const corruptId of corruptIds) {
-            await requestPromise(metaStore.delete(corruptId));
-            await requestPromise(entriesStore.delete(this.rawSessionEntryRange(corruptId)));
-        }
+        const valid = await this.loadValidMetasPurgingCorrupt(metaStore, entriesStore);
         for (const meta of valid) {
             if (keepSessionId !== null && meta.sessionId === keepSessionId) {
                 continue;
             }
-            await requestPromise(metaStore.delete(meta.sessionId));
-            await requestPromise(entriesStore.delete(this.sessionEntryRange(meta.sessionId)));
+            await this.deleteSessionRecords(metaStore, entriesStore, meta.sessionId);
         }
         await transactionDone(tx);
     }
@@ -493,13 +505,7 @@ export class IndexedDbSessionCacheSlice implements SessionCache, CacheSlice {
             const tx = db.transaction([STORE_META, STORE_ENTRIES], "readwrite");
             const metaStore = tx.objectStore(STORE_META);
             const entriesStore = tx.objectStore(STORE_ENTRIES);
-            const { valid: allMetas, corruptIds } = partitionSessionCacheMetas(
-                await requestPromise(metaStore.getAll()),
-            );
-            for (const corruptId of corruptIds) {
-                await requestPromise(metaStore.delete(corruptId));
-                await requestPromise(entriesStore.delete(this.rawSessionEntryRange(corruptId)));
-            }
+            const allMetas = await this.loadValidMetasPurgingCorrupt(metaStore, entriesStore);
 
             let totalBytes = 0;
             for (const meta of allMetas) {
@@ -519,8 +525,7 @@ export class IndexedDbSessionCacheSlice implements SessionCache, CacheSlice {
                 if (remainingSessions <= this.maxSessions && totalBytes <= this.maxBytes) {
                     break;
                 }
-                await requestPromise(metaStore.delete(victim.sessionId));
-                await requestPromise(entriesStore.delete(this.sessionEntryRange(victim.sessionId)));
+                await this.deleteSessionRecords(metaStore, entriesStore, victim.sessionId);
                 remainingSessions -= 1;
                 totalBytes -= victim.estimatedBytes;
             }

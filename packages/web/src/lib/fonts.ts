@@ -63,10 +63,7 @@ export interface FontManagerOptions {
 }
 
 /** Lifecycle of one lazy font preset CSS chunk. */
-export type PresetLoadState =
-    | { readonly kind: "idle" }
-    | { readonly kind: "loading"; readonly promise: Promise<void> }
-    | { readonly kind: "loaded" };
+type PresetLoadState = { readonly kind: "loading"; readonly promise: Promise<void> } | { readonly kind: "loaded" };
 
 export interface FontManager {
     ensureFontPreset: (presetId: FontPresetId) => Promise<void>;
@@ -113,8 +110,6 @@ export function createFontManager(options: FontManagerOptions = {}): FontManager
                     return RESOLVED_VOID;
                 case "loading":
                     return existing.promise;
-                case "idle":
-                    break;
                 default: {
                     const unreachable: never = existing;
                     return unreachable;

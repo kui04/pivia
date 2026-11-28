@@ -1748,6 +1748,13 @@ describe("createTranscriptRowBuilder", () => {
 
         builder.build(prefixDropped);
         expect(builder.droppedLeadingEntries).toBe(true);
+        // Re-reading with identical inputs keeps the flag for idempotent renderers (e.g. StrictMode).
+        builder.build(prefixDropped);
+        expect(builder.droppedLeadingEntries).toBe(true);
+
+        // Once a live token updates the same shrunken list, the one-render prefix-drop flag clears.
+        builder.build(prefixDropped, { liveMessage: liveMessage("Continued", 6_000), runtimeActive: true });
+        expect(builder.droppedLeadingEntries).toBe(false);
 
         builder.build(project([...settledEntries.slice(2), userEntry("m5", "m4", "Third", 5_000)]));
         expect(builder.droppedLeadingEntries).toBe(false);
