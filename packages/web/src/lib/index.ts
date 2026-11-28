@@ -15,6 +15,7 @@ export {
     ensureFontRole,
     FONT_PRESETS,
     getActiveFontPreset,
+    isFontRoleReady,
     scheduleDefaultFonts,
     type FontManager,
     type FontManagerOptions,

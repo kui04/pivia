@@ -26,6 +26,7 @@ import { CodeBlock } from "../CodeBlock";
 import { Image } from "../Image";
 import { ImageViewer } from "../ImageViewer";
 import { ScrollArea } from "../ScrollArea";
+import { createMarkdownBlockPlanner, markdownRenderSegments } from "./markdown-blocks";
 import { remarkCurrency } from "./remark-currency";
 import styles from "./Markdown.module.css";
 
@@ -98,35 +99,80 @@ const COMPONENTS: Components = {
     img: MarkdownImage,
 };
 
+/**
+ * One markdown document parsed as a whole.
+ *
+ * The source is the memo key, so a block that is already finished keeps its parsed tree when the
+ * next token arrives: a growing answer re-parses only its tail.
+ */
+const MarkdownDocument = memo(function MarkdownDocument({ source }: { readonly source: string }): ReactElement {
+    return (
+        <ReactMarkdown
+            components={COMPONENTS}
+            remarkPlugins={REMARK_PLUGINS}
+            rehypePlugins={REHYPE_PLUGINS}
+            // Raw HTML stays out of the message; a model writes markup in a fence.
+            skipHtml
+        >
+            {source}
+        </ReactMarkdown>
+    );
+});
+
+/**
+ * Growing source rendered as parse-exact blocks plus a live tail.
+ *
+ * Block boundaries come from the same micromark/mdast extensions as the renderer, so a list, a
+ * blockquote, a table or an indented code block keeps its place.
+ *
+ * FIXME: reference links and footnotes couple blocks, so a message that uses them renders as one
+ * document. That fallback replaces the block tree and remounts the message, which resets focus and
+ * code-block state inside it. Resolve reference definitions across blocks before this cost matters.
+ */
+const MessageMarkdown = memo(function MessageMarkdown({ source }: { readonly source: string }): ReactElement {
+    const [planner] = useState(createMarkdownBlockPlanner);
+    // `plan` is observationally pure: an unchanged source returns the cached plan, an extension
+    // reuses verified blocks, and any other source starts over, so a double render or a discarded
+    // concurrent render cannot produce a wrong plan.
+    const plan = planner.plan(source);
+
+    if (plan.requiresWholeDocument) {
+        return <MarkdownDocument source={source} />;
+    }
+
+    const segments = markdownRenderSegments(plan);
+
+    return (
+        <>
+            {segments.map((segment, index) => (
+                // The source only grows, so a promoted tail keeps its segment index without remounting.
+                <MarkdownDocument key={index} source={segment} />
+            ))}
+        </>
+    );
+});
+
 function MarkdownInner({ children, streaming = false, onOpenLink, className }: MarkdownProps) {
     // While tokens arrive faster than frames, let React drop intermediate sources:
     // the reader waits for one frame, not for every parse on the way to it.
     const deferred = useDeferredValue(children);
     const source = streaming ? deferred : children;
     const [viewer, setViewer] = useState<(MarkdownImageRequest & { open: boolean }) | null>(null);
+    // A message that streamed once keeps its block tree after the stream ends, so the finished
+    // answer is not remounted into a single document.
+    const [streamed, setStreamed] = useState(streaming);
+    if (streaming && !streamed) {
+        setStreamed(true);
+    }
     const openImage = useCallback((image: MarkdownImageRequest) => {
         setViewer({ ...image, open: true });
     }, []);
     const context = useMemo(() => ({ streaming, onOpenLink, openImage }), [onOpenLink, streaming, openImage]);
-    const content = useMemo(
-        () => (
-            <ReactMarkdown
-                components={COMPONENTS}
-                remarkPlugins={REMARK_PLUGINS}
-                rehypePlugins={REHYPE_PLUGINS}
-                // Raw HTML stays out of the message; a model writes markup in a fence.
-                skipHtml
-            >
-                {source}
-            </ReactMarkdown>
-        ),
-        [source],
-    );
 
     return (
         <MarkdownContext.Provider value={context}>
             <div className={cn(styles.root, className)} data-slot="markdown" data-streaming={streaming || undefined}>
-                {content}
+                {streaming || streamed ? <MessageMarkdown source={source} /> : <MarkdownDocument source={source} />}
             </div>
             <ImageViewer
                 open={viewer?.open ?? false}

@@ -8,7 +8,11 @@
  *   └─ .jumpOverlay                bottom-centered container for the To bottom button
  *       └─ &[data-visible="true"]  reveals the button after scrolling above the bottom edge
  *
- *   .column                        centered max-width stack of transcript items inside ScrollArea
+ *   .column                        centered max-width stack inside ScrollArea
+ *   │   ├─ &[data-pending="true"]   hides the column until the first bottom pin settles
+ *   │   └─ &[data-empty="true"]     top inset for a transcript that only shows trailing chrome
+ *   ├─ .row                       one mounted row of the virtualized list
+ *   │   └─ &[data-first|data-last] top inset and trailing gap of the list
  *   ├─ .inlineNotice               Notice row for usage/cache status
  *   └─ .activityNotice             card surface around a compaction/retry Notice (data-tone)
  *       └─ &[data-tone="error"]
@@ -103,6 +107,8 @@
 /*
  * Constrain the width to the viewport so inner scrollers own sideways overflow, and reserve three
  * text lines plus any caller-provided bottom offset so the final message stays above the fade.
+ * The top inset belongs to the first row instead: the virtualizer measures its item's content box,
+ * so padding here would sit outside the measured list and desynchronize its offsets.
  */
 .content {
     /*
@@ -111,7 +117,6 @@
      */
     min-inline-size: 0 !important;
     inline-size: 100%;
-    padding-block-start: var(--space-24);
     padding-block-end: calc(var(--transcript-bottom-offset) + var(--transcript-line-reserve));
 }
 
@@ -124,6 +129,19 @@
     min-inline-size: 0;
     margin-inline: auto;
     padding-inline: var(--space-16);
+
+    /*
+     * A virtualized list reports its rows only after a layout pass, so the first frames would show
+     * the top of the transcript before the pin jumps to the bottom. Hide the column for that window.
+     */
+    &[data-pending="true"] {
+        visibility: hidden;
+    }
+
+    /* Without rows the first row cannot carry the top inset, so the column reserves it here. */
+    &[data-empty="true"] {
+        padding-block-start: var(--space-24);
+    }
 
     .inlineNotice {
         padding-inline: var(--space-4);
@@ -138,6 +156,24 @@
         &[data-tone="error"] {
             border-color: color-mix(in srgb, var(--color-error) 45%, var(--color-outline-variant));
         }
+    }
+}
+
+/*
+ * One mounted row inside the virtualized list. The row owns the spacing around its content because
+ * the virtualizer measures the content box of the item element: the list total then includes the
+ * gap between rows, and the first row owns the inset that would otherwise sit outside the list.
+ */
+.row {
+    min-inline-size: 0;
+    padding-block-end: var(--space-16);
+
+    &[data-first="true"] {
+        padding-block-start: var(--space-24);
+    }
+
+    &[data-last="true"] {
+        padding-block-end: 0;
     }
 }
 

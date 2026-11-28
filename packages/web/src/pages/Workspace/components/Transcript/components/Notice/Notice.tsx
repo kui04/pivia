@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import type { ReactElement, ReactNode } from "react";
+import { memo, type ReactElement, type ReactNode } from "react";
 
 import { Icon } from "@components";
 import { cn } from "@/lib";
@@ -32,7 +32,7 @@ export type NoticeProps = {
  * warning inside a card. The live role stays explicit because one page can hold several rows, and
  * several live regions would announce over each other.
  */
-export function Notice({
+export function NoticeInner({
     tone = "status",
     icon: LeadingIcon,
     warningIcon = false,
@@ -51,3 +51,6 @@ export function Notice({
         </div>
     );
 }
+
+/** Memoized notice row: an unchanged notice skips rendering on every streamed token. */
+export const Notice = memo(NoticeInner);

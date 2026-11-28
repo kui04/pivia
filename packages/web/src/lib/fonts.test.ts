@@ -81,4 +81,20 @@ describe("createFontManager", () => {
             'Font preset "jetbrains-mono" belongs to role "mono", not "sans"',
         );
     });
+
+    it("tracks loaded font readiness and skips repeated promise creation after load", async () => {
+        const presets = createTestPresets();
+        const manager = createFontManager({ presets });
+
+        expect(manager.isFontRoleReady("mono")).toBe(false);
+        const firstPromise = manager.ensureFontPreset("jetbrains-mono");
+        expect(manager.isFontRoleReady("mono")).toBe(false);
+
+        await firstPromise;
+        expect(manager.isFontRoleReady("mono")).toBe(true);
+        expect(manager.ensureFontPreset("jetbrains-mono")).toBe(manager.ensureFontPreset("jetbrains-mono"));
+
+        await manager.applyFontPreset("mono", "system");
+        expect(manager.isFontRoleReady("mono")).toBe(true);
+    });
 });

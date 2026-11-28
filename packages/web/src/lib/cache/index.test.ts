@@ -7,7 +7,7 @@ import { ev, sid } from "@/test/ids";
 
 import { IndexedDbCoordinator, IndexedDbSnapshotCache } from "./idb";
 import { IndexedDbAppCache } from "./index";
-import { IndexedDbSessionCacheSlice } from "./session";
+import { advanceEvictionCheckState, IndexedDbSessionCacheSlice } from "./session";
 
 const S1 = sid("s1");
 const S2 = sid("s2");
@@ -543,5 +543,103 @@ describe("IndexedDbAppCache", () => {
         await flakySnap.put({ v: 42 });
         expect(flakyCoord.isDegraded()).toBe(true);
         expect(await flakySnap.get()).toEqual({ v: 42 });
+    });
+
+    it("batches append eviction checks until pending written bytes cross the threshold", () => {
+        const step1 = advanceEvictionCheckState({ kind: "clean" }, 1000, 4096);
+        expect(step1).toEqual({
+            runEnforce: false,
+            nextState: { kind: "dirty", pendingBytes: 1000 },
+        });
+
+        const step2 = advanceEvictionCheckState(step1.nextState, 2000, 4096);
+        expect(step2).toEqual({
+            runEnforce: false,
+            nextState: { kind: "dirty", pendingBytes: 3000 },
+        });
+
+        const step3 = advanceEvictionCheckState(step2.nextState, 1500, 4096);
+        expect(step3).toEqual({
+            runEnforce: true,
+            nextState: { kind: "clean" },
+        });
+    });
+
+    it("preserves entry order and reads back cleanly with batched transaction puts", async () => {
+        const cache = createTestCache();
+        const entries = Array.from({ length: 50 }, (_, index) =>
+            index === 0
+                ? makeSessionHeader({ id: "s1" })
+                : makeUserEntry(`e-${index}`, index === 1 ? null : `e-${index - 1}`, `message ${index}`),
+        );
+
+        expect(await cache.sessions.replaceEntries(S1, V152, entries)).toBe("written");
+        expect(
+            await cache.sessions.appendEntries(S1, V152, 50, [
+                makeUserEntry("e-50", "e-49", "tail-50"),
+                makeUserEntry("e-51", "e-50", "tail-51"),
+            ]),
+        ).toBe("written");
+
+        const snapshot = await cache.sessions.get(S1);
+        expect(snapshot?.entries).toHaveLength(52);
+        expect(snapshot?.entries.at(-1)?.id).toBe("e-51");
+    });
+
+    it("aborts the transaction atomically if a synchronous put throws mid-replace", async () => {
+        const factory = new IDBFactory();
+        const origOpen = factory.open.bind(factory);
+        let interceptNextPut = false;
+        const openSpy = vi.spyOn(factory, "open").mockImplementation((name, version) => {
+            const req = origOpen(name, version);
+            req.addEventListener("success", () => {
+                const db = req.result;
+                const origTx = db.transaction.bind(db);
+                vi.spyOn(db, "transaction").mockImplementation((storeNames, mode) => {
+                    const tx = origTx(storeNames, mode);
+                    if (interceptNextPut && mode === "readwrite") {
+                        interceptNextPut = false;
+                        const origObjectStore = tx.objectStore.bind(tx);
+                        vi.spyOn(tx, "objectStore").mockImplementation((storeName) => {
+                            const store = origObjectStore(storeName);
+                            if (storeName === "session_entries") {
+                                let putCalls = 0;
+                                const origPut = store.put.bind(store);
+                                vi.spyOn(store, "put").mockImplementation((value, key) => {
+                                    putCalls += 1;
+                                    if (putCalls === 2) {
+                                        throw new DOMException("Simulated sync put failure", "DataCloneError");
+                                    }
+                                    return origPut(value, key);
+                                });
+                            }
+                            return store;
+                        });
+                    }
+                    return tx;
+                });
+            });
+            return req;
+        });
+
+        const cache = new IndexedDbAppCache({ indexedDB: factory, keyRange: IDBKeyRange });
+        await cache.sessions.replaceEntries(S1, V152, [
+            makeSessionHeader({ id: "s1" }),
+            makeUserEntry("e1", null, "original"),
+        ]);
+
+        interceptNextPut = true;
+        expect(
+            await cache.sessions.replaceEntries(S1, V152, [
+                makeSessionHeader({ id: "s1" }),
+                makeUserEntry("e2", null, "replacement"),
+            ]),
+        ).toBe("degraded-memory");
+        openSpy.mockRestore();
+
+        // Pre-existing IndexedDB rows stayed intact via tx.abort() rather than half-committed.
+        const reader = new IndexedDbAppCache({ indexedDB: factory, keyRange: IDBKeyRange });
+        const persisted = await reader.sessions.get(S1);
+        expect(persisted?.entries.map((entry) => entry.id)).toEqual(["s1", "e1"]);
     });
 });

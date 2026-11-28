@@ -100,6 +100,9 @@ const DEFAULT_IDLE_TIMEOUT_MS = 15 * 60 * 1000;
 /** Default grace period for a `session_shutdown` dialog while clients are still attached. */
 const DEFAULT_SHUTDOWN_UI_TIMEOUT_MS = 5_000;
 
+/** Default coalesce interval (ms) for streaming `text_delta` / `thinking_delta` frames. */
+const DEFAULT_STREAM_COALESCE_MS = 16;
+
 /** Structured logger contract used by {@link SessionRegistry}. */
 export interface SessionRegistryLogger {
     warn(record: Record<string, unknown>, message: string): void;
@@ -241,6 +244,98 @@ export interface SessionRegistryOptions {
     readonly nowMs?: (() => number) | undefined;
     /** Configuration for watching external disk updates; defaults to enabled. */
     readonly diskSync?: DiskSyncOptions | undefined;
+    /**
+     * Coalesce window (ms) for consecutive `text_delta` / `thinking_delta` events on the same content
+     * block before broadcasting over WebSocket. `0` disables coalescing. Defaults to 16 ms.
+     */
+    readonly streamCoalesceMs?: number | undefined;
+}
+
+/** Delta subtypes eligible for per-frame stream coalescing without altering message structure. */
+type CoalescedDeltaKind = "text_delta" | "thinking_delta";
+
+/** Pending stream delta buffer for one active session, preserving exact wire ordering across non-delta boundaries. */
+type PendingStreamDelta =
+    | { readonly kind: "idle" }
+    | {
+          readonly kind: "buffered";
+          readonly deltaType: CoalescedDeltaKind;
+          readonly contentIndex: number;
+          readonly delta: string;
+          readonly usage: AssistantMessage["usage"];
+          readonly timer: ReturnType<typeof setTimeout>;
+      };
+
+function publishAgentEvent(
+    syncHost: SyncStreamHost<"session", SessionSnapshot, SessionDelta, SessionPrefixAnchor, SessionCloseCode>,
+    event: JsonAgentSessionEvent,
+): void {
+    syncHost.publish({ kind: "agent_event", event });
+}
+
+/** Flushes any buffered `text_delta` / `thinking_delta` on `entry` before emitting a following wire frame. */
+function flushPendingStreamDelta(
+    pending: PendingStreamDelta,
+    syncHost: SyncStreamHost<"session", SessionSnapshot, SessionDelta, SessionPrefixAnchor, SessionCloseCode>,
+): PendingStreamDelta {
+    if (pending.kind === "idle") {
+        return pending;
+    }
+    clearTimeout(pending.timer);
+    const assistantMessageEvent: Extract<JsonAgentSessionEvent, { type: "message_update" }>["assistantMessageEvent"] =
+        pending.deltaType === "text_delta"
+            ? { type: "text_delta", contentIndex: pending.contentIndex, delta: pending.delta }
+            : { type: "thinking_delta", contentIndex: pending.contentIndex, delta: pending.delta };
+    publishAgentEvent(syncHost, {
+        type: "message_update",
+        usage: pending.usage,
+        assistantMessageEvent,
+    });
+    return { kind: "idle" };
+}
+
+/**
+ * Buffers consecutive `text_delta` / `thinking_delta` events on the same content index within a
+ * session, flushing any incompatible buffered delta first.
+ */
+function bufferAssistantStreamDelta(
+    pending: PendingStreamDelta,
+    event: Extract<JsonAgentSessionEvent, { type: "message_update" }>,
+    coalesceMs: number,
+    scheduleFlush: () => ReturnType<typeof setTimeout>,
+    syncHost: SyncStreamHost<"session", SessionSnapshot, SessionDelta, SessionPrefixAnchor, SessionCloseCode>,
+): PendingStreamDelta {
+    const assistantEvent = event.assistantMessageEvent;
+    if (coalesceMs <= 0 || (assistantEvent.type !== "text_delta" && assistantEvent.type !== "thinking_delta")) {
+        const nextPending = flushPendingStreamDelta(pending, syncHost);
+        publishAgentEvent(syncHost, event);
+        return nextPending;
+    }
+
+    if (
+        pending.kind === "buffered" &&
+        pending.deltaType === assistantEvent.type &&
+        pending.contentIndex === assistantEvent.contentIndex
+    ) {
+        return {
+            kind: "buffered",
+            deltaType: pending.deltaType,
+            contentIndex: pending.contentIndex,
+            delta: pending.delta + assistantEvent.delta,
+            usage: event.usage,
+            timer: pending.timer,
+        };
+    }
+
+    flushPendingStreamDelta(pending, syncHost);
+    return {
+        kind: "buffered",
+        deltaType: assistantEvent.type,
+        contentIndex: assistantEvent.contentIndex,
+        delta: assistantEvent.delta,
+        usage: event.usage,
+        timer: scheduleFlush(),
+    };
 }
 
 /** Open runtime handle returned by {@link SessionRegistry.open} and `createSession`. */
@@ -306,6 +401,7 @@ interface ActiveSession {
     };
     flushScheduled: boolean;
     liveMessage: AssistantMessage | null;
+    pendingStreamDelta: PendingStreamDelta;
     diskSizeBytes: number | undefined;
     diskFile: TrackedDiskFile;
     localWriteSeq: number;
@@ -444,6 +540,7 @@ export class SessionRegistry {
     private readonly idleTimeoutMs: number;
     private readonly shutdownUiTimeoutMs: number;
     private readonly pendingUiTimeoutMs: number | null;
+    private readonly streamCoalesceMs: number;
     private readonly nowMs: () => number;
     private readonly active = new Map<SessionId, ActiveSession>();
     private readonly opening = new Map<SessionId, Promise<ActiveSessionHandle>>();
@@ -490,6 +587,12 @@ export class SessionRegistry {
             throw new Error("pendingUiTimeoutMs must be null or a non-negative finite number.");
         }
         this.pendingUiTimeoutMs = pendingUiTimeoutMs;
+
+        const streamCoalesceMs = options.streamCoalesceMs ?? DEFAULT_STREAM_COALESCE_MS;
+        if (!Number.isFinite(streamCoalesceMs) || streamCoalesceMs < 0) {
+            throw new Error("streamCoalesceMs must be a non-negative finite number.");
+        }
+        this.streamCoalesceMs = streamCoalesceMs;
 
         this.runtimeFactory =
             options.runtimeFactory ??
@@ -849,6 +952,9 @@ export class SessionRegistry {
             },
         };
 
+        // Flush any buffered stream delta before registering the new client so Tier 1 replay and
+        // initial snapshots both include every already-emitted token cleanly in the replay buffer.
+        this.flushEntryStreamDelta(entry);
         entry.clients.add(client);
         this.clearIdleTimer(entry);
         const detachSync = entry.syncHost.attach(transport, options);
@@ -1004,6 +1110,7 @@ export class SessionRegistry {
             },
             flushScheduled: false,
             liveMessage: null,
+            pendingStreamDelta: { kind: "idle" },
             diskSizeBytes,
             diskFile: initialDiskFile,
             localWriteSeq: 0,
@@ -1150,6 +1257,9 @@ export class SessionRegistry {
         });
         this.runSafeTeardownStep(entry.sessionId, "failed to unsubscribe entry appends on close", () => {
             entry.unsubscribeEntries();
+        });
+        this.runSafeTeardownStep(entry.sessionId, "failed to clear pending stream delta on close", () => {
+            this.clearPendingStreamDelta(entry);
         });
         this.runSafeTeardownStep(entry.sessionId, "failed to dispose session sync host on close", () => {
             entry.syncHost.dispose(closeCode, closeReason);
@@ -1426,6 +1536,9 @@ export class SessionRegistry {
         if (entry === undefined) {
             throw new SessionRegistryError("not_found", "Session is not open.");
         }
+        // Flush any buffered stream delta before capturing `cursor` so an incoming snapshot never
+        // pairs post-delta `liveMessage` text with a pre-delta cursor.
+        this.flushEntryStreamDelta(entry);
         const entriesVersion = this.catalog.entriesVersion;
         const entries = entry.runtime.session.getEntries();
         const totalCount = entries.length;
@@ -1508,6 +1621,7 @@ export class SessionRegistry {
             if (appended.length === 0) {
                 return;
             }
+            this.flushEntryStreamDelta(entry);
             this.publishEntriesAppendedWithSizeGuard(entry, baseEntryCount, appended, allEntries.length);
         });
     }
@@ -1609,11 +1723,35 @@ export class SessionRegistry {
         }
     }
 
+    private flushEntryStreamDelta(entry: ActiveSession): void {
+        entry.pendingStreamDelta = flushPendingStreamDelta(entry.pendingStreamDelta, entry.syncHost);
+    }
+
+    private scheduleStreamFlush(entry: ActiveSession): ReturnType<typeof setTimeout> {
+        const timer = setTimeout(() => {
+            if (entry.lifecycle.phase === "closing" || this.active.get(entry.sessionId) !== entry) {
+                entry.pendingStreamDelta = { kind: "idle" };
+                return;
+            }
+            this.flushEntryStreamDelta(entry);
+        }, this.streamCoalesceMs);
+        timer.unref();
+        return timer;
+    }
+
+    private clearPendingStreamDelta(entry: ActiveSession): void {
+        if (entry.pendingStreamDelta.kind === "buffered") {
+            clearTimeout(entry.pendingStreamDelta.timer);
+            entry.pendingStreamDelta = { kind: "idle" };
+        }
+    }
+
     private publishSessionDelta(sessionId: SessionId, delta: SessionDelta): void {
         const entry = this.active.get(sessionId);
         if (entry === undefined) {
             return;
         }
+        this.flushEntryStreamDelta(entry);
         entry.syncHost.publish(delta);
     }
 
@@ -1642,9 +1780,23 @@ export class SessionRegistry {
             return;
         }
 
-        entry.syncHost.publish({ kind: "agent_event", event: wire });
+        if (wire.type === "message_update") {
+            entry.pendingStreamDelta = bufferAssistantStreamDelta(
+                entry.pendingStreamDelta,
+                wire,
+                this.streamCoalesceMs,
+                () => this.scheduleStreamFlush(entry),
+                entry.syncHost,
+            );
+        } else {
+            this.flushEntryStreamDelta(entry);
+            publishAgentEvent(entry.syncHost, wire);
+        }
+
         entry.lastActivityMs = this.nowMs();
-        this.emitTrackedStateDiff(entry);
+        if (event.type !== "message_update") {
+            this.emitTrackedStateDiff(entry);
+        }
 
         if (
             event.type === "agent_start" ||

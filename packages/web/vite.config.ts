@@ -43,4 +43,8 @@ export default defineConfig({
         // Keep this in sync with the target in tsconfig.app.json.
         target: "es2024",
     },
+    worker: {
+        // Shiki splits language grammars into dynamic ES chunks inside highlight.worker.ts.
+        format: "es",
+    },
 });

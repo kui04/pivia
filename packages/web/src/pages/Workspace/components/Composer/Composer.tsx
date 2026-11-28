@@ -1,6 +1,7 @@
 import { assertNever, type SessionId, type SessionStateSnapshot } from "@pivia/protocol";
 import { ArrowUp, MessageCircleQuestion, Paperclip, Square } from "lucide-react";
 import {
+    memo,
     useCallback,
     useEffect,
     useId,
@@ -74,7 +75,7 @@ export interface ComposerProps {
  * Interactive session message composer card with staged image attachments, model and thinking
  * pickers, local slash commands, and streaming steer/follow-up/abort controls.
  */
-export function Composer({
+function ComposerInner({
     sessionId,
     state,
     connected,
@@ -551,3 +552,9 @@ export function Composer({
         </Popover>
     );
 }
+
+/**
+ * Interactive session message composer card with staged image attachments, model and thinking
+ * pickers, local slash commands, and streaming steer/follow-up/abort controls.
+ */
+export const Composer = memo(ComposerInner);

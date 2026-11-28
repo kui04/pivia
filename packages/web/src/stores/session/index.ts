@@ -30,6 +30,7 @@ export {
 } from "./store";
 export {
     buildTranscript,
+    createTranscriptRowBuilder,
     describeToolCall,
     formatSystemNoteMeta,
     type BuildTranscriptOptions,
@@ -42,6 +43,7 @@ export {
     type TranscriptNestedCallsSummary,
     type TranscriptNoteItem,
     type TranscriptReplyStep,
+    type TranscriptRowBuilder,
     type TranscriptSkillItem,
     type TranscriptStep,
     type TranscriptThinkingStep,

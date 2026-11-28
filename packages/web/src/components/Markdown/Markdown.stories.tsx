@@ -75,7 +75,22 @@ const streamingPartial = [
     "}",
 ].join("\n");
 
-const streamingComplete = `${streamingPartial}\n\`\`\`\n\nThe function returns a greeting.`;
+// The finished message also carries a loose list and a table, so the block-tree comparison in the
+// Streaming story covers the constructs the parser-based boundary exists for.
+const streamingComplete = [
+    streamingPartial,
+    "```",
+    "",
+    "The function returns a greeting.",
+    "",
+    "- a loose item",
+    "",
+    "- another item with `code`",
+    "",
+    "| input | output |",
+    "| --- | --- |",
+    "| Ada | hello Ada |",
+].join("\n");
 
 const linkAnswer = [
     "Read [the docs](https://example.com/docs) or the [unsafe](javascript:alert) link.",
@@ -300,6 +315,22 @@ export const Streaming: Story = {
                 timeout: 5000,
             },
         );
+
+        // The finished message keeps its block tree; that tree must render the same structure and
+        // text as the single-document render of the same source. Compare the block outline and the
+        // text instead of raw HTML: generated ids (tooltip triggers, scroll viewports) differ per
+        // instance, and mdast-util-to-hast newlines between top-level blocks are absent from a split.
+        const controlRoot = requireElement(
+            control.querySelector("[data-slot='markdown']"),
+            "the control Markdown root",
+        );
+        const outline = (element: Element): string[] =>
+            [...element.children].map((child) => `${child.tagName}.${child.getAttribute("data-slot") ?? ""}`);
+        await waitFor(() => expect(outline(root)).toEqual(outline(controlRoot)));
+
+        // Whitespace text nodes sit at different edges of a split, so compare the visible characters.
+        const text = (element: Element): string => element.textContent.replace(/\s+/g, "");
+        await expect(text(root)).toBe(text(controlRoot));
     },
 };
 

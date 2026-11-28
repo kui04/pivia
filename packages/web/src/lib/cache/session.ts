@@ -43,6 +43,63 @@ const SESSION_OBJECT_STORES: readonly ObjectStoreSchema[] = [
 
 const DEFAULT_MAX_BYTES = 100 * 1024 * 1024;
 const DEFAULT_MAX_SESSIONS = 80;
+const ENFORCE_LIMITS_BYTE_THRESHOLD = 256 * 1024;
+
+/** Tracks accumulated un-checked writes so incremental appends amortize `enforceLimits` scans. */
+type CacheEvictionCheckState = { readonly kind: "clean" } | { readonly kind: "dirty"; readonly pendingBytes: number };
+
+/** Advances the eviction-check tracker and reports whether `enforceLimits` should run now. */
+export function advanceEvictionCheckState(
+    state: CacheEvictionCheckState,
+    addedBytes: number,
+    thresholdBytes: number = ENFORCE_LIMITS_BYTE_THRESHOLD,
+): { readonly runEnforce: boolean; readonly nextState: CacheEvictionCheckState } {
+    const safeAdded = Number.isFinite(addedBytes) && addedBytes > 0 ? addedBytes : 0;
+    const safeThreshold = Number.isFinite(thresholdBytes) && thresholdBytes > 0 ? thresholdBytes : 0;
+    const pendingBytes = (state.kind === "clean" ? 0 : state.pendingBytes) + safeAdded;
+    if (pendingBytes >= safeThreshold) {
+        return { runEnforce: true, nextState: { kind: "clean" } };
+    }
+    return { runEnforce: false, nextState: { kind: "dirty", pendingBytes } };
+}
+
+function runTxWritesAtomically<T>(tx: IDBTransaction, write: () => T): T {
+    try {
+        return write();
+    } catch (error: unknown) {
+        try {
+            // Roll back already-queued requests (delete/partial puts) if a synchronous IDB call throws.
+            tx.abort();
+        } catch {
+            // Ignore abort failures when the transaction is already inactive.
+        }
+        throw error;
+    }
+}
+
+/** Queues synchronous `put` operations inside one active IndexedDB transaction without per-row awaits. */
+function putEntriesInTransaction(
+    entriesStore: IDBObjectStore,
+    sessionId: SessionId,
+    startIndex: number,
+    entries: readonly FileEntry[],
+): number {
+    let addedBytes = 0;
+    for (let offset = 0; offset < entries.length; offset += 1) {
+        const entry = entries[offset];
+        if (entry === undefined) {
+            continue;
+        }
+        addedBytes += entryBytes(entry);
+        const row: SessionCacheEntryRow = {
+            sessionId,
+            index: startIndex + offset,
+            entry,
+        };
+        entriesStore.put(row);
+    }
+    return addedBytes;
+}
 
 /**
  * Bytes one entry occupies in IndexedDB.
@@ -165,6 +222,7 @@ export class IndexedDbSessionCacheSlice implements SessionCache, CacheSlice {
 
     private readonly memMeta = new Map<SessionId, SessionCacheMeta>();
     private readonly memEntries = new Map<SessionId, FileEntry[]>();
+    private evictionCheckState: CacheEvictionCheckState = { kind: "clean" };
 
     constructor(coordinator: IndexedDbCoordinator, options: SessionCacheBudgetOptions = {}) {
         this.coordinator = coordinator;
@@ -218,8 +276,7 @@ export class IndexedDbSessionCacheSlice implements SessionCache, CacheSlice {
                 rows[0]?.entry.type !== "session" ||
                 (lastEntry?.id !== undefined && lastEntry.id !== meta.lastEntryId)
             ) {
-                await requestPromise(metaStore.delete(sessionId));
-                await requestPromise(entriesStore.delete(this.sessionEntryRange(sessionId)));
+                await this.deleteSessionRecords(metaStore, entriesStore, sessionId);
                 await transactionDone(tx);
                 return null;
             }
@@ -274,32 +331,31 @@ export class IndexedDbSessionCacheSlice implements SessionCache, CacheSlice {
 
             const overlap = existingMeta.entryCount - baseEntryCount;
             const toInsert = entries.slice(overlap);
-            let addedBytes = 0;
-            for (let offset = 0; offset < toInsert.length; offset += 1) {
-                const entry = toInsert[offset];
-                if (entry === undefined) {
-                    continue;
-                }
-                addedBytes += entryBytes(entry);
-                const row: SessionCacheEntryRow = {
+            const addedBytes = runTxWritesAtomically(tx, () => {
+                const bytes = putEntriesInTransaction(entriesStore, sessionId, existingMeta.entryCount, toInsert);
+                const lastEntry = toInsert.at(-1);
+                const nextMeta: SessionCacheMeta = {
                     sessionId,
-                    index: existingMeta.entryCount + offset,
-                    entry,
+                    entriesVersion,
+                    entryCount: newTotalCount,
+                    lastEntryId: lastEntry?.id ?? existingMeta.lastEntryId,
+                    estimatedBytes: existingMeta.estimatedBytes + bytes,
+                    lastAccessedAtMs: this.coordinator.nowMs(),
                 };
-                await requestPromise(entriesStore.put(row));
-            }
-            const lastEntry = toInsert.at(-1);
-            const nextMeta: SessionCacheMeta = {
-                sessionId,
-                entriesVersion,
-                entryCount: newTotalCount,
-                lastEntryId: lastEntry?.id ?? existingMeta.lastEntryId,
-                estimatedBytes: existingMeta.estimatedBytes + addedBytes,
-                lastAccessedAtMs: this.coordinator.nowMs(),
-            };
-            await requestPromise(metaStore.put(nextMeta));
+                metaStore.put(nextMeta);
+                return bytes;
+            });
             await transactionDone(tx);
-            await this.enforceLimits(db, sessionId);
+
+            const evictionCheck = advanceEvictionCheckState(
+                this.evictionCheckState,
+                addedBytes,
+                Math.min(ENFORCE_LIMITS_BYTE_THRESHOLD, this.maxBytes),
+            );
+            this.evictionCheckState = evictionCheck.nextState;
+            if (evictionCheck.runEnforce) {
+                await this.enforceLimits(db, sessionId);
+            }
             return "written";
         };
 
@@ -348,26 +404,21 @@ export class IndexedDbSessionCacheSlice implements SessionCache, CacheSlice {
                 }
             }
 
-            await requestPromise(entriesStore.delete(this.sessionEntryRange(sessionId)));
-            let estimatedBytes = 0;
-            for (let index = 0; index < entries.length; index += 1) {
-                const entry = entries[index];
-                if (entry === undefined) {
-                    continue;
-                }
-                estimatedBytes += entryBytes(entry);
-                await requestPromise(entriesStore.put({ sessionId, index, entry } satisfies SessionCacheEntryRow));
-            }
-            const nextMeta: SessionCacheMeta = {
-                sessionId,
-                entriesVersion,
-                entryCount: entries.length,
-                lastEntryId: lastEntry?.id ?? sessionId,
-                estimatedBytes,
-                lastAccessedAtMs: this.coordinator.nowMs(),
-            };
-            await requestPromise(metaStore.put(nextMeta));
+            runTxWritesAtomically(tx, () => {
+                entriesStore.delete(this.sessionEntryRange(sessionId));
+                const estimatedBytes = putEntriesInTransaction(entriesStore, sessionId, 0, entries);
+                const nextMeta: SessionCacheMeta = {
+                    sessionId,
+                    entriesVersion,
+                    entryCount: entries.length,
+                    lastEntryId: lastEntry?.id ?? sessionId,
+                    estimatedBytes,
+                    lastAccessedAtMs: this.coordinator.nowMs(),
+                };
+                metaStore.put(nextMeta);
+            });
             await transactionDone(tx);
+            this.evictionCheckState = { kind: "clean" };
             await this.enforceLimits(db, sessionId);
             return "written";
         };
@@ -386,8 +437,7 @@ export class IndexedDbSessionCacheSlice implements SessionCache, CacheSlice {
         }
         await this.coordinator.runCleanup("session cache delete", async (db) => {
             const tx = db.transaction([STORE_META, STORE_ENTRIES], "readwrite");
-            await requestPromise(tx.objectStore(STORE_META).delete(sessionId));
-            await requestPromise(tx.objectStore(STORE_ENTRIES).delete(this.sessionEntryRange(sessionId)));
+            await this.deleteSessionRecords(tx.objectStore(STORE_META), tx.objectStore(STORE_ENTRIES), sessionId);
             await transactionDone(tx);
         });
     }
@@ -416,21 +466,36 @@ export class IndexedDbSessionCacheSlice implements SessionCache, CacheSlice {
         }
     }
 
+    private async deleteSessionRecords(
+        metaStore: IDBObjectStore,
+        entriesStore: IDBObjectStore,
+        rawSessionId: string,
+    ): Promise<void> {
+        await requestPromise(metaStore.delete(rawSessionId));
+        await requestPromise(entriesStore.delete(this.rawSessionEntryRange(rawSessionId)));
+    }
+
+    private async loadValidMetasPurgingCorrupt(
+        metaStore: IDBObjectStore,
+        entriesStore: IDBObjectStore,
+    ): Promise<SessionCacheMeta[]> {
+        const { valid, corruptIds } = partitionSessionCacheMetas(await requestPromise(metaStore.getAll()));
+        for (const corruptId of corruptIds) {
+            await this.deleteSessionRecords(metaStore, entriesStore, corruptId);
+        }
+        return valid;
+    }
+
     private async evictAllExcept(db: IDBDatabase, keepSessionId: SessionId | null): Promise<void> {
         const tx = db.transaction([STORE_META, STORE_ENTRIES], "readwrite");
         const metaStore = tx.objectStore(STORE_META);
         const entriesStore = tx.objectStore(STORE_ENTRIES);
-        const { valid, corruptIds } = partitionSessionCacheMetas(await requestPromise(metaStore.getAll()));
-        for (const corruptId of corruptIds) {
-            await requestPromise(metaStore.delete(corruptId));
-            await requestPromise(entriesStore.delete(this.rawSessionEntryRange(corruptId)));
-        }
+        const valid = await this.loadValidMetasPurgingCorrupt(metaStore, entriesStore);
         for (const meta of valid) {
             if (keepSessionId !== null && meta.sessionId === keepSessionId) {
                 continue;
             }
-            await requestPromise(metaStore.delete(meta.sessionId));
-            await requestPromise(entriesStore.delete(this.sessionEntryRange(meta.sessionId)));
+            await this.deleteSessionRecords(metaStore, entriesStore, meta.sessionId);
         }
         await transactionDone(tx);
     }
@@ -440,13 +505,7 @@ export class IndexedDbSessionCacheSlice implements SessionCache, CacheSlice {
             const tx = db.transaction([STORE_META, STORE_ENTRIES], "readwrite");
             const metaStore = tx.objectStore(STORE_META);
             const entriesStore = tx.objectStore(STORE_ENTRIES);
-            const { valid: allMetas, corruptIds } = partitionSessionCacheMetas(
-                await requestPromise(metaStore.getAll()),
-            );
-            for (const corruptId of corruptIds) {
-                await requestPromise(metaStore.delete(corruptId));
-                await requestPromise(entriesStore.delete(this.rawSessionEntryRange(corruptId)));
-            }
+            const allMetas = await this.loadValidMetasPurgingCorrupt(metaStore, entriesStore);
 
             let totalBytes = 0;
             for (const meta of allMetas) {
@@ -466,8 +525,7 @@ export class IndexedDbSessionCacheSlice implements SessionCache, CacheSlice {
                 if (remainingSessions <= this.maxSessions && totalBytes <= this.maxBytes) {
                     break;
                 }
-                await requestPromise(metaStore.delete(victim.sessionId));
-                await requestPromise(entriesStore.delete(this.sessionEntryRange(victim.sessionId)));
+                await this.deleteSessionRecords(metaStore, entriesStore, victim.sessionId);
                 remainingSessions -= 1;
                 totalBytes -= victim.estimatedBytes;
             }
