@@ -1,6 +1,33 @@
 import { describe, expect, it } from "vitest";
 
-import { measureScrollEdges } from "./useAutoScroll";
+import {
+    bottomOffset,
+    edgesAfterWrite,
+    measureScrollEdges,
+    resolveScroll,
+    type ScrollMetrics,
+    type ScrollResolutionInput,
+} from "./useAutoScroll";
+
+/** Content taller than the viewport, scrolled to the top. */
+const AT_TOP: ScrollMetrics = { scrollTop: 0, clientHeight: 200, scrollHeight: 500 };
+
+/** The same content scrolled to the bottom edge. */
+const AT_BOTTOM: ScrollMetrics = { scrollTop: 300, clientHeight: 200, scrollHeight: 500 };
+
+/** Scrolled up 200px from the bottom, so the pin rules see real overflow above and below. */
+const MID_SCROLL: ScrollMetrics = { scrollTop: 120, clientHeight: 200, scrollHeight: 520 };
+
+function resolve(overrides: Partial<ScrollResolutionInput>): ReturnType<typeof resolveScroll> {
+    return resolveScroll({
+        signal: { kind: "layout" },
+        pin: "pinned",
+        metrics: AT_BOTTOM,
+        streaming: true,
+        initialBottom: false,
+        ...overrides,
+    });
+}
 
 describe("measureScrollEdges", () => {
     it("hides fades when there is nothing to scroll", () => {
@@ -44,5 +71,220 @@ describe("measureScrollEdges", () => {
             fadeBottom: false,
             atBottom: true,
         });
+    });
+});
+
+describe("bottomOffset", () => {
+    it("names the bottom edge of overflowing content", () => {
+        expect(bottomOffset(AT_TOP)).toBe(300);
+    });
+
+    it("clamps to zero when the content is shorter than the viewport", () => {
+        expect(bottomOffset({ clientHeight: 200, scrollHeight: 120 })).toBe(0);
+    });
+});
+
+describe("resolveScroll attach", () => {
+    it("pins and follows when streaming starts on a fresh viewport", () => {
+        const resolution = resolve({
+            signal: { kind: "attach" },
+            pin: "released",
+            metrics: AT_TOP,
+            streaming: true,
+        });
+
+        expect(resolution.pin).toBe("pinned");
+        expect(resolution.action).toEqual({ kind: "follow", top: 300 });
+        expect(resolution.edges).toEqual({ fadeTop: true, fadeBottom: false, atBottom: true });
+    });
+
+    it("pins and follows an idle viewport that asks for the initial bottom", () => {
+        const resolution = resolve({
+            signal: { kind: "attach" },
+            pin: "released",
+            metrics: AT_TOP,
+            streaming: false,
+            initialBottom: true,
+        });
+
+        expect(resolution.pin).toBe("pinned");
+        expect(resolution.action).toEqual({ kind: "follow", top: 300 });
+    });
+
+    it("adopts the current position of an idle viewport", () => {
+        const atBottom = resolve({
+            signal: { kind: "attach" },
+            pin: "released",
+            metrics: AT_BOTTOM,
+            streaming: false,
+        });
+        expect(atBottom.pin).toBe("pinned");
+        expect(atBottom.action).toEqual({ kind: "hold" });
+
+        const atTop = resolve({
+            signal: { kind: "attach" },
+            pin: "pinned",
+            metrics: AT_TOP,
+            streaming: false,
+        });
+        expect(atTop.pin).toBe("released");
+        expect(atTop.action).toEqual({ kind: "hold" });
+    });
+});
+
+describe("resolveScroll stream-started", () => {
+    it("re-pins a released viewport that sits at the bottom", () => {
+        const resolution = resolve({
+            signal: { kind: "stream-started" },
+            pin: "released",
+            metrics: AT_BOTTOM,
+        });
+
+        expect(resolution.pin).toBe("pinned");
+        expect(resolution.action).toEqual({ kind: "follow", top: 300 });
+    });
+
+    it("keeps a reader who scrolled up released", () => {
+        const resolution = resolve({
+            signal: { kind: "stream-started" },
+            pin: "released",
+            metrics: AT_TOP,
+        });
+
+        expect(resolution.pin).toBe("released");
+        expect(resolution.action).toEqual({ kind: "hold" });
+    });
+});
+
+describe("resolveScroll layout", () => {
+    it("follows content growth only while pinned and streaming", () => {
+        const resolution = resolve({ signal: { kind: "layout" }, pin: "pinned", streaming: true });
+        expect(resolution.action).toEqual({ kind: "follow", top: 300 });
+        expect(resolution.edges.atBottom).toBe(true);
+    });
+
+    it("holds the offset once the run ends", () => {
+        const resolution = resolve({ signal: { kind: "layout" }, pin: "pinned", streaming: false });
+        expect(resolution.pin).toBe("pinned");
+        expect(resolution.action).toEqual({ kind: "hold" });
+    });
+
+    it("never moves a released viewport", () => {
+        const resolution = resolve({ signal: { kind: "layout" }, pin: "released", metrics: AT_TOP });
+        expect(resolution.pin).toBe("released");
+        expect(resolution.action).toEqual({ kind: "hold" });
+        expect(resolution.edges).toEqual({ fadeTop: false, fadeBottom: true, atBottom: false });
+    });
+});
+
+describe("resolveScroll scroll", () => {
+    it("pins when the reader reaches the bottom", () => {
+        const resolution = resolve({
+            signal: { kind: "scroll", previousScrollTop: 100 },
+            pin: "released",
+            metrics: AT_BOTTOM,
+        });
+
+        expect(resolution.pin).toBe("pinned");
+        expect(resolution.action).toEqual({ kind: "hold" });
+    });
+
+    it("releases when the reader scrolls up", () => {
+        const resolution = resolve({
+            signal: { kind: "scroll", previousScrollTop: 120 },
+            pin: "pinned",
+            metrics: AT_TOP,
+        });
+
+        expect(resolution.pin).toBe("released");
+        expect(resolution.action).toEqual({ kind: "hold" });
+    });
+
+    it("ignores drift smaller than the edge tolerance", () => {
+        // The viewport must not sit at the bottom, otherwise the at-bottom rule answers first and
+        // the move is never compared against the tolerance.
+        expect(measureScrollEdges(MID_SCROLL).atBottom).toBe(false);
+
+        const resolution = resolve({
+            signal: { kind: "scroll", previousScrollTop: 121 },
+            pin: "pinned",
+            metrics: MID_SCROLL,
+        });
+
+        expect(resolution.pin).toBe("pinned");
+    });
+
+    it("releases once the upward move passes the edge tolerance", () => {
+        const resolution = resolve({
+            signal: { kind: "scroll", previousScrollTop: 123 },
+            pin: "pinned",
+            metrics: MID_SCROLL,
+        });
+
+        expect(resolution.pin).toBe("released");
+    });
+
+    it("keeps the pin when the upward move equals the edge tolerance", () => {
+        const resolution = resolve({
+            signal: { kind: "scroll", previousScrollTop: 122 },
+            pin: "pinned",
+            metrics: MID_SCROLL,
+        });
+
+        expect(resolution.pin).toBe("pinned");
+    });
+
+    it("keeps a released viewport released while the reader scrolls down", () => {
+        const resolution = resolve({
+            signal: { kind: "scroll", previousScrollTop: 80 },
+            pin: "released",
+            metrics: { ...AT_TOP, scrollTop: 140 },
+        });
+
+        expect(resolution.pin).toBe("released");
+    });
+});
+
+describe("resolveScroll follow edges", () => {
+    it("describes the viewport after the offset write", () => {
+        const resolution = resolve({
+            signal: { kind: "layout" },
+            pin: "pinned",
+            metrics: { scrollTop: 120, clientHeight: 200, scrollHeight: 500 },
+        });
+
+        expect(resolution.action).toEqual({ kind: "follow", top: 300 });
+        expect(resolution.edges).toEqual({ fadeTop: true, fadeBottom: false, atBottom: true });
+    });
+});
+
+describe("edgesAfterWrite", () => {
+    it("keeps the planned edges when the browser applies the requested offset", () => {
+        const metrics: ScrollMetrics = { scrollTop: 120, clientHeight: 200, scrollHeight: 500 };
+        const resolution = resolve({ signal: { kind: "layout" }, pin: "pinned", metrics });
+
+        expect(edgesAfterWrite(metrics, resolution, 300)).toBe(resolution.edges);
+    });
+
+    it("measures the achieved offset when the browser clamps the write", () => {
+        const metrics: ScrollMetrics = { scrollTop: 120, clientHeight: 200, scrollHeight: 500 };
+        const resolution = resolve({ signal: { kind: "layout" }, pin: "pinned", metrics });
+
+        // The write asked for 300 but landed at 200, so the bottom edge is still hidden.
+        expect(edgesAfterWrite(metrics, resolution, 200)).toEqual({
+            fadeTop: true,
+            fadeBottom: true,
+            atBottom: false,
+        });
+    });
+
+    it("never corrects a decision that does not move the offset", () => {
+        const resolution = resolve({
+            signal: { kind: "scroll", previousScrollTop: 400 },
+            pin: "pinned",
+            metrics: { ...AT_TOP, scrollTop: 120 },
+        });
+
+        expect(edgesAfterWrite({ ...AT_TOP, scrollTop: 120 }, resolution, 120)).toBe(resolution.edges);
     });
 });

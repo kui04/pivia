@@ -328,6 +328,38 @@ export const StreamingAutoFollow: Story = {
     },
 };
 
+export const StreamEndKeepsReleasedPosition: Story = {
+    render: () => <StreamingTranscriptDemo />,
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+        const viewport = requireViewport(canvasElement, "the transcript scroll viewport");
+
+        await waitFor(async () => {
+            await expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight);
+        });
+
+        // The reader leaves the bottom while the answer still streams.
+        viewport.dispatchEvent(new WheelEvent("wheel", { deltaY: -300, bubbles: true, cancelable: true }));
+        viewport.scrollTop = 20;
+        viewport.dispatchEvent(new Event("scroll"));
+
+        const jumpButton = await canvas.findByRole("button", { name: "To bottom" });
+        await waitFor(async () => {
+            await expect(jumpButton).toBeVisible();
+        });
+        const releasedScrollTop = viewport.scrollTop;
+
+        // The run ends. The hook re-runs with `streaming` false and must not replay the one-time
+        // attach jump, otherwise a reader parked above the bottom would be pulled down.
+        await userEvent.click(canvas.getByRole("button", { name: "Finish stream" }));
+        await canvas.findByRole("button", { name: "Resume stream" });
+        await new Promise((resolve) => setTimeout(resolve, 150));
+
+        await expect(viewport.scrollTop).toBeLessThanOrEqual(releasedScrollTop + 4);
+        await expect(canvas.getByRole("button", { name: "To bottom" })).toBeVisible();
+    },
+};
+
 export const FitsWithoutScroll: Story = {
     args: {
         items: shortItems,
