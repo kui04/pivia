@@ -868,72 +868,250 @@ function isRunningToolStep(step: TranscriptStep): boolean {
 }
 
 /**
- * Aggregate projected transcript items into user bubbles, system notes and `Worked for Xs` groups.
+ * Transcript rows that depend on the projected entries only.
+ *
+ * A row in here renders the same item for as long as the projected entry list is the same object,
+ * which is what lets a memoized row component skip a streamed token.
+ */
+type TranscriptPlan = {
+    /** Rows in order, built once per projected entry list. */
+    readonly fixedRows: readonly TranscriptItem[];
+    /** Open turn at the end of the fold; only this row may read live options. */
+    readonly trailingTurn: TrailingTurnPlan;
+    /** Cache-warm notices that arrive after the trailing turn. */
+    readonly trailingWarms: readonly CacheWarmPlan[];
+    /** Notice row that a later cache-warm notice can merge into, or null when the last row is not one. */
+    readonly lastCacheWarm: CacheWarmRow | null;
+    /** Assistant timestamps already present in the entries, so a settled live message is not repeated. */
+    readonly assistantTimestamps: ReadonlySet<number>;
+    /** Turn ids taken by `fixedRows`, so the trailing turn keeps the same dedupe suffix. */
+    readonly usedTurnIds: ReadonlySet<string>;
+};
+
+/**
+ * One open turn before the live options are applied.
+ *
+ * Only this row may read `liveMessage`, `liveToolExecutions` and `runtimeActive`, so only this row
+ * is rebuilt on every streamed token.
+ */
+type TrailingTurnPlan = {
+    /** Persisted messages of the open turn, without the live assistant message. */
+    readonly messages: readonly TurnMessage[];
+    /** Timestamp of the prompt or extension message that started the turn, when one did. */
+    readonly precedingUserTimestamp: number | null;
+    /** Dropped-thinking count accumulated by the turns before this one. */
+    readonly previousDroppedThinking: number;
+};
+
+/** One cache-warm notice emitted after the trailing turn. */
+type CacheWarmPlan = {
+    readonly id: string;
+    readonly note: string | undefined;
+    readonly cost: number;
+};
+
+/** One notice row that a later cache-warm notice can merge into. */
+type CacheWarmRow = {
+    readonly rowIndex: number;
+    readonly note: string | undefined;
+    readonly totalCost: number;
+};
+
+/**
+ * Reserve one turn row id, adding a numeric suffix while the id is already taken.
+ *
+ * A turn id must stay unique across the list; the live-to-persisted handover keeps the same
+ * timestamp, so the plan and the materialized trailing turn choose the same suffix.
+ */
+function uniqueTurnId(turnId: string, usedTurnIds: ReadonlySet<string>): string {
+    let id = turnId;
+    let suffix = 1;
+    while (usedTurnIds.has(id)) {
+        id = `${turnId}-${suffix}`;
+        suffix += 1;
+    }
+    return id;
+}
+
+/**
+ * Options a settled turn reads while the plan is built.
+ *
+ * A settled turn never depends on live runtime inputs: the fold closes it before any live value
+ * can reach it, so the plan passes no options at all.
+ */
+const SETTLED_TURN_OPTIONS: BuildTranscriptOptions = {};
+
+/**
+ * Append one cache-warm notice, merging it into the row above when that row is an adjacent notice
+ * with the same qualifier.
+ *
+ * The returned tracker is a new value; the input tracker may belong to a cached plan and must stay
+ * unchanged so a later token does not merge the same cost again.
+ *
+ * @returns The row a following notice may merge into.
+ */
+function appendCacheWarmNotice(
+    rows: TranscriptItem[],
+    tracker: CacheWarmRow | null,
+    warm: CacheWarmPlan,
+): CacheWarmRow {
+    if (tracker !== null && rows.length - 1 === tracker.rowIndex && tracker.note === warm.note) {
+        const totalCost = tracker.totalCost + warm.cost;
+        const previous = rows[tracker.rowIndex];
+        if (previous?.kind === "notice") {
+            rows[tracker.rowIndex] = {
+                ...previous,
+                text: formatCacheWarmingText(totalCost, tracker.note),
+            };
+        }
+        return { rowIndex: tracker.rowIndex, note: tracker.note, totalCost };
+    }
+    rows.push({
+        kind: "notice",
+        id: `notice-${warm.id}`,
+        text: formatCacheWarmingText(warm.cost, warm.note),
+    });
+    return { rowIndex: rows.length - 1, note: warm.note, totalCost: warm.cost };
+}
+
+/**
+ * Per-view transcript builder that reuses unchanged rows between renders.
+ *
+ * A mounted view builds once per projected entry list and again for every streamed token. Rows whose
+ * projected entries did not change keep their item object, so the memoized row components skip them
+ * and only the trailing turn follows the live options.
+ */
+export type TranscriptRowBuilder = {
+    /**
+     * Fold projected entries and live options into transcript rows.
+     *
+     * @param items - Projected entries, memoized by the caller on the entry list identity.
+     * @param options - Live assistant message, runtime activity and live tool executions.
+     * @returns Rows in reading order; unchanged rows keep the object from the previous call. The rows
+     * belong to the builder, so the caller must not mutate them.
+     */
+    readonly build: (
+        items: readonly ProjectedTranscriptItem[],
+        options?: BuildTranscriptOptions,
+    ) => readonly TranscriptItem[];
+};
+
+/**
+ * Creates one builder for one mounted transcript view.
+ *
+ * Pass the same `items` object between calls to keep row identity. A different object rebuilds
+ * every row, which is correct but loses the reuse that keeps a streamed token cheap.
+ */
+export function createTranscriptRowBuilder(): TranscriptRowBuilder {
+    let plannedFor: readonly ProjectedTranscriptItem[] | null = null;
+    let plan: TranscriptPlan | null = null;
+    let lastBuild: LastBuild | null = null;
+
+    return {
+        build: (items, options = {}) => {
+            if (plan === null || plannedFor !== items) {
+                plannedFor = items;
+                plan = planTranscript(items);
+                lastBuild = null;
+            }
+            const liveMessage = options.liveMessage ?? null;
+            const liveToolExecutions = options.liveToolExecutions ?? null;
+            const runtimeActive = options.runtimeActive === true;
+            // A caller can render again without new streamed input. The plan and the live inputs are
+            // then the same, so the rows from the previous call stay valid down to the object identity.
+            if (
+                lastBuild !== null &&
+                lastBuild.liveMessage === liveMessage &&
+                lastBuild.liveToolExecutions === liveToolExecutions &&
+                lastBuild.runtimeActive === runtimeActive
+            ) {
+                return lastBuild.rows;
+            }
+            const rows = materializeTranscript(plan, options);
+            lastBuild = { liveMessage, liveToolExecutions, runtimeActive, rows };
+            return rows;
+        },
+    };
+}
+
+/** Result of the previous `build` call, reused while the plan and the live inputs stay the same. */
+type LastBuild = {
+    readonly liveMessage: AssistantMessage | null;
+    readonly liveToolExecutions: Readonly<Record<string, LiveToolExecutionState>> | null;
+    readonly runtimeActive: boolean;
+    readonly rows: readonly TranscriptItem[];
+};
+
+/**
+ * Apply the live options to a plan and return the rows in reading order.
+ *
+ * Fixed rows come back as the same objects the plan holds; only the open turn is built again, so a
+ * memoized row component sees unchanged props and skips the token that caused this call.
+ */
+function materializeTranscript(plan: TranscriptPlan, options: BuildTranscriptOptions): TranscriptItem[] {
+    const live = options.liveMessage ?? null;
+    const liveIsDuplicated = live !== null && plan.assistantTimestamps.has(live.timestamp);
+    const messages =
+        live !== null && !liveIsDuplicated
+            ? [...plan.trailingTurn.messages, { message: readAssistantMessage(live, undefined), live: true }]
+            : plan.trailingTurn.messages;
+
+    const rows = plan.fixedRows.slice();
+    if (messages.length > 0) {
+        const { turn } = buildTurnItem(
+            messages,
+            plan.trailingTurn.precedingUserTimestamp,
+            options,
+            true,
+            plan.trailingTurn.previousDroppedThinking,
+        );
+        if (turn !== null) {
+            const id = uniqueTurnId(turn.id, plan.usedTurnIds);
+            rows.push(id === turn.id ? turn : { ...turn, id });
+        }
+    }
+
+    let lastCacheWarm = plan.lastCacheWarm;
+    for (const warm of plan.trailingWarms) {
+        lastCacheWarm = appendCacheWarmNotice(rows, lastCacheWarm, warm);
+    }
+
+    return rows;
+}
+
+/**
+ * Fold projected transcript items into fixed rows plus the open turn at the end.
  *
  * Every assistant round and tool result between two user prompts shares one turn group, with the
  * final text-only assistant reply placed outside the group below `steps`. A compaction or branch
  * summary ends the running turn because it marks a context boundary the reader must see.
+ *
+ * The open turn stays in raw form because only it can still observe live runtime inputs; every row
+ * before it is final once this fold returns.
  */
-export function buildTranscript(
-    items: readonly ProjectedTranscriptItem[],
-    options: BuildTranscriptOptions = {},
-): TranscriptItem[] {
-    const transcript: TranscriptItem[] = [];
+function planTranscript(items: readonly ProjectedTranscriptItem[]): TranscriptPlan {
+    const fixedRows: TranscriptItem[] = [];
     const usedTurnIds = new Set<string>();
+    const assistantTimestamps = new Set<number>();
     let pendingTurn: TurnMessage[] = [];
     let lastUserTimestamp: number | null = null;
-    let liveMessageDuplicated = false;
     let lastDroppedThinking = 0;
-    let deferredCacheWarms: {
-        readonly id: string;
-        readonly note: string | undefined;
-        readonly cost: number;
-    }[] = [];
-    let lastCacheWarmNotice: {
-        readonly transcriptIndex: number;
-        readonly note: string | undefined;
-        totalCost: number;
-    } | null = null;
+    let deferredCacheWarms: CacheWarmPlan[] = [];
+    let lastCacheWarm: CacheWarmRow | null = null;
 
-    const pushCacheWarmNotice = (entryId: string, note: string | undefined, cost: number): void => {
-        // Collapse adjacent cache-warm refreshes with the same qualifier into one cumulative line.
-        if (
-            lastCacheWarmNotice !== null &&
-            transcript.length - 1 === lastCacheWarmNotice.transcriptIndex &&
-            lastCacheWarmNotice.note === note
-        ) {
-            lastCacheWarmNotice.totalCost += cost;
-            const previous = transcript[lastCacheWarmNotice.transcriptIndex];
-            if (previous?.kind === "notice") {
-                transcript[lastCacheWarmNotice.transcriptIndex] = {
-                    ...previous,
-                    text: formatCacheWarmingText(lastCacheWarmNotice.totalCost, note),
-                };
-            }
-            return;
-        }
-        const noticeItem: TranscriptNoticeItem = {
-            kind: "notice",
-            id: `notice-${entryId}`,
-            text: formatCacheWarmingText(cost, note),
-        };
-        lastCacheWarmNotice = {
-            transcriptIndex: transcript.length,
-            note,
-            totalCost: cost,
-        };
-        transcript.push(noticeItem);
+    const pushCacheWarmNotice = (warm: CacheWarmPlan): void => {
+        lastCacheWarm = appendCacheWarmNotice(fixedRows, lastCacheWarm, warm);
     };
 
-    const flushTurn = (isTrailingTurn: boolean): void => {
+    const flushTurn = (): void => {
         const warmsToFlush = deferredCacheWarms;
         deferredCacheWarms = [];
         if (pendingTurn.length > 0) {
             const { turn, nextDroppedThinking } = buildTurnItem(
                 pendingTurn,
                 lastUserTimestamp,
-                options,
-                isTrailingTurn,
+                SETTLED_TURN_OPTIONS,
+                false,
                 lastDroppedThinking,
             );
             pendingTurn = [];
@@ -942,27 +1120,20 @@ export function buildTranscript(
             // time when no new user message precedes it.
             lastUserTimestamp = null;
             if (turn !== null) {
-                // A turn id must stay unique across the list; the live-to-persisted handover keeps the same
-                // timestamp, so the same suffix is chosen in both phases.
-                let id = turn.id;
-                let suffix = 1;
-                while (usedTurnIds.has(id)) {
-                    id = `${turn.id}-${suffix}`;
-                    suffix += 1;
-                }
+                const id = uniqueTurnId(turn.id, usedTurnIds);
                 usedTurnIds.add(id);
-                transcript.push(id === turn.id ? turn : { ...turn, id });
+                fixedRows.push(id === turn.id ? turn : { ...turn, id });
             }
         }
         for (const warm of warmsToFlush) {
-            pushCacheWarmNotice(warm.id, warm.note, warm.cost);
+            pushCacheWarmNotice(warm);
         }
     };
 
     for (const item of items) {
         if (item.kind === "compaction") {
-            flushTurn(false);
-            transcript.push(buildNoteItem(item.entry));
+            flushTurn();
+            fixedRows.push(buildNoteItem(item.entry));
             continue;
         }
 
@@ -972,12 +1143,12 @@ export function buildTranscript(
                 const message = entry.message;
                 switch (message.role) {
                     case "user": {
-                        flushTurn(false);
+                        flushTurn();
                         const timestamp = readFiniteNumber(message.timestamp) ?? 0;
                         const { text, images } = readUserContent(item.editedContent ?? message.content);
                         const skillBlock = parseSkillBlock(text);
                         if (skillBlock === null) {
-                            transcript.push({
+                            fixedRows.push({
                                 kind: "user",
                                 id: `user-${entry.id}`,
                                 text,
@@ -986,7 +1157,7 @@ export function buildTranscript(
                         } else {
                             // The terminal client shows the expanded skill block first and the typed
                             // prompt after it, so one persisted entry can become two rows.
-                            transcript.push({
+                            fixedRows.push({
                                 kind: "skill",
                                 id: `skill-${entry.id}`,
                                 name: skillBlock.name,
@@ -995,7 +1166,7 @@ export function buildTranscript(
                             });
                             const userText = skillBlock.userMessage ?? "";
                             if (userText !== "" || images.length > 0) {
-                                transcript.push({
+                                fixedRows.push({
                                     kind: "user",
                                     id: `user-${entry.id}`,
                                     text: userText,
@@ -1009,8 +1180,9 @@ export function buildTranscript(
                         break;
                     }
                     case "assistant": {
-                        if (options.liveMessage?.timestamp === message.timestamp) {
-                            liveMessageDuplicated = true;
+                        const timestamp = readFiniteNumber(message.timestamp);
+                        if (timestamp !== null) {
+                            assistantTimestamps.add(timestamp);
                         }
                         pendingTurn.push({ message: readAssistantMessage(message, item.editedContent), live: false });
                         break;
@@ -1022,8 +1194,8 @@ export function buildTranscript(
                     case "bashExecution": {
                         // The command ran between turns, so it ends the pending one and starts no
                         // new prompt: its timestamp must not seed the next turn's duration.
-                        flushTurn(false);
-                        transcript.push(readBashItem(entry.id, message));
+                        flushTurn();
+                        fixedRows.push(readBashItem(entry.id, message));
                         break;
                     }
                     case "system":
@@ -1042,9 +1214,9 @@ export function buildTranscript(
                 if (!entry.display) {
                     break;
                 }
-                flushTurn(false);
+                flushTurn();
                 const timestamp = parseIsoTimestamp(entry.timestamp);
-                transcript.push(readCustomItem(entry, item.editedContent));
+                fixedRows.push(readCustomItem(entry, item.editedContent));
                 // A displayed extension message can start the next turn, so its time seeds that
                 // turn's duration the way a prompt does. An unreadable timestamp parses to 0 and
                 // must not become a start, or the next turn would count from the epoch.
@@ -1052,8 +1224,8 @@ export function buildTranscript(
                 break;
             }
             case "branch_summary": {
-                flushTurn(false);
-                transcript.push(buildNoteItem(entry));
+                flushTurn();
+                fixedRows.push(buildNoteItem(entry));
                 break;
             }
             case "usage": {
@@ -1070,7 +1242,7 @@ export function buildTranscript(
                 if (pendingTurn.length > 0) {
                     deferredCacheWarms.push({ id: entry.id, note, cost });
                 } else {
-                    pushCacheWarmNotice(entry.id, note, cost);
+                    pushCacheWarmNotice({ id: entry.id, note, cost });
                 }
                 break;
             }
@@ -1092,14 +1264,29 @@ export function buildTranscript(
         }
     }
 
-    const live = options.liveMessage ?? null;
-    if (live !== null && !liveMessageDuplicated) {
-        pendingTurn.push({
-            message: readAssistantMessage(live, undefined),
-            live: true,
-        });
-    }
-    flushTurn(true);
+    return {
+        fixedRows,
+        trailingTurn: {
+            messages: pendingTurn,
+            precedingUserTimestamp: lastUserTimestamp,
+            previousDroppedThinking: lastDroppedThinking,
+        },
+        trailingWarms: deferredCacheWarms,
+        lastCacheWarm,
+        assistantTimestamps,
+        usedTurnIds,
+    };
+}
 
-    return transcript;
+/**
+ * Aggregate projected transcript items into user bubbles, system notes and `Worked for Xs` groups.
+ *
+ * This is the one-shot fold: every call builds every row. A mounted view uses
+ * {@link createTranscriptRowBuilder} so unchanged rows keep their identity between streamed tokens.
+ */
+export function buildTranscript(
+    items: readonly ProjectedTranscriptItem[],
+    options: BuildTranscriptOptions = {},
+): TranscriptItem[] {
+    return materializeTranscript(planTranscript(items), options);
 }

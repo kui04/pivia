@@ -1,4 +1,4 @@
-import type { ReactElement } from "react";
+import { memo, type ReactElement } from "react";
 
 import { cn } from "@/lib";
 import type { TranscriptUserItem } from "@/stores/session";
@@ -22,7 +22,7 @@ export type UserMessageProps = {
  *
  * @param props - Prompt item and an optional class for the surrounding row.
  */
-export function UserMessage({ item, className }: UserMessageProps): ReactElement {
+function UserMessageInner({ item, className }: UserMessageProps): ReactElement {
     const hasText = item.text.trim().length > 0;
 
     return (
@@ -35,3 +35,6 @@ export function UserMessage({ item, className }: UserMessageProps): ReactElement
         </div>
     );
 }
+
+/** Memoized prompt bubble: an unchanged prompt skips rendering on every streamed token. */
+export const UserMessage = memo(UserMessageInner);

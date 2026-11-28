@@ -3,7 +3,7 @@ import type { FileEntry } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 
 import { projectSessionTranscript } from "./projection";
-import { buildTranscript, describeToolCall } from "./transcript";
+import { buildTranscript, createTranscriptRowBuilder, describeToolCall, type TranscriptItem } from "./transcript";
 
 const EMPTY_USAGE = {
     input: 0,
@@ -237,7 +237,7 @@ function project(entries: readonly FileEntry[]) {
     return projectSessionTranscript([HEADER, ...entries]);
 }
 
-function turnOf(items: ReturnType<typeof buildTranscript>, index: number) {
+function turnOf(items: readonly TranscriptItem[], index: number) {
     const item = items[index];
     if (item?.kind !== "turn") {
         throw new Error(`Expected a turn at index ${index}`);
@@ -245,7 +245,7 @@ function turnOf(items: ReturnType<typeof buildTranscript>, index: number) {
     return item;
 }
 
-function toolStepOf(items: ReturnType<typeof buildTranscript>, index: number, stepIndex: number) {
+function toolStepOf(items: readonly TranscriptItem[], index: number, stepIndex: number) {
     const step = turnOf(items, index).steps[stepIndex];
     if (step?.kind !== "toolCall") {
         throw new Error(`Expected a tool call step at index ${stepIndex}`);
@@ -1614,5 +1614,207 @@ describe("Step 5 metadata, cache warming usage, and diagnostics", () => {
         expect(turnOf(items, 4).diagnosticsNotice).toBeUndefined();
         expect(turnOf(items, 6).diagnosticsNotice).toBeUndefined();
         expect(turnOf(items, 8).diagnosticsNotice).toBe("Anthropic dropped 6 thinking blocks");
+    });
+});
+
+describe("createTranscriptRowBuilder", () => {
+    const settledEntries = [
+        userEntry("m1", null, "First prompt", 1_000),
+        assistantEntry("m2", "m1", [{ type: "text", text: "First answer" }]),
+        userEntry("m3", "m2", "Second prompt", 3_000),
+        assistantEntry("m4", "m3", [{ type: "text", text: "Second answer" }]),
+    ];
+
+    function liveMessage(text: string, timestamp: number): AssistantMessage {
+        return {
+            role: "assistant",
+            content: [{ type: "text", text }],
+            api: "test",
+            provider: "test",
+            model: "test",
+            usage: EMPTY_USAGE,
+            stopReason: "pending",
+            timestamp,
+        };
+    }
+
+    /** One persisted cache-warm usage record, as the CacheWarmer appends it. */
+    function cacheWarmEntry(
+        id: string,
+        parentId: string | null,
+        cost: number,
+        note?: string,
+    ): Extract<FileEntry, { type: "usage" }> {
+        return {
+            type: "usage",
+            id,
+            parentId,
+            timestamp: "2026-04-01T00:01:00.000Z",
+            kind: "cache_warm",
+            provider: "anthropic",
+            model: "claude",
+            usage: { ...EMPTY_USAGE, cost: { ...EMPTY_USAGE.cost, total: cost } },
+            ...(note === undefined ? {} : { note }),
+        };
+    }
+
+    function noticeOf(items: readonly TranscriptItem[]): Extract<TranscriptItem, { kind: "notice" }> {
+        const notice = items.find((item) => item.kind === "notice");
+        if (notice?.kind !== "notice") {
+            throw new Error("Expected a notice row");
+        }
+        return notice;
+    }
+
+    it("keeps every settled row while a streamed token extends the trailing turn", () => {
+        const projected = project(settledEntries);
+        const builder = createTranscriptRowBuilder();
+        const before = builder.build(projected);
+
+        const during = builder.build(projected, {
+            liveMessage: liveMessage("Streaming", 10_000),
+            runtimeActive: true,
+        });
+
+        expect(during).toHaveLength(before.length);
+        for (let index = 0; index < before.length - 1; index += 1) {
+            expect(during[index]).toBe(before[index]);
+        }
+        expect(during.at(-1)).not.toBe(before.at(-1));
+        expect(turnOf(during, during.length - 1).finalReply).toBe("Streaming");
+    });
+
+    it("keeps the settled rows across consecutive tokens", () => {
+        const projected = project(settledEntries);
+        const builder = createTranscriptRowBuilder();
+        const first = builder.build(projected, {
+            liveMessage: liveMessage("Stream", 10_000),
+            runtimeActive: true,
+        });
+        const second = builder.build(projected, {
+            liveMessage: liveMessage("Streaming answer", 10_000),
+            runtimeActive: true,
+        });
+
+        expect(second[0]).toBe(first[0]);
+        expect(second[1]).toBe(first[1]);
+        expect(second[2]).toBe(first[2]);
+        expect(turnOf(second, 3).finalReply).toBe("Streaming answer");
+    });
+
+    it("rebuilds the rows when the projected entry list changes", () => {
+        const builder = createTranscriptRowBuilder();
+        const first = builder.build(project(settledEntries));
+        const second = builder.build(project([...settledEntries, userEntry("m5", "m4", "Third", 5_000)]));
+
+        expect(second).toHaveLength(first.length + 1);
+        expect(second[0]).not.toBe(first[0]);
+        expect(second[0]).toEqual(first[0]);
+    });
+
+    it("does not repeat a live message that already landed as an entry", () => {
+        const projected = project(settledEntries);
+        const builder = createTranscriptRowBuilder();
+        const before = builder.build(projected);
+        const settled = liveMessage("Second answer", 2_000);
+
+        const after = builder.build(projected, { liveMessage: settled, runtimeActive: false });
+
+        expect(after).toHaveLength(before.length);
+        for (let index = 0; index < before.length - 1; index += 1) {
+            expect(after[index]).toBe(before[index]);
+        }
+        expect(after.at(-1)).toEqual(before.at(-1));
+        expect(builder.build(projected, { liveMessage: settled, runtimeActive: false })).toBe(after);
+    });
+
+    it("matches buildTranscript for the same entries and options", () => {
+        const projected = project([...settledEntries, userEntry("m5", "m4", "Live prompt", 5_000)]);
+        const builder = createTranscriptRowBuilder();
+        const options = {
+            liveMessage: liveMessage("Streaming reply", 6_000),
+            runtimeActive: true,
+            liveToolExecutions: {
+                call_1: {
+                    kind: "running" as const,
+                    toolCallId: "call_1",
+                    toolName: "bash",
+                    args: { command: "sleep 1" },
+                    partialResult: null,
+                },
+            },
+        };
+
+        expect(builder.build(projected, options)).toEqual(buildTranscript(projected, options));
+    });
+
+    it("keeps cache-warm totals stable when the plan is reused", () => {
+        const builder = createTranscriptRowBuilder();
+        const projected = project([
+            userEntry("m1", null, "Prompt", 1_000),
+            cacheWarmEntry("u1", "m1", 0.001, "idle"),
+            toolResultEntry("m2", "u1", "call_1", "output"),
+            cacheWarmEntry("u2", "m2", 0.0015, "idle"),
+        ]);
+
+        const active = builder.build(projected, { runtimeActive: true });
+        const idle = builder.build(projected, { runtimeActive: false });
+
+        expect(noticeOf(idle)).toEqual(noticeOf(active));
+        expect(noticeOf(idle).text).toBe("Cache warmed (idle): $0.0025");
+    });
+
+    it("keeps the dedupe suffix of the trailing turn while it streams", () => {
+        const builder = createTranscriptRowBuilder();
+        // Both turns start at the same assistant timestamp, so the second needs a suffix.
+        const projected = project([
+            userEntry("m1", null, "First", 1_000),
+            assistantEntry("m2", "m1", [{ type: "text", text: "A" }]),
+            userEntry("m3", "m2", "Second", 1_500),
+            assistantEntry("m4", "m3", [{ type: "text", text: "B" }]),
+        ]);
+
+        const settled = builder.build(projected);
+        const streaming = builder.build(projected, {
+            liveMessage: liveMessage("B continues", 2_500),
+            runtimeActive: true,
+        });
+
+        expect(settled.map((item) => item.id)).toEqual(["user-m1", "turn-2000", "user-m3", "turn-2000-1"]);
+        expect(streaming.map((item) => item.id)).toEqual(["user-m1", "turn-2000", "user-m3", "turn-2000-1"]);
+        expect(turnOf(streaming, 3).finalReply).toBe("B continues");
+    });
+
+    it("refreshes the trailing tool status when only runtime activity changes", () => {
+        const builder = createTranscriptRowBuilder();
+        const projected = project([
+            userEntry("m1", null, "Run", 1_000),
+            assistantEntry(
+                "m2",
+                "m1",
+                [{ type: "toolCall", id: "call_1", name: "bash", arguments: { command: "sleep 1" } }],
+                { stopReason: "toolUse", timestamp: 2_000 },
+            ),
+        ]);
+
+        const running = builder.build(projected, { runtimeActive: true });
+        const interrupted = builder.build(projected, { runtimeActive: false });
+
+        expect(toolStepOf(running, 1, 0).status).toBe("running");
+        expect(toolStepOf(interrupted, 1, 0).status).toBe("error");
+        expect(interrupted[0]).toBe(running[0]);
+    });
+
+    it("matches buildTranscript for cache-warm notices", () => {
+        const projected = project([
+            userEntry("m1", null, "Prompt", 1_000),
+            assistantEntry("m2", "m1", [{ type: "text", text: "Done" }]),
+            cacheWarmEntry("u1", "m2", 0.001, "idle"),
+            cacheWarmEntry("u2", "u1", 0.0015, "idle"),
+            cacheWarmEntry("u3", "u2", 0.002),
+        ]);
+        const builder = createTranscriptRowBuilder();
+
+        expect(builder.build(projected)).toEqual(buildTranscript(projected));
     });
 });

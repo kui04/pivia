@@ -1,6 +1,6 @@
 import { assertNever } from "@pivia/protocol";
 import { Terminal } from "lucide-react";
-import { useState, type ReactElement } from "react";
+import { memo, useState, type ReactElement } from "react";
 
 import { Icon } from "@components";
 import { useCopyFeedback, useFontRole } from "@/hooks";
@@ -49,7 +49,7 @@ function formatStatus(status: TranscriptBashStatus): string {
  *
  * @param props - Command record and optional wrap and copy controls.
  */
-export function BashExecutionBlock({
+function BashExecutionBlockInner({
     item,
     onCopy,
     defaultWrapped = false,
@@ -116,3 +116,6 @@ export function BashExecutionBlock({
         </div>
     );
 }
+
+/** Memoized command record: an unchanged record skips rendering on every streamed token. */
+export const BashExecutionBlock = memo(BashExecutionBlockInner);

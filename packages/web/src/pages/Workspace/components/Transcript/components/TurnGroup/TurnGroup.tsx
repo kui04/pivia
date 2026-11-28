@@ -1,6 +1,6 @@
 import { assertNever } from "@pivia/protocol";
 import { AlertTriangle, Ban, CircleAlert, Layers, MessageSquareText, type LucideIcon } from "lucide-react";
-import { Fragment, type ReactElement } from "react";
+import { Fragment, memo, type ReactElement } from "react";
 
 import { Icon, Markdown } from "@components";
 import { cn, Formatter } from "@/lib";
@@ -145,7 +145,7 @@ function renderStep(
  *
  * @param props - Turn item and optional expansion control.
  */
-export function TurnGroup({
+function TurnGroupInner({
     turn,
     defaultOpen = false,
     open: controlledOpen,
@@ -231,3 +231,6 @@ export function TurnGroup({
         </div>
     );
 }
+
+/** Memoized turn group: an unchanged turn skips rendering while a token extends the trailing turn. */
+export const TurnGroup = memo(TurnGroupInner);

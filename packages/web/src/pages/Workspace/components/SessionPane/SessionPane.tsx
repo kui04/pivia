@@ -5,7 +5,7 @@ import { Button, LoadingIndicator } from "@components";
 import { ensureFontRole } from "@/lib";
 import { showError, showWarning, toastManager } from "@/lib/toast";
 import {
-    buildTranscript,
+    createTranscriptRowBuilder,
     projectSessionTranscript,
     type SessionActivityNotice,
     type SessionLiveActivity,
@@ -247,14 +247,17 @@ function ConnectedSessionBody({
         () => (routeMatchesStore ? projectSessionTranscript(entries) : []),
         [entries, routeMatchesStore],
     );
+    // The builder keeps the rows whose entries did not change, so a streamed token re-renders only
+    // the trailing turn instead of the whole list.
+    const rowBuilder = useMemo(() => createTranscriptRowBuilder(), []);
     const items = useMemo(
         () =>
-            buildTranscript(projectedItems, {
+            rowBuilder.build(projectedItems, {
                 liveMessage: liveMessage.kind === "none" ? null : liveMessage.message,
                 runtimeActive,
                 liveToolExecutions,
             }),
-        [liveMessage, liveToolExecutions, projectedItems, runtimeActive],
+        [liveMessage, liveToolExecutions, projectedItems, rowBuilder, runtimeActive],
     );
 
     const hasVisibleActivity =

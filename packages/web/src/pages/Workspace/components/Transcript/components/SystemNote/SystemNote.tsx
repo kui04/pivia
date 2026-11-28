@@ -1,5 +1,5 @@
 import { Archive } from "lucide-react";
-import type { ReactElement } from "react";
+import { memo, type ReactElement } from "react";
 
 import { Markdown } from "@components";
 import { cn } from "@/lib";
@@ -28,7 +28,7 @@ export type SystemNoteProps = {
  *
  * @param props - Note item and an optional class for the surrounding row.
  */
-export function SystemNote({ item, onOpenLink, className }: SystemNoteProps): ReactElement {
+function SystemNoteInner({ item, onOpenLink, className }: SystemNoteProps): ReactElement {
     const meta = formatSystemNoteMeta(item);
 
     return (
@@ -40,3 +40,6 @@ export function SystemNote({ item, onOpenLink, className }: SystemNoteProps): Re
         </div>
     );
 }
+
+/** Memoized system note: an unchanged checkpoint skips rendering on every streamed token. */
+export const SystemNote = memo(SystemNoteInner);

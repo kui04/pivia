@@ -1,5 +1,5 @@
 import { Sparkles } from "lucide-react";
-import type { ReactElement } from "react";
+import { memo, type ReactElement } from "react";
 
 import { Markdown } from "@components";
 import { useFontRole } from "@/hooks";
@@ -32,7 +32,7 @@ export type SkillInvocationBlockProps = {
  *
  * @param props - Skill item and an optional class for the surrounding row.
  */
-export function SkillInvocationBlock({
+function SkillInvocationBlockInner({
     item,
     onOpenLink,
     defaultOpen = false,
@@ -57,3 +57,6 @@ export function SkillInvocationBlock({
         </CollapsibleBlock>
     );
 }
+
+/** Memoized skill card: an unchanged invocation skips rendering on every streamed token. */
+export const SkillInvocationBlock = memo(SkillInvocationBlockInner);

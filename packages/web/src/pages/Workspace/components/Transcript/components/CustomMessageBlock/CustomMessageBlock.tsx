@@ -1,5 +1,5 @@
 import { Puzzle } from "lucide-react";
-import type { ReactElement } from "react";
+import { memo, type ReactElement } from "react";
 
 import { Markdown } from "@components";
 import type { TranscriptCustomItem } from "@/stores/session";
@@ -35,7 +35,7 @@ export type CustomMessageBlockProps = {
  *
  * @param props - Extension message item and optional expansion control.
  */
-export function CustomMessageBlock({
+function CustomMessageBlockInner({
     item,
     onOpenLink,
     defaultOpen = true,
@@ -70,3 +70,6 @@ export function CustomMessageBlock({
         </CollapsibleBlock>
     );
 }
+
+/** Memoized extension message: an unchanged message skips rendering on every streamed token. */
+export const CustomMessageBlock = memo(CustomMessageBlockInner);
