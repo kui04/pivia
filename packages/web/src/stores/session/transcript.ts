@@ -994,6 +994,15 @@ export type TranscriptRowBuilder = {
         items: readonly ProjectedTranscriptItem[],
         options?: BuildTranscriptOptions,
     ) => readonly TranscriptItem[];
+    /**
+     * Whether the last plan rebuild dropped entries from the front.
+     *
+     * A moved compaction boundary or another branch produces a shorter entry list that no longer
+     * starts at the previous first entry. A view that virtualizes rows reads this right after
+     * {@link build} to hold a released reader's position, because the browser then has nothing left
+     * to clamp. An appended or tail-trimmed list reports false.
+     */
+    readonly droppedLeadingEntries: boolean;
 };
 
 /**
@@ -1006,10 +1015,15 @@ export function createTranscriptRowBuilder(): TranscriptRowBuilder {
     let plannedFor: readonly ProjectedTranscriptItem[] | null = null;
     let plan: TranscriptPlan | null = null;
     let lastBuild: LastBuild | null = null;
+    let droppedLeadingEntries = false;
 
     return {
         build: (items, options = {}) => {
             if (plan === null || plannedFor !== items) {
+                droppedLeadingEntries =
+                    plannedFor !== null &&
+                    items.length < plannedFor.length &&
+                    !items.some((item) => item.entry.id === plannedFor?.[0]?.entry.id);
                 plannedFor = items;
                 plan = planTranscript(items);
                 lastBuild = null;
@@ -1030,6 +1044,9 @@ export function createTranscriptRowBuilder(): TranscriptRowBuilder {
             const rows = materializeTranscript(plan, options);
             lastBuild = { liveMessage, liveToolExecutions, runtimeActive, rows };
             return rows;
+        },
+        get droppedLeadingEntries() {
+            return droppedLeadingEntries;
         },
     };
 }

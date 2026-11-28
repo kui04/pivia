@@ -4,6 +4,7 @@ import {
     bottomOffset,
     edgesAfterWrite,
     measureScrollEdges,
+    pinAfterJump,
     resolveScroll,
     type ScrollMetrics,
     type ScrollResolutionInput,
@@ -25,6 +26,7 @@ function resolve(overrides: Partial<ScrollResolutionInput>): ReturnType<typeof r
         metrics: AT_BOTTOM,
         streaming: true,
         initialBottom: false,
+        settling: true,
         ...overrides,
     });
 }
@@ -98,13 +100,27 @@ describe("resolveScroll attach", () => {
         expect(resolution.edges).toEqual({ fadeTop: true, fadeBottom: false, atBottom: true });
     });
 
-    it("pins and follows an idle viewport that asks for the initial bottom", () => {
+    it("settles an idle viewport that asks for the initial bottom", () => {
         const resolution = resolve({
             signal: { kind: "attach" },
             pin: "released",
             metrics: AT_TOP,
             streaming: false,
             initialBottom: true,
+        });
+
+        expect(resolution.pin).toBe("settling");
+        expect(resolution.action).toEqual({ kind: "follow", top: 300 });
+    });
+
+    it("re-attaches a settled viewport without re-entering the settling phase", () => {
+        const resolution = resolve({
+            signal: { kind: "attach" },
+            pin: "released",
+            metrics: AT_TOP,
+            streaming: false,
+            initialBottom: true,
+            settling: false,
         });
 
         expect(resolution.pin).toBe("pinned");
@@ -154,6 +170,34 @@ describe("resolveScroll stream-started", () => {
         expect(resolution.pin).toBe("released");
         expect(resolution.action).toEqual({ kind: "hold" });
     });
+
+    it("takes over from a settling viewport and follows the run", () => {
+        const resolution = resolve({
+            signal: { kind: "stream-started" },
+            pin: "settling",
+            metrics: AT_TOP,
+        });
+
+        expect(resolution.pin).toBe("pinned");
+        expect(resolution.action).toEqual({ kind: "follow", top: 300 });
+    });
+});
+
+describe("resolveScroll settled", () => {
+    it("closes the settling phase into pinned and holds the offset", () => {
+        const resolution = resolve({ signal: { kind: "settled" }, pin: "settling", streaming: false });
+
+        expect(resolution.pin).toBe("pinned");
+        expect(resolution.action).toEqual({ kind: "hold" });
+        expect(resolution.edges).toEqual({ fadeTop: true, fadeBottom: false, atBottom: true });
+    });
+
+    it("leaves a released viewport released", () => {
+        const resolution = resolve({ signal: { kind: "settled" }, pin: "released", metrics: AT_TOP });
+
+        expect(resolution.pin).toBe("released");
+        expect(resolution.action).toEqual({ kind: "hold" });
+    });
 });
 
 describe("resolveScroll layout", () => {
@@ -167,6 +211,13 @@ describe("resolveScroll layout", () => {
         const resolution = resolve({ signal: { kind: "layout" }, pin: "pinned", streaming: false });
         expect(resolution.pin).toBe("pinned");
         expect(resolution.action).toEqual({ kind: "hold" });
+    });
+
+    it("follows the measuring passes of an idle settling viewport", () => {
+        const resolution = resolve({ signal: { kind: "layout" }, pin: "settling", streaming: false });
+
+        expect(resolution.pin).toBe("settling");
+        expect(resolution.action).toEqual({ kind: "follow", top: 300 });
     });
 
     it("never moves a released viewport", () => {
@@ -193,6 +244,28 @@ describe("resolveScroll scroll", () => {
         const resolution = resolve({
             signal: { kind: "scroll", previousScrollTop: 120 },
             pin: "pinned",
+            metrics: AT_TOP,
+        });
+
+        expect(resolution.pin).toBe("released");
+        expect(resolution.action).toEqual({ kind: "hold" });
+    });
+
+    it("keeps settling when its own jump to the bottom reports a scroll", () => {
+        const resolution = resolve({
+            signal: { kind: "scroll", previousScrollTop: 0 },
+            pin: "settling",
+            metrics: AT_BOTTOM,
+        });
+
+        expect(resolution.pin).toBe("settling");
+        expect(resolution.action).toEqual({ kind: "hold" });
+    });
+
+    it("releases a settling viewport when the reader scrolls up", () => {
+        const resolution = resolve({
+            signal: { kind: "scroll", previousScrollTop: 400 },
+            pin: "settling",
             metrics: AT_TOP,
         });
 
@@ -286,5 +359,15 @@ describe("edgesAfterWrite", () => {
         });
 
         expect(edgesAfterWrite({ ...AT_TOP, scrollTop: 120 }, resolution, 120)).toBe(resolution.edges);
+    });
+});
+
+describe("pinAfterJump", () => {
+    it("keeps following the measuring passes of a settling viewport", () => {
+        expect(pinAfterJump(true)).toBe("settling");
+    });
+
+    it("pins a viewport that already settled", () => {
+        expect(pinAfterJump(false)).toBe("pinned");
     });
 });

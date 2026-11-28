@@ -66,6 +66,9 @@ function buildLongConversation(turnCount: number): TranscriptItem[] {
 
 const longItems = buildLongConversation(8);
 
+/** Long enough that the list must virtualize: 100 turns make 200 rows. */
+const longVirtualizedItems = buildLongConversation(100);
+
 const repeatedBashItems: TranscriptItem[] = [
     {
         kind: "bash",
@@ -165,10 +168,64 @@ export const LongConversationInitialBottom: Story = {
                 Math.abs(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop),
             ).toBeLessThanOrEqual(3);
             await expect(Number.parseFloat(getComputedStyle(content).paddingBottom)).toBeGreaterThanOrEqual(60);
+            await expect(canvas.getByText(/Committed as/)).toBeVisible();
         });
 
-        await expect(canvas.getByText(/Committed as/)).toBeVisible();
         await expect(canvas.queryByRole("button", { name: "To bottom" })).not.toBeInTheDocument();
+    },
+};
+
+export const LongConversationVirtualizedWindow: Story = {
+    args: {
+        items: longVirtualizedItems,
+    },
+    decorators: [
+        (Story) => (
+            <div className={styles.frame}>
+                <Story />
+            </div>
+        ),
+    ],
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+        const viewport = requireViewport(canvasElement, "the transcript scroll viewport");
+
+        // The list measures its rows after the first commit, so the bottom position settles over a
+        // few frames; the pin must follow those passes.
+        await waitFor(async () => {
+            await expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight * 4);
+            await expect(
+                Math.abs(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop),
+            ).toBeLessThanOrEqual(3);
+            // The last row stays hidden until the list measured it.
+            await expect(canvas.getByText(/Committed as/)).toBeVisible();
+            // Only the rows around the viewport stay mounted.
+            await expect(canvasElement.querySelectorAll("[data-slot='transcript-row']").length).toBeLessThan(40);
+        });
+        await expect(
+            canvas.queryByText("Step 1: check the workspace transcript rules and report the verified output."),
+        ).not.toBeInTheDocument();
+
+        // Scrolling to the top mounts the first rows and unmounts the last one.
+        viewport.dispatchEvent(new WheelEvent("wheel", { deltaY: -300, bubbles: true, cancelable: true }));
+        viewport.scrollTop = 0;
+        viewport.dispatchEvent(new Event("scroll"));
+        await waitFor(async () => {
+            await expect(
+                canvas.getByText("Step 1: check the workspace transcript rules and report the verified output."),
+            ).toBeVisible();
+            await expect(canvas.queryByText(/Committed as/)).not.toBeInTheDocument();
+        });
+
+        // Return to the bottom so the story rests in the state a reader opens it in.
+        viewport.scrollTop = viewport.scrollHeight;
+        viewport.dispatchEvent(new Event("scroll"));
+        await waitFor(async () => {
+            await expect(canvas.getByText(/Committed as/)).toBeVisible();
+            await expect(
+                Math.abs(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop),
+            ).toBeLessThanOrEqual(3);
+        });
     },
 };
 
@@ -328,14 +385,145 @@ export const StreamingAutoFollow: Story = {
     },
 };
 
+/**
+ * Simulates a compaction boundary move: the projection drops the rows before the boundary, so the
+ * list the virtualizer receives shrinks from the front while the reader sits at the bottom.
+ *
+ * The demo reports the drop itself, as `createTranscriptRowBuilder` does in the app.
+ */
+function CompactingTranscriptDemo() {
+    const [items, setItems] = useState<readonly TranscriptItem[]>(longItems);
+    const [droppedLeadingEntries, setDroppedLeadingEntries] = useState(false);
+
+    return (
+        <div className={styles.streamingShell}>
+            <div className={styles.controls}>
+                <Button
+                    type="button"
+                    onClick={() => {
+                        setItems((current) => current.slice(4));
+                        setDroppedLeadingEntries(true);
+                    }}
+                >
+                    Compact
+                </Button>
+                <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => {
+                        setItems(longItems);
+                        setDroppedLeadingEntries(false);
+                    }}
+                >
+                    Restore
+                </Button>
+            </div>
+            <Transcript items={items} droppedLeadingEntries={droppedLeadingEntries} />
+        </div>
+    );
+}
+
+export const CompactionShortensRows: Story = {
+    render: () => <CompactingTranscriptDemo />,
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+        const viewport = requireViewport(canvasElement, "the transcript scroll viewport");
+
+        await waitFor(async () => {
+            await expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight * 2);
+            await expect(
+                Math.abs(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop),
+            ).toBeLessThanOrEqual(3);
+        });
+
+        // Dropping the leading rows must keep the reader's bottom position and the last reply.
+        await userEvent.click(canvas.getByRole("button", { name: "Compact" }));
+        await waitFor(async () => {
+            await expect(canvas.getByText(/Committed as/)).toBeVisible();
+            await expect(
+                Math.abs(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop),
+            ).toBeLessThanOrEqual(3);
+        });
+        await expect(canvas.queryByRole("button", { name: "To bottom" })).not.toBeInTheDocument();
+    },
+};
+
+/** The row visible at the viewport's top edge, and its offset from that edge. */
+function topRow(canvasElement: HTMLElement): { readonly row: HTMLElement; readonly offset: number } | null {
+    const viewport = requireViewport(canvasElement, "the transcript scroll viewport");
+    const viewportTop = viewport.getBoundingClientRect().top;
+    const rows = [...canvasElement.querySelectorAll<HTMLElement>("[data-slot='transcript-row']")];
+    let found: { row: HTMLElement; offset: number } | null = null;
+    for (const row of rows) {
+        const offset = row.getBoundingClientRect().top - viewportTop;
+        if (offset <= 8) {
+            found = { row, offset };
+        }
+    }
+    return found;
+}
+
+export const CompactionKeepsReleasedPosition: Story = {
+    render: () => <CompactingTranscriptDemo />,
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+        const viewport = requireViewport(canvasElement, "the transcript scroll viewport");
+
+        await waitFor(async () => {
+            await expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight * 2);
+            await expect(
+                Math.abs(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop),
+            ).toBeLessThanOrEqual(3);
+        });
+
+        // Mount the leading rows once so their heights are known; the compensation for a released
+        // reader is exact only for rows that were measured before they disappear.
+        viewport.scrollTop = 0;
+        viewport.dispatchEvent(new Event("scroll"));
+        await waitFor(async () => {
+            await expect(canvas.getByRole("button", { name: "To bottom" })).toBeVisible();
+        });
+
+        // The reader leaves the bottom and parks in the middle of the conversation.
+        viewport.dispatchEvent(new WheelEvent("wheel", { deltaY: -300, bubbles: true, cancelable: true }));
+        viewport.scrollTop = Math.round((viewport.scrollHeight - viewport.clientHeight) * 0.5);
+        viewport.dispatchEvent(new Event("scroll"));
+        await waitFor(async () => {
+            await expect(canvas.getByRole("button", { name: "To bottom" })).toBeVisible();
+        });
+
+        const parked = topRow(canvasElement);
+        await expect(parked).not.toBeNull();
+
+        // Dropping the leading rows must keep that row under the reader's eyes: the virtualizer
+        // maintains the offset from the end for exactly the render that shrinks the list.
+        await userEvent.click(canvas.getByRole("button", { name: "Compact" }));
+        await waitFor(async () => {
+            const stillThere = topRow(canvasElement);
+            // `textContent` instead of the node: a measurement pass may remount the row.
+            await expect(stillThere?.row.textContent).toBe(parked?.row.textContent);
+            // The new first row gains the 24px top inset the old first row carried, so the content
+            // below moves by that inset on top of the compensation. Without the compensation the
+            // reader would land hundreds of pixels away.
+            await expect(Math.abs((stillThere?.offset ?? 0) - (parked?.offset ?? 0))).toBeLessThanOrEqual(32);
+        });
+        await expect(canvas.getByRole("button", { name: "To bottom" })).toBeVisible();
+    },
+};
+
 export const StreamEndKeepsReleasedPosition: Story = {
     render: () => <StreamingTranscriptDemo />,
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
         const viewport = requireViewport(canvasElement, "the transcript scroll viewport");
 
+        // Wait until the list measured enough rows for a real overflow and the pin reached the
+        // bottom, otherwise the deliberate 20px step below could clamp to the bottom edge.
         await waitFor(async () => {
-            await expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight);
+            await expect(viewport.scrollHeight - viewport.clientHeight).toBeGreaterThan(60);
+            await expect(
+                Math.abs(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop),
+            ).toBeLessThanOrEqual(3);
         });
 
         // The reader leaves the bottom while the answer still streams.
@@ -375,8 +563,11 @@ export const FitsWithoutScroll: Story = {
         const canvas = within(canvasElement);
         const viewport = requireViewport(canvasElement, "the transcript scroll viewport");
 
-        await expect(viewport.scrollHeight).toBeLessThanOrEqual(viewport.clientHeight);
-        await expect(canvas.getByText(/is set to/)).toBeVisible();
+        // The virtualized list mounts its rows after it measures the viewport.
+        await waitFor(async () => {
+            await expect(viewport.scrollHeight).toBeLessThanOrEqual(viewport.clientHeight);
+            await expect(canvas.getByText(/is set to/)).toBeVisible();
+        });
         await expect(canvas.queryByRole("button", { name: "To bottom" })).not.toBeInTheDocument();
     },
 };
@@ -401,9 +592,12 @@ export const RepeatedBashCommands: Story = {
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
 
-        await expect(canvas.getAllByText("pnpm test")).toHaveLength(2);
+        // The virtualized list mounts its rows after it measures the viewport.
+        await waitFor(async () => {
+            await expect(canvas.getAllByText("pnpm test")).toHaveLength(2);
+            await expect(canvas.getAllByRole("group", { name: "pnpm test output" })).toHaveLength(2);
+        });
         await expect(canvas.getByText(/exited 1/)).toBeVisible();
-        await expect(canvas.getAllByRole("group", { name: "pnpm test output" })).toHaveLength(2);
     },
 };
 
@@ -432,7 +626,52 @@ export const RetryCountdownAndNotice: Story = {
     ],
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
-        await expect(canvas.getByRole("status")).toHaveTextContent(/Retrying \(2\/3\) in \d+s\.\.\./);
-        await expect(canvas.getByRole("alert")).toHaveTextContent("Auto-compaction failed: context overflow");
+        // The column stays hidden until the list measured the viewport, and a hidden subtree
+        // leaves the accessibility tree.
+        await waitFor(async () => {
+            await expect(canvas.getByRole("status")).toHaveTextContent(/Retrying \(2\/3\) in \d+s\.\.\./);
+            await expect(canvas.getByRole("alert")).toHaveTextContent("Auto-compaction failed: context overflow");
+        });
+    },
+};
+
+/**
+ * A transcript that has no rows yet keeps the top inset that the first row normally carries.
+ */
+export const TrailingChromeWithoutRows: Story = {
+    args: {
+        items: [],
+        liveActivity: {
+            kind: "retrying",
+            scope: "turn",
+            attempt: 1,
+            maxAttempts: 3,
+            delayMs: 30_000,
+            errorMessage: "429 Rate limit exceeded",
+        },
+    },
+    decorators: [
+        (Story) => (
+            <div className={styles.frame}>
+                <Story />
+            </div>
+        ),
+    ],
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+        const column = requireElement(
+            canvasElement.querySelector<HTMLElement>("[data-slot='scroll-area-content'] > div"),
+            "the transcript column",
+        );
+
+        await waitFor(async () => {
+            // The status keeps the 24px top inset the first row carries in a non-empty transcript;
+            // the virtualizer is not mounted, so no row gap adds to it.
+            const status = canvas.getByRole("status");
+            await expect(status).toBeVisible();
+            const offset = status.getBoundingClientRect().top - column.getBoundingClientRect().top;
+            await expect(Math.round(offset)).toBe(24);
+            await expect(column.querySelector("[data-slot='transcript-row']")).toBeNull();
+        });
     },
 };

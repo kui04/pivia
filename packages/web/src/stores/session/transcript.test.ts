@@ -1728,6 +1728,31 @@ describe("createTranscriptRowBuilder", () => {
         expect(builder.build(projected, { liveMessage: settled, runtimeActive: false })).toBe(after);
     });
 
+    it("reports a prefix drop but not an append or a tail trim", () => {
+        const builder = createTranscriptRowBuilder();
+        const full = project(settledEntries);
+        const appended = project([...settledEntries, userEntry("m5", "m4", "Third", 5_000)]);
+        // Dropping the trailing entry keeps the list shorter, but it still starts at the same entry.
+        const tailTrimmed = project(settledEntries.slice(0, 3));
+        // Dropping the leading two entries is what a moved compaction boundary does.
+        const prefixDropped = project(settledEntries.slice(2));
+
+        builder.build(full);
+        expect(builder.droppedLeadingEntries).toBe(false);
+
+        builder.build(appended);
+        expect(builder.droppedLeadingEntries).toBe(false);
+
+        builder.build(tailTrimmed);
+        expect(builder.droppedLeadingEntries).toBe(false);
+
+        builder.build(prefixDropped);
+        expect(builder.droppedLeadingEntries).toBe(true);
+
+        builder.build(project([...settledEntries.slice(2), userEntry("m5", "m4", "Third", 5_000)]));
+        expect(builder.droppedLeadingEntries).toBe(false);
+    });
+
     it("matches buildTranscript for the same entries and options", () => {
         const projected = project([...settledEntries, userEntry("m5", "m4", "Live prompt", 5_000)]);
         const builder = createTranscriptRowBuilder();

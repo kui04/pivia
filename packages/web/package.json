@@ -37,6 +37,7 @@
         "remark-gfm": "^4.0.1",
         "remark-math": "^6.0.0",
         "shiki": "^4.6.0",
+        "virtua": "^0.56.0",
         "zustand": "^5.1.0"
     },
     "devDependencies": {

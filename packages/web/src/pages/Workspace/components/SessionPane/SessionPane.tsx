@@ -61,6 +61,8 @@ interface StageProps {
     readonly lastError: string | null;
     readonly transcriptKey: string;
     readonly items: readonly TranscriptItem[];
+    /** The rows of this render dropped a leading segment, so the list must hold a released reader. */
+    readonly droppedLeadingEntries: boolean;
     readonly liveActivity: SessionLiveActivity;
     readonly activityNotice: SessionActivityNotice | null;
     readonly queuedEntries: readonly QueuedEntry[];
@@ -75,6 +77,7 @@ function renderStage({
     lastError,
     transcriptKey,
     items,
+    droppedLeadingEntries,
     liveActivity,
     activityNotice,
     queuedEntries,
@@ -139,6 +142,7 @@ function renderStage({
                     <Transcript
                         key={transcriptKey}
                         items={items}
+                        droppedLeadingEntries={droppedLeadingEntries}
                         liveActivity={liveActivity}
                         activityNotice={activityNotice}
                         queuedEntries={queuedEntries}
@@ -250,13 +254,17 @@ function ConnectedSessionBody({
     // The builder keeps the rows whose entries did not change, so a streamed token re-renders only
     // the trailing turn instead of the whole list.
     const rowBuilder = useMemo(() => createTranscriptRowBuilder(), []);
-    const items = useMemo(
-        () =>
-            rowBuilder.build(projectedItems, {
+    const { items, droppedLeadingEntries } = useMemo(
+        () => ({
+            items: rowBuilder.build(projectedItems, {
                 liveMessage: liveMessage.kind === "none" ? null : liveMessage.message,
                 runtimeActive,
                 liveToolExecutions,
             }),
+            // Read in the same memo: the flag describes the rows just built, and the next build
+            // replaces it.
+            droppedLeadingEntries: rowBuilder.droppedLeadingEntries,
+        }),
         [liveMessage, liveToolExecutions, projectedItems, rowBuilder, runtimeActive],
     );
 
@@ -329,6 +337,7 @@ function ConnectedSessionBody({
                     lastError,
                     transcriptKey: sessionId,
                     items,
+                    droppedLeadingEntries,
                     liveActivity: effectiveActivity,
                     activityNotice: effectiveNotice,
                     queuedEntries,

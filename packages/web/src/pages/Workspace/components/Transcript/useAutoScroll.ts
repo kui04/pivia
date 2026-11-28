@@ -5,6 +5,14 @@ import { prefersReducedMotion } from "@/lib";
 /** Sub-pixel tolerance so DPI scaling does not trigger false overflow fades. */
 const EDGE_TOLERANCE_PX = 2;
 
+/**
+ * Quiet time that closes the initial phase.
+ *
+ * A virtualized list measures its rows over several passes, and React can skip frames between
+ * them, so the phase waits for a wall-clock gap instead of counting frames.
+ */
+const SETTLE_QUIET_MS = 100;
+
 /** Geometry of a scroll viewport, taken from the element for {@link measureScrollEdges}. */
 export type ScrollMetrics = {
     scrollTop: number;
@@ -25,7 +33,13 @@ export type UseAutoScrollOptions = {
     enabled?: boolean | undefined;
     /** Keeps the viewport pinned to its bottom while content grows. */
     streaming?: boolean | undefined;
-    /** Jumps to the bottom once when enabled becomes true while not streaming. */
+    /**
+     * Places an idle viewport at its bottom edge on attach.
+     *
+     * While the initial phase runs, the hook follows the layout passes that measure a virtualized
+     * list, so the first bottom position becomes the measured one. A reader's scroll up ends the
+     * phase, and an idle layout after it holds the offset; only `streaming` follows growth then.
+     */
     initialBottom?: boolean | undefined;
     /**
      * Called after each decision that samples geometry: attaching the viewport, streaming starting,
@@ -56,8 +70,24 @@ export type UseAutoScrollResult = {
     fadeBottom: boolean;
     /** True when the viewport is at the bottom edge or does not overflow. */
     atBottom: boolean;
+    /**
+     * True once the initial bottom position is settled or the viewport never had to settle.
+     *
+     * The phase ends when the viewport reaches the measured bottom, when its quiet window closes,
+     * or when the reader scrolls up. A virtualized list reports the rows it mounted only after a
+     * layout pass, so revealing the viewport before this flips would show the top of the
+     * transcript and jump to the bottom a few frames later. A view can keep its content hidden.
+     */
+    settled: boolean;
     /** Scrolls to the bottom and re-arms automatic streaming follow. */
     scrollToBottom: (behavior?: ScrollBehavior) => void;
+    /**
+     * Reports that the mounted child measured its content after this viewport attached.
+     *
+     * A virtualized list mounts its rows only after the first layout pass, so the quiet window that
+     * closes the initial phase must not start before the child reports a measurement.
+     */
+    reportMeasured: () => void;
 };
 
 const HIDDEN_EDGES: ScrollEdges = {
@@ -96,21 +126,25 @@ function sameEdges(a: ScrollEdges, b: ScrollEdges): boolean {
  * Why the viewport needs a new decision.
  *
  * `attach` is the first geometry sample of a viewport, `layout` reports a content or viewport box
- * that already changed, `stream-started` is the rising edge of `streaming`, and `scroll` carries the
- * position recorded before the event so a jump can be told apart from a reader scrolling up.
+ * that already changed, `settled` closes the settling phase once the extent stopped growing for
+ * {@link SETTLE_QUIET_MS}, `stream-started` is the rising edge of `streaming`, and `scroll` carries
+ * the position recorded before the event so a jump can be told apart from a reader scrolling up.
  */
 export type ScrollSignal =
     | { readonly kind: "attach" }
     | { readonly kind: "layout" }
+    | { readonly kind: "settled" }
     | { readonly kind: "stream-started" }
     | { readonly kind: "scroll"; readonly previousScrollTop: number };
 
 /**
  * Auto-follow state of the viewport.
  *
- * `pinned` follows arriving content, `released` keeps the offset the reader chose.
+ * `pinned` follows arriving content, `released` keeps the offset the reader chose, and `settling`
+ * follows the layout passes that measure a freshly attached viewport until `settled` confirms the
+ * scroll extent stopped growing.
  */
-export type BottomPin = "pinned" | "released";
+export type BottomPin = "settling" | "pinned" | "released";
 
 /** Offset change the imperative shell must carry out after a decision. */
 export type ScrollAction = { readonly kind: "hold" } | { readonly kind: "follow"; readonly top: number };
@@ -129,6 +163,13 @@ export type ScrollResolutionInput = {
     readonly metrics: ScrollMetrics;
     readonly streaming: boolean;
     readonly initialBottom: boolean;
+    /**
+     * Whether the initial phase still waits for the content to report a measurement.
+     *
+     * Only the first attach of a viewport can enter the phase; a later attach after a node swap
+     * must not re-enter it, because nothing would end it again.
+     */
+    readonly settling: boolean;
 };
 
 /**
@@ -144,24 +185,34 @@ export function resolveScroll({
     metrics,
     streaming,
     initialBottom,
+    settling,
 }: ScrollResolutionInput): ScrollResolution {
     switch (signal.kind) {
         case "attach": {
-            if (streaming || initialBottom) {
+            if (streaming) {
                 return decideScroll("pinned", true, metrics);
+            }
+            if (initialBottom) {
+                // A viewport that still waits for measurements keeps following them; one that
+                // already settled only jumps to the extent it can see now.
+                return decideScroll(settling ? "settling" : "pinned", true, metrics);
             }
             return decideScroll(measureScrollEdges(metrics).atBottom ? "pinned" : "released", false, metrics);
         }
         case "stream-started": {
-            const follow = pin === "pinned" || measureScrollEdges(metrics).atBottom;
+            const follow = pin === "pinned" || pin === "settling" || measureScrollEdges(metrics).atBottom;
             return decideScroll(follow ? "pinned" : "released", follow, metrics);
         }
         case "layout":
-            return decideScroll(pin, streaming && pin === "pinned", metrics);
+            return decideScroll(pin, pin === "settling" || (streaming && pin === "pinned"), metrics);
+        case "settled":
+            return decideScroll(pin === "settling" ? "pinned" : pin, false, metrics);
         case "scroll": {
             const movedUp = metrics.scrollTop < signal.previousScrollTop - EDGE_TOLERANCE_PX;
             if (measureScrollEdges(metrics).atBottom) {
-                return decideScroll("pinned", false, metrics);
+                // A settling viewport reaches the bottom with its own jump, which reports a scroll
+                // event; only the reader can end that phase from here.
+                return decideScroll(pin === "settling" ? "settling" : "pinned", false, metrics);
             }
             if (movedUp) {
                 return decideScroll("released", false, metrics);
@@ -230,6 +281,16 @@ export function edgesAfterWrite(metrics: ScrollMetrics, resolution: ScrollResolu
 }
 
 /**
+ * Pin a jump to the bottom leaves behind.
+ *
+ * A viewport that is still settling keeps following the layout passes that measure the content; any
+ * other jump pins it. Callers write the returned pin and, while settling, re-arm the quiet window.
+ */
+export function pinAfterJump(settling: boolean): BottomPin {
+    return settling ? "settling" : "pinned";
+}
+
+/**
  * Track top and bottom scroll overflow and keep a streaming viewport pinned to the bottom.
  *
  * The user keeps control: scrolling upward unpins the viewport, so arriving tokens never move the
@@ -244,8 +305,14 @@ export function useAutoScroll({
     const viewportNodeRef = useRef<HTMLDivElement | null>(null);
     const [mountKey, setMountKey] = useState(0);
     const [edges, setEdges] = useState<ScrollEdges>(HIDDEN_EDGES);
+    const [settled, setSettled] = useState(!initialBottom);
+    // The veil tracks the first measured bottom position, not the pin: a cached transcript can
+    // still be marked streaming and pin the viewport before any row is measured.
+    const pendingInitialBottomRef = useRef(initialBottom);
+    const measuredRef = useRef(false);
+    const scheduleSettleRef = useRef<() => void>(() => {});
 
-    const pinRef = useRef<BottomPin>(streaming || initialBottom ? "pinned" : "released");
+    const pinRef = useRef<BottomPin>(streaming || initialBottom ? "settling" : "released");
     const lastScrollTopRef = useRef(0);
     const wasEnabledRef = useRef(false);
     const wasStreamingRef = useRef(streaming);
@@ -294,6 +361,7 @@ export function useAutoScroll({
                 metrics,
                 streaming,
                 initialBottom,
+                settling: pendingInitialBottomRef.current,
             });
 
             pinRef.current = resolution.pin;
@@ -305,7 +373,16 @@ export function useAutoScroll({
             // like the reader scrolling up on the next event.
             const achieved = resolution.action.kind === "follow" ? node.scrollTop : metrics.scrollTop;
             lastScrollTopRef.current = achieved;
-            return edgesAfterWrite(metrics, resolution, achieved);
+            const edges = edgesAfterWrite(metrics, resolution, achieved);
+            // Reveal on the first measured bottom position: the write above already happened, so
+            // the commit that lifts the veil cannot paint a stale offset. The quiet window below
+            // stays the fallback for content that settles without a layout pass.
+            const reachedBottom = signal.kind === "layout" && resolution.action.kind === "follow" && edges.atBottom;
+            if (reachedBottom || (signal.kind === "scroll" && resolution.pin === "released")) {
+                finishSettling();
+            }
+            scheduleSettle();
+            return edges;
         };
 
         const publish = (next: ScrollEdges): void => {
@@ -322,6 +399,34 @@ export function useAutoScroll({
                 publish(next);
             });
         };
+
+        // A virtualized list measures its rows across several layout passes after the first
+        // commit. Close the initial phase after a quiet gap that starts only once the child
+        // reported a measurement; a reader's scroll up ends it first.
+        function finishSettling(): void {
+            if (pendingInitialBottomRef.current) {
+                pendingInitialBottomRef.current = false;
+                setSettled(true);
+            }
+        }
+        let settleTimer = 0;
+        function scheduleSettle(): void {
+            if (settleTimer !== 0) {
+                window.clearTimeout(settleTimer);
+                settleTimer = 0;
+            }
+            if (!pendingInitialBottomRef.current || !measuredRef.current) {
+                return;
+            }
+            settleTimer = window.setTimeout(() => {
+                settleTimer = 0;
+                finishSettling();
+                if (pinRef.current === "settling") {
+                    publish(apply({ kind: "settled" }));
+                }
+            }, SETTLE_QUIET_MS);
+        }
+        scheduleSettleRef.current = scheduleSettle;
 
         if (justEnabled) {
             publishLater(apply({ kind: "attach" }));
@@ -372,11 +477,20 @@ export function useAutoScroll({
             if (frame !== 0) {
                 window.cancelAnimationFrame(frame);
             }
+            if (settleTimer !== 0) {
+                window.clearTimeout(settleTimer);
+            }
+            scheduleSettleRef.current = () => {};
             node.removeEventListener("scroll", handleScroll);
             resizeObserver.disconnect();
             structureObserver.disconnect();
         };
     }, [enabled, streaming, initialBottom, mountKey, commitEdges]);
+
+    const reportMeasured = useCallback(() => {
+        measuredRef.current = true;
+        scheduleSettleRef.current();
+    }, []);
 
     const scrollToBottom = useCallback(
         (behavior: ScrollBehavior = "smooth") => {
@@ -385,7 +499,11 @@ export function useAutoScroll({
                 return;
             }
 
-            pinRef.current = "pinned";
+            pinRef.current = pinAfterJump(pendingInitialBottomRef.current);
+            // A jump during the initial phase must not stop the following of the measuring passes.
+            if (pinRef.current === "settling") {
+                scheduleSettleRef.current();
+            }
             const metrics = readScrollMetrics(node);
             const top = bottomOffset(metrics);
             const resolvedBehavior: ScrollBehavior = prefersReducedMotion() ? "auto" : behavior;
@@ -410,6 +528,8 @@ export function useAutoScroll({
         fadeTop: enabled ? edges.fadeTop : false,
         fadeBottom: enabled ? edges.fadeBottom : false,
         atBottom: enabled ? edges.atBottom : true,
+        settled,
         scrollToBottom,
+        reportMeasured,
     };
 }
